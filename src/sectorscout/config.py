@@ -68,6 +68,22 @@ class ScoringConfig(BaseModel):
     stock_weights: StockWeightsConfig = Field(default_factory=StockWeightsConfig)
 
 
+class SetupConfig(BaseModel):
+    min_reward_risk: float = 2.0
+    vcp_min_window: int = 7
+    vcp_max_window: int = 40
+    vcp_max_depth: float = 0.25
+    vcp_min_rs_percentile: float = 80
+    vcp_min_volume_breakout_ratio: float = 1.30
+    pullback_min_depth: float = 0.03
+    pullback_max_depth: float = 0.12
+    pullback_ma_tolerance: float = 0.02
+    earnings_gap_min_gap_pct: float = 0.08
+    earnings_gap_min_volume_ratio: float = 2.0
+    earnings_gap_min_hold_days: int = 5
+    earnings_gap_max_hold_days: int = 15
+
+
 class ProviderConfig(BaseModel):
     prices_primary: str = "FMP"
     prices_fallback: str = "yfinance"
@@ -110,6 +126,7 @@ class SectorScoutConfig(BaseModel):
     indicators: IndicatorConfig = Field(default_factory=IndicatorConfig)
     market_regime: MarketRegimeConfig = Field(default_factory=MarketRegimeConfig)
     scoring: ScoringConfig = Field(default_factory=ScoringConfig)
+    setups: SetupConfig = Field(default_factory=SetupConfig)
     providers: ProviderConfig = Field(default_factory=ProviderConfig)
     missing_data_policy: MissingDataPolicy = Field(default_factory=MissingDataPolicy)
     reproducibility: ReproducibilityConfig = Field(default_factory=ReproducibilityConfig)

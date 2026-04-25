@@ -1,6 +1,6 @@
 project:
   name: SectorScout
-  schema_version: 3
+  schema_version: 4
 
 market:
   calendar: XNYS
@@ -42,6 +42,21 @@ scoring:
     volume_accumulation: 0.10
     risk_reward: 0.10
     liquidity: 0.05
+
+setups:
+  min_reward_risk: 2.0
+  vcp_min_window: 7
+  vcp_max_window: 40
+  vcp_max_depth: 0.25
+  vcp_min_rs_percentile: 80
+  vcp_min_volume_breakout_ratio: 1.30
+  pullback_min_depth: 0.03
+  pullback_max_depth: 0.12
+  pullback_ma_tolerance: 0.02
+  earnings_gap_min_gap_pct: 0.08
+  earnings_gap_min_volume_ratio: 2.0
+  earnings_gap_min_hold_days: 5
+  earnings_gap_max_hold_days: 15
 
 providers:
   prices_primary: FMP

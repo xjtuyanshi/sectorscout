@@ -227,3 +227,54 @@ CREATE TABLE IF NOT EXISTS watchlist (
     theme_version VARCHAR NOT NULL,
     PRIMARY KEY (asof_date, symbol, theme_id)
 );
+
+CREATE TABLE IF NOT EXISTS setups (
+    asof_date DATE NOT NULL,
+    symbol VARCHAR NOT NULL,
+    theme_id VARCHAR NOT NULL,
+    setup_type VARCHAR NOT NULL,
+    state VARCHAR NOT NULL,
+    setup_quality DOUBLE NOT NULL,
+    trigger_price DOUBLE,
+    stop_loss DOUBLE,
+    reward_risk DOUBLE,
+    consolidation_start DATE,
+    consolidation_end DATE,
+    pivot_price DOUBLE,
+    depth DOUBLE,
+    atr_contraction BOOLEAN NOT NULL,
+    volume_contraction BOOLEAN NOT NULL,
+    evidence_json VARCHAR NOT NULL,
+    signal_generated_at_utc TIMESTAMPTZ NOT NULL,
+    config_hash VARCHAR NOT NULL,
+    git_commit VARCHAR NOT NULL,
+    data_snapshot_id VARCHAR NOT NULL,
+    universe_version VARCHAR NOT NULL,
+    theme_version VARCHAR NOT NULL,
+    PRIMARY KEY (asof_date, symbol, theme_id, setup_type)
+);
+
+CREATE TABLE IF NOT EXISTS signals (
+    asof_date DATE NOT NULL,
+    symbol VARCHAR NOT NULL,
+    theme_id VARCHAR NOT NULL,
+    setup_type VARCHAR NOT NULL,
+    state VARCHAR NOT NULL,
+    action_category VARCHAR NOT NULL,
+    actionable BOOLEAN NOT NULL,
+    reason VARCHAR NOT NULL,
+    execution_model VARCHAR NOT NULL,
+    entry_trigger DOUBLE,
+    stop_loss DOUBLE,
+    reward_risk DOUBLE,
+    data_quality_pass BOOLEAN NOT NULL,
+    market_regime_risk_state VARCHAR NOT NULL,
+    portfolio_risk_pass BOOLEAN NOT NULL,
+    signal_generated_at_utc TIMESTAMPTZ NOT NULL,
+    config_hash VARCHAR NOT NULL,
+    git_commit VARCHAR NOT NULL,
+    data_snapshot_id VARCHAR NOT NULL,
+    universe_version VARCHAR NOT NULL,
+    theme_version VARCHAR NOT NULL,
+    PRIMARY KEY (asof_date, symbol, theme_id, setup_type)
+);

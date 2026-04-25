@@ -23,7 +23,9 @@ from sectorscout.market_regime import compute_market_regime
 from sectorscout.market_calendar import asof_market_close, to_market_time
 from sectorscout.metadata import build_run_metadata
 from sectorscout.pit import available_fundamental_facts, theme_members_asof, universe_asof
+from sectorscout.reports import generate_daily_report
 from sectorscout.scoring import run_scoring
+from sectorscout.setups import detect_setups
 
 app = typer.Typer(help="SectorScout research system CLI.")
 
@@ -243,10 +245,27 @@ def score(
     typer.echo(json.dumps(result.to_dict(), indent=2, sort_keys=True))
 
 
+@app.command("detect-setups")
+def detect_setups_command(
+    asof: str = typer.Option(..., "--asof"),
+    config: Path = typer.Option(Path("config.yaml"), "--config"),
+) -> None:
+    loaded = _load(config)
+    parsed_asof = _parse_iso_date(asof)
+    assert parsed_asof is not None
+    result = detect_setups(loaded, parsed_asof, persist=True)
+    typer.echo(json.dumps(result.to_dict(), indent=2, sort_keys=True))
+
+
 @app.command()
-def report(date_: str | None = typer.Option(None, "--date")) -> None:
-    _parse_iso_date(date_)
-    _phase0_not_implemented("report")
+def report(
+    date_: str = typer.Option(..., "--date"),
+    config: Path = typer.Option(Path("config.yaml"), "--config"),
+) -> None:
+    loaded = _load(config)
+    parsed_date = _parse_iso_date(date_)
+    assert parsed_date is not None
+    typer.echo(generate_daily_report(loaded, parsed_date).to_json())
 
 
 @app.command()
