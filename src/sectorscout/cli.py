@@ -12,11 +12,15 @@ from sectorscout.data_quality import compute_data_quality, persist_data_quality
 from sectorscout.db import initialize_database, persist_run_metadata
 from sectorscout.ingest import (
     ingest_corporate_actions_csv,
+    ingest_fundamental_facts_csv,
     ingest_prices_csv,
+    ingest_theme_members_csv,
+    ingest_themes_csv,
     ingest_universe_csv,
 )
 from sectorscout.market_calendar import asof_market_close, to_market_time
 from sectorscout.metadata import build_run_metadata
+from sectorscout.pit import available_fundamental_facts, theme_members_asof, universe_asof
 
 app = typer.Typer(help="SectorScout research system CLI.")
 
@@ -149,8 +153,45 @@ def ingest_corporate_actions(
 
 
 @app.command("ingest-fundamentals")
-def ingest_fundamentals() -> None:
-    _phase0_not_implemented("ingest-fundamentals")
+def ingest_fundamentals(
+    from_csv: Path | None = typer.Option(None, "--from-csv"),
+    source: str = typer.Option("fixture", "--source"),
+    config: Path = typer.Option(Path("config.yaml"), "--config"),
+) -> None:
+    loaded = _load(config)
+    if from_csv is None:
+        _phase0_not_implemented("live ingest-fundamentals")
+        return
+    count = ingest_fundamental_facts_csv(loaded, from_csv, source=source)
+    typer.echo(f"Ingested {count} fundamental fact rows from {from_csv}")
+
+
+@app.command("ingest-themes")
+def ingest_themes(
+    from_csv: Path | None = typer.Option(None, "--from-csv"),
+    source: str = typer.Option("fixture", "--source"),
+    config: Path = typer.Option(Path("config.yaml"), "--config"),
+) -> None:
+    loaded = _load(config)
+    if from_csv is None:
+        _phase0_not_implemented("live ingest-themes")
+        return
+    count = ingest_themes_csv(loaded, from_csv, source=source)
+    typer.echo(f"Ingested {count} theme rows from {from_csv}")
+
+
+@app.command("ingest-theme-members")
+def ingest_theme_members(
+    from_csv: Path | None = typer.Option(None, "--from-csv"),
+    source: str = typer.Option("fixture", "--source"),
+    config: Path = typer.Option(Path("config.yaml"), "--config"),
+) -> None:
+    loaded = _load(config)
+    if from_csv is None:
+        _phase0_not_implemented("live ingest-theme-members")
+        return
+    count = ingest_theme_members_csv(loaded, from_csv, source=source)
+    typer.echo(f"Ingested {count} theme member rows from {from_csv}")
 
 
 @app.command()
@@ -193,6 +234,46 @@ def data_quality(
     if persist:
         persist_data_quality(loaded, report)
     typer.echo(report.to_json())
+
+
+@app.command("universe-asof")
+def universe_asof_command(
+    asof: str = typer.Option(..., "--asof"),
+    config: Path = typer.Option(Path("config.yaml"), "--config"),
+) -> None:
+    loaded = _load(config)
+    parsed_asof = _parse_iso_date(asof)
+    assert parsed_asof is not None
+    typer.echo(json.dumps({"asof_date": parsed_asof.isoformat(), "symbols": universe_asof(loaded, parsed_asof)}, indent=2))
+
+
+@app.command("theme-members-asof")
+def theme_members_asof_command(
+    asof: str = typer.Option(..., "--asof"),
+    allow_historical_ex_post: bool = typer.Option(False, "--allow-historical-ex-post"),
+    config: Path = typer.Option(Path("config.yaml"), "--config"),
+) -> None:
+    loaded = _load(config)
+    parsed_asof = _parse_iso_date(asof)
+    assert parsed_asof is not None
+    rows = theme_members_asof(
+        loaded,
+        parsed_asof,
+        allow_historical_ex_post=allow_historical_ex_post,
+    )
+    typer.echo(json.dumps({"asof_date": parsed_asof.isoformat(), "members": rows}, default=str, indent=2))
+
+
+@app.command("fundamentals-asof")
+def fundamentals_asof_command(
+    asof: str = typer.Option(..., "--asof"),
+    config: Path = typer.Option(Path("config.yaml"), "--config"),
+) -> None:
+    loaded = _load(config)
+    parsed_asof = _parse_iso_date(asof)
+    assert parsed_asof is not None
+    rows = available_fundamental_facts(loaded, parsed_asof)
+    typer.echo(json.dumps({"asof_date": parsed_asof.isoformat(), "facts": rows}, default=str, indent=2))
 
 
 if __name__ == "__main__":

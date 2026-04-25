@@ -1,0 +1,4 @@
+symbol,cik,fiscal_period,fiscal_year,fiscal_quarter,form_type,metric_name,metric_value,period_end_date,filing_date,accepted_at,earnings_release_datetime,available_at,provider_updated_at
+AAPL,0000320193,2024Q3,2024,3,10-Q,revenue,94930000000,2024-09-28,2024-11-01,2024-11-01T21:01:36+00:00,2024-10-31T20:30:00+00:00,2024-11-01T21:01:36+00:00,2024-11-01T22:00:00+00:00
+MU,0000723125,2024Q4,2024,4,10-K,revenue,25111000000,2024-08-29,2024-10-03,2024-10-03T20:15:00+00:00,2024-09-25T20:05:00+00:00,2024-10-03T20:15:00+00:00,2024-10-03T21:00:00+00:00
+SMH,,2024Q3,2024,3,provider,revenue,0,2024-09-30,,,,,2024-11-01T00:00:00+00:00

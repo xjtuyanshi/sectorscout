@@ -48,6 +48,15 @@ def _parse_date(value: str | None) -> date | None:
     return date.fromisoformat(value)
 
 
+def _parse_datetime(value: str | None) -> datetime | None:
+    if value is None or value == "":
+        return None
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        raise IngestionError(f"Timestamp must include timezone: {value}")
+    return parsed.astimezone(timezone.utc)
+
+
 def _parse_float(row: dict[str, str], column: str) -> float:
     value = row.get(column)
     if value is None or value == "":
@@ -191,3 +200,105 @@ def ingest_corporate_actions_csv(
             )
     return len(rows)
 
+
+def ingest_fundamental_facts_csv(
+    config: SectorScoutConfig,
+    path: str | Path,
+    *,
+    source: str = "fixture",
+) -> int:
+    rows = _read_csv(path)
+    now = _utc_now()
+    with connect_database(config.database.path) as connection:
+        for row in rows:
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO fundamental_facts (
+                    symbol, cik, fiscal_period, fiscal_year, fiscal_quarter,
+                    form_type, metric_name, metric_value, period_end_date,
+                    filing_date, accepted_at, earnings_release_datetime,
+                    available_at, source, provider_updated_at, ingested_at_utc
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    row["symbol"].strip().upper(),
+                    row.get("cik") or None,
+                    row["fiscal_period"],
+                    int(row["fiscal_year"]),
+                    int(row["fiscal_quarter"]) if row.get("fiscal_quarter") else None,
+                    row["form_type"],
+                    row["metric_name"],
+                    float(row["metric_value"]),
+                    date.fromisoformat(row["period_end_date"]),
+                    _parse_date(row.get("filing_date")),
+                    _parse_datetime(row.get("accepted_at")),
+                    _parse_datetime(row.get("earnings_release_datetime")),
+                    _parse_datetime(row.get("available_at")),
+                    source,
+                    _parse_datetime(row.get("provider_updated_at")),
+                    now,
+                ],
+            )
+    return len(rows)
+
+
+def ingest_themes_csv(
+    config: SectorScoutConfig,
+    path: str | Path,
+    *,
+    source: str = "fixture",
+) -> int:
+    rows = _read_csv(path)
+    now = _utc_now()
+    with connect_database(config.database.path) as connection:
+        for row in rows:
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO themes (
+                    theme_id, name, theme_type, discovery_date, source,
+                    confidence, evidence, created_at_utc
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    row["theme_id"],
+                    row["name"],
+                    row["theme_type"],
+                    _parse_date(row.get("discovery_date")),
+                    source,
+                    float(row["confidence"]) if row.get("confidence") else None,
+                    row.get("evidence") or None,
+                    now,
+                ],
+            )
+    return len(rows)
+
+
+def ingest_theme_members_csv(
+    config: SectorScoutConfig,
+    path: str | Path,
+    *,
+    source: str = "fixture",
+) -> int:
+    rows = _read_csv(path)
+    now = _utc_now()
+    with connect_database(config.database.path) as connection:
+        for row in rows:
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO theme_members (
+                    theme_id, symbol, valid_from, valid_to, source,
+                    confidence, evidence, created_at_utc
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    row["theme_id"],
+                    row["symbol"].strip().upper(),
+                    date.fromisoformat(row["valid_from"]),
+                    _parse_date(row.get("valid_to")),
+                    source,
+                    float(row.get("confidence") or 0),
+                    row.get("evidence") or None,
+                    now,
+                ],
+            )
+    return len(rows)

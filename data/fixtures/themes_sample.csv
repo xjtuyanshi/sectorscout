@@ -1,0 +1,4 @@
+theme_id,name,theme_type,discovery_date,confidence,evidence
+semiconductors,Semiconductors,live_research_theme,2024-01-01,1.0,Manually tracked live research theme
+ai-memory-hbm,AI Memory HBM,historical_ex_post_theme,2024-01-01,1.0,Modern theme added after observed leadership
+dynamic-power,Dynamic Power Infrastructure,dynamic_theme,2024-11-29,0.7,Fixture dynamic theme discovered from mock filings

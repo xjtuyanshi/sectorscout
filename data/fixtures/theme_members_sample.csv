@@ -1,0 +1,5 @@
+theme_id,symbol,valid_from,valid_to,confidence,evidence
+semiconductors,MU,2024-01-01,,0.95,Manual semiconductor membership
+semiconductors,SMH,2024-01-01,,0.90,ETF proxy
+ai-memory-hbm,MU,2024-01-01,,0.95,Historical ex-post AI memory membership
+dynamic-power,AAPL,2024-11-29,,0.60,Fixture dynamic discovery evidence

@@ -16,7 +16,9 @@ SCHEMA_PATH = Path(__file__).with_name("schema.sql")
 def connect_database(path: str | Path) -> duckdb.DuckDBPyConnection:
     db_path = Path(path)
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    return duckdb.connect(str(db_path))
+    connection = duckdb.connect(str(db_path))
+    connection.execute("SET TimeZone = 'UTC'")
+    return connection
 
 
 def initialize_database(config: SectorScoutConfig, *, cwd: str | Path | None = None) -> Path:
@@ -77,4 +79,3 @@ def persist_run_metadata(config: SectorScoutConfig, metadata: RunMetadata) -> No
                 metadata.created_at,
             ],
         )
-
