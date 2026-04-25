@@ -1,0 +1,42 @@
+project:
+  name: SectorScout
+  schema_version: 0
+
+market:
+  calendar: XNYS
+  timezone: America/New_York
+
+database:
+  path: data/sectorscout.duckdb
+
+data:
+  fixture_dir: data/fixtures
+
+providers:
+  prices_primary: FMP
+  prices_fallback: yfinance
+  fundamentals_primary: SEC_EDGAR
+  fundamentals_secondary: FMP
+
+missing_data_policy:
+  technical: exclude
+  stale_price_volume: exclude
+  fundamental: neutral_with_coverage_penalty
+  catalyst: neutral_zero_contribution
+
+reproducibility:
+  data_snapshot_id: phase0-fixtures
+  universe_version: phase0
+  theme_version: phase0
+
+portfolio:
+  max_positions: 10
+  max_single_position_weight: 0.10
+  max_theme_exposure: 0.30
+  max_sector_exposure: 0.40
+  max_total_open_risk: 0.05
+  max_new_positions_per_day: 3
+
+validation:
+  default_start_year: 2016
+

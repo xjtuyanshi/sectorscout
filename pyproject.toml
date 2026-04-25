@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sectorscout"
+version = "0.1.0"
+description = "Phase 0 foundation for a point-in-time sector and setup research system."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "duckdb>=1.1",
+  "exchange-calendars>=4.5",
+  "pandas>=2.2",
+  "pydantic>=2.7",
+  "pyyaml>=6.0",
+  "typer>=0.12",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.2",
+]
+
+[project.scripts]
+sectorscout = "sectorscout.cli:app"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+sectorscout = ["schema.sql"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-q"
