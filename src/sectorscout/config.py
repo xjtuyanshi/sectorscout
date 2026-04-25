@@ -31,6 +31,43 @@ class DataQualityConfig(BaseModel):
     stale_price_days: int = 1
 
 
+class IndicatorConfig(BaseModel):
+    rs_lookback_days: int = 63
+    stage2_high_window_days: int = 252
+    stage2_min_pct_of_high: float = 0.75
+
+
+class MarketRegimeConfig(BaseModel):
+    risk_on_min_pct_above_50dma: float = 0.50
+    risk_on_min_pct_stage2: float = 0.30
+    neutral_min_pct_above_200dma: float = 0.40
+
+
+class ThemeWeightsConfig(BaseModel):
+    technical_relative_strength: float = 0.35
+    breadth: float = 0.25
+    fundamental_acceleration: float = 0.25
+    catalyst: float = 0.10
+    risk_valuation_penalty: float = 0.05
+
+
+class StockWeightsConfig(BaseModel):
+    theme_score: float = 0.25
+    rs_percentile: float = 0.20
+    fundamental_acceleration: float = 0.15
+    setup_quality: float = 0.15
+    volume_accumulation: float = 0.10
+    risk_reward: float = 0.10
+    liquidity: float = 0.05
+
+
+class ScoringConfig(BaseModel):
+    discover_theme_threshold: float = 65
+    watch_rs_percentile: float = 80
+    theme_weights: ThemeWeightsConfig = Field(default_factory=ThemeWeightsConfig)
+    stock_weights: StockWeightsConfig = Field(default_factory=StockWeightsConfig)
+
+
 class ProviderConfig(BaseModel):
     prices_primary: str = "FMP"
     prices_fallback: str = "yfinance"
@@ -70,6 +107,9 @@ class SectorScoutConfig(BaseModel):
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
     data: DataConfig = Field(default_factory=DataConfig)
     data_quality: DataQualityConfig = Field(default_factory=DataQualityConfig)
+    indicators: IndicatorConfig = Field(default_factory=IndicatorConfig)
+    market_regime: MarketRegimeConfig = Field(default_factory=MarketRegimeConfig)
+    scoring: ScoringConfig = Field(default_factory=ScoringConfig)
     providers: ProviderConfig = Field(default_factory=ProviderConfig)
     missing_data_policy: MissingDataPolicy = Field(default_factory=MissingDataPolicy)
     reproducibility: ReproducibilityConfig = Field(default_factory=ReproducibilityConfig)

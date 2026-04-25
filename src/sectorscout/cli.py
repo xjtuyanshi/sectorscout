@@ -18,9 +18,12 @@ from sectorscout.ingest import (
     ingest_themes_csv,
     ingest_universe_csv,
 )
+from sectorscout.indicators import compute_technical_indicators
+from sectorscout.market_regime import compute_market_regime
 from sectorscout.market_calendar import asof_market_close, to_market_time
 from sectorscout.metadata import build_run_metadata
 from sectorscout.pit import available_fundamental_facts, theme_members_asof, universe_asof
+from sectorscout.scoring import run_scoring
 
 app = typer.Typer(help="SectorScout research system CLI.")
 
@@ -194,10 +197,50 @@ def ingest_theme_members(
     typer.echo(f"Ingested {count} theme member rows from {from_csv}")
 
 
+@app.command("compute-indicators")
+def compute_indicators_command(
+    asof: str = typer.Option(..., "--asof"),
+    config: Path = typer.Option(Path("config.yaml"), "--config"),
+) -> None:
+    loaded = _load(config)
+    parsed_asof = _parse_iso_date(asof)
+    assert parsed_asof is not None
+    rows = compute_technical_indicators(loaded, parsed_asof, persist=True)
+    typer.echo(
+        json.dumps(
+            {
+                "asof_date": parsed_asof.isoformat(),
+                "indicator_rows": len(rows),
+                "symbols": [row.symbol for row in rows],
+            },
+            indent=2,
+            sort_keys=True,
+        )
+    )
+
+
+@app.command("market-regime")
+def market_regime_command(
+    asof: str = typer.Option(..., "--asof"),
+    config: Path = typer.Option(Path("config.yaml"), "--config"),
+) -> None:
+    loaded = _load(config)
+    parsed_asof = _parse_iso_date(asof)
+    assert parsed_asof is not None
+    regime = compute_market_regime(loaded, parsed_asof, persist=True)
+    typer.echo(json.dumps(regime.to_dict(), indent=2, sort_keys=True))
+
+
 @app.command()
-def score(asof: str | None = typer.Option(None, "--asof")) -> None:
-    _parse_iso_date(asof)
-    _phase0_not_implemented("score")
+def score(
+    asof: str = typer.Option(..., "--asof"),
+    config: Path = typer.Option(Path("config.yaml"), "--config"),
+) -> None:
+    loaded = _load(config)
+    parsed_asof = _parse_iso_date(asof)
+    assert parsed_asof is not None
+    result = run_scoring(loaded, parsed_asof)
+    typer.echo(json.dumps(result.to_dict(), indent=2, sort_keys=True))
 
 
 @app.command()

@@ -122,3 +122,108 @@ CREATE TABLE IF NOT EXISTS theme_members (
     created_at_utc TIMESTAMPTZ NOT NULL,
     PRIMARY KEY (theme_id, symbol, valid_from, source)
 );
+
+CREATE TABLE IF NOT EXISTS technical_indicators (
+    asof_date DATE NOT NULL,
+    symbol VARCHAR NOT NULL,
+    close DOUBLE NOT NULL,
+    sma_50 DOUBLE,
+    sma_150 DOUBLE,
+    sma_200 DOUBLE,
+    ema_21 DOUBLE,
+    atr_14 DOUBLE,
+    volume_10d_avg DOUBLE,
+    volume_50d_avg DOUBLE,
+    pct_from_252d_high DOUBLE,
+    rs_lookback_return DOUBLE,
+    rs_percentile DOUBLE,
+    trend_stage VARCHAR NOT NULL,
+    signal_generated_at_utc TIMESTAMPTZ NOT NULL,
+    config_hash VARCHAR NOT NULL,
+    git_commit VARCHAR NOT NULL,
+    data_snapshot_id VARCHAR NOT NULL,
+    universe_version VARCHAR NOT NULL,
+    theme_version VARCHAR NOT NULL,
+    PRIMARY KEY (asof_date, symbol)
+);
+
+CREATE TABLE IF NOT EXISTS market_regime (
+    asof_date DATE PRIMARY KEY,
+    spy_stage VARCHAR NOT NULL,
+    qqq_stage VARCHAR NOT NULL,
+    spy_above_50dma BOOLEAN NOT NULL,
+    spy_above_200dma BOOLEAN NOT NULL,
+    qqq_above_50dma BOOLEAN NOT NULL,
+    qqq_above_200dma BOOLEAN NOT NULL,
+    pct_universe_above_50dma DOUBLE NOT NULL,
+    pct_universe_above_200dma DOUBLE NOT NULL,
+    pct_universe_stage2 DOUBLE NOT NULL,
+    risk_state VARCHAR NOT NULL,
+    signal_generated_at_utc TIMESTAMPTZ NOT NULL,
+    config_hash VARCHAR NOT NULL,
+    git_commit VARCHAR NOT NULL,
+    data_snapshot_id VARCHAR NOT NULL,
+    universe_version VARCHAR NOT NULL,
+    theme_version VARCHAR NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS theme_scores (
+    asof_date DATE NOT NULL,
+    theme_id VARCHAR NOT NULL,
+    theme_score DOUBLE NOT NULL,
+    technical_relative_strength DOUBLE NOT NULL,
+    breadth DOUBLE NOT NULL,
+    fundamental_acceleration DOUBLE NOT NULL,
+    catalyst_score DOUBLE NOT NULL,
+    risk_valuation_penalty DOUBLE NOT NULL,
+    component_coverage_pct DOUBLE NOT NULL,
+    members_count INTEGER NOT NULL,
+    technical_coverage_pct DOUBLE NOT NULL,
+    theme_fundamental_coverage_pct DOUBLE NOT NULL,
+    members_with_valid_fundamentals INTEGER NOT NULL,
+    signal_generated_at_utc TIMESTAMPTZ NOT NULL,
+    config_hash VARCHAR NOT NULL,
+    git_commit VARCHAR NOT NULL,
+    data_snapshot_id VARCHAR NOT NULL,
+    universe_version VARCHAR NOT NULL,
+    theme_version VARCHAR NOT NULL,
+    PRIMARY KEY (asof_date, theme_id)
+);
+
+CREATE TABLE IF NOT EXISTS stock_scores (
+    asof_date DATE NOT NULL,
+    symbol VARCHAR NOT NULL,
+    theme_id VARCHAR NOT NULL,
+    stock_opportunity_score DOUBLE NOT NULL,
+    theme_score DOUBLE NOT NULL,
+    rs_percentile DOUBLE NOT NULL,
+    fundamental_acceleration DOUBLE NOT NULL,
+    setup_quality DOUBLE NOT NULL,
+    volume_accumulation DOUBLE NOT NULL,
+    risk_reward DOUBLE NOT NULL,
+    liquidity DOUBLE NOT NULL,
+    component_coverage_pct DOUBLE NOT NULL,
+    state VARCHAR NOT NULL,
+    signal_generated_at_utc TIMESTAMPTZ NOT NULL,
+    config_hash VARCHAR NOT NULL,
+    git_commit VARCHAR NOT NULL,
+    data_snapshot_id VARCHAR NOT NULL,
+    universe_version VARCHAR NOT NULL,
+    theme_version VARCHAR NOT NULL,
+    PRIMARY KEY (asof_date, symbol, theme_id)
+);
+
+CREATE TABLE IF NOT EXISTS watchlist (
+    asof_date DATE NOT NULL,
+    symbol VARCHAR NOT NULL,
+    theme_id VARCHAR NOT NULL,
+    state VARCHAR NOT NULL,
+    reason VARCHAR NOT NULL,
+    signal_generated_at_utc TIMESTAMPTZ NOT NULL,
+    config_hash VARCHAR NOT NULL,
+    git_commit VARCHAR NOT NULL,
+    data_snapshot_id VARCHAR NOT NULL,
+    universe_version VARCHAR NOT NULL,
+    theme_version VARCHAR NOT NULL,
+    PRIMARY KEY (asof_date, symbol, theme_id)
+);

@@ -1,6 +1,6 @@
 project:
   name: SectorScout
-  schema_version: 0
+  schema_version: 3
 
 market:
   calendar: XNYS
@@ -14,6 +14,34 @@ data:
 
 data_quality:
   stale_price_days: 1
+
+indicators:
+  rs_lookback_days: 63
+  stage2_high_window_days: 252
+  stage2_min_pct_of_high: 0.75
+
+market_regime:
+  risk_on_min_pct_above_50dma: 0.50
+  risk_on_min_pct_stage2: 0.30
+  neutral_min_pct_above_200dma: 0.40
+
+scoring:
+  discover_theme_threshold: 65
+  watch_rs_percentile: 80
+  theme_weights:
+    technical_relative_strength: 0.35
+    breadth: 0.25
+    fundamental_acceleration: 0.25
+    catalyst: 0.10
+    risk_valuation_penalty: 0.05
+  stock_weights:
+    theme_score: 0.25
+    rs_percentile: 0.20
+    fundamental_acceleration: 0.15
+    setup_quality: 0.15
+    volume_accumulation: 0.10
+    risk_reward: 0.10
+    liquidity: 0.05
 
 providers:
   prices_primary: FMP

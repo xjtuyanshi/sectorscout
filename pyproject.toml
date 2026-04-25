@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "sectorscout"
 version = "0.1.0"
-description = "Phase 0 foundation for a point-in-time sector and setup research system."
+description = "Point-in-time sector and setup research system built in staged phases."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
