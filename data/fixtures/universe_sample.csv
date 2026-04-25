@@ -1,0 +1,5 @@
+symbol,name,exchange,security_type,is_etf,is_active,ipo_date,delist_date,first_seen_at,last_seen_at
+AAPL,Apple Inc,NASDAQ,common_stock,false,true,1980-12-12,,2024-11-27,2024-11-29
+MU,Micron Technology Inc,NASDAQ,common_stock,false,true,1984-06-01,,2024-11-27,2024-11-29
+SMH,VanEck Semiconductor ETF,NASDAQ,etf,true,true,2000-05-05,,2024-11-27,2024-11-29
+MISSING,Missing Price Example,NASDAQ,common_stock,false,true,2020-01-01,,2024-11-27,2024-11-29

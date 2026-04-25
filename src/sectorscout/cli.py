@@ -8,7 +8,13 @@ import typer
 
 from sectorscout import __version__
 from sectorscout.config import config_hash, load_config
+from sectorscout.data_quality import compute_data_quality, persist_data_quality
 from sectorscout.db import initialize_database, persist_run_metadata
+from sectorscout.ingest import (
+    ingest_corporate_actions_csv,
+    ingest_prices_csv,
+    ingest_universe_csv,
+)
 from sectorscout.market_calendar import asof_market_close, to_market_time
 from sectorscout.metadata import build_run_metadata
 
@@ -101,13 +107,45 @@ def _phase0_not_implemented(name: str) -> None:
 
 
 @app.command("refresh-universe")
-def refresh_universe() -> None:
-    _phase0_not_implemented("refresh-universe")
+def refresh_universe(
+    from_csv: Path | None = typer.Option(None, "--from-csv"),
+    provider: str = typer.Option("fixture", "--provider"),
+    config: Path = typer.Option(Path("config.yaml"), "--config"),
+) -> None:
+    loaded = _load(config)
+    if from_csv is None:
+        _phase0_not_implemented("live refresh-universe")
+        return
+    count = ingest_universe_csv(loaded, from_csv, provider=provider)
+    typer.echo(f"Ingested {count} symbols from {from_csv}")
 
 
 @app.command("ingest-prices")
-def ingest_prices() -> None:
-    _phase0_not_implemented("ingest-prices")
+def ingest_prices(
+    from_csv: Path | None = typer.Option(None, "--from-csv"),
+    provider: str = typer.Option("fixture", "--provider"),
+    config: Path = typer.Option(Path("config.yaml"), "--config"),
+) -> None:
+    loaded = _load(config)
+    if from_csv is None:
+        _phase0_not_implemented("live ingest-prices")
+        return
+    count = ingest_prices_csv(loaded, from_csv, provider=provider)
+    typer.echo(f"Ingested {count} price rows from {from_csv}")
+
+
+@app.command("ingest-corporate-actions")
+def ingest_corporate_actions(
+    from_csv: Path | None = typer.Option(None, "--from-csv"),
+    source: str = typer.Option("fixture", "--source"),
+    config: Path = typer.Option(Path("config.yaml"), "--config"),
+) -> None:
+    loaded = _load(config)
+    if from_csv is None:
+        _phase0_not_implemented("live ingest-corporate-actions")
+        return
+    count = ingest_corporate_actions_csv(loaded, from_csv, source=source)
+    typer.echo(f"Ingested {count} corporate action rows from {from_csv}")
 
 
 @app.command("ingest-fundamentals")
@@ -140,6 +178,21 @@ def validate() -> None:
 @app.command()
 def dashboard() -> None:
     _phase0_not_implemented("dashboard")
+
+
+@app.command("data-quality")
+def data_quality(
+    asof: str = typer.Option(..., "--asof"),
+    persist: bool = typer.Option(True, "--persist/--no-persist"),
+    config: Path = typer.Option(Path("config.yaml"), "--config"),
+) -> None:
+    loaded = _load(config)
+    parsed_asof = _parse_iso_date(asof)
+    assert parsed_asof is not None
+    report = compute_data_quality(loaded, parsed_asof)
+    if persist:
+        persist_data_quality(loaded, report)
+    typer.echo(report.to_json())
 
 
 if __name__ == "__main__":

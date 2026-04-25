@@ -27,6 +27,10 @@ class DataConfig(BaseModel):
     fixture_dir: Path = Path("data/fixtures")
 
 
+class DataQualityConfig(BaseModel):
+    stale_price_days: int = 1
+
+
 class ProviderConfig(BaseModel):
     prices_primary: str = "FMP"
     prices_fallback: str = "yfinance"
@@ -65,6 +69,7 @@ class SectorScoutConfig(BaseModel):
     market: MarketConfig = Field(default_factory=MarketConfig)
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
     data: DataConfig = Field(default_factory=DataConfig)
+    data_quality: DataQualityConfig = Field(default_factory=DataQualityConfig)
     providers: ProviderConfig = Field(default_factory=ProviderConfig)
     missing_data_policy: MissingDataPolicy = Field(default_factory=MissingDataPolicy)
     reproducibility: ReproducibilityConfig = Field(default_factory=ReproducibilityConfig)
@@ -98,4 +103,3 @@ def canonical_config_payload(config: SectorScoutConfig) -> str:
 def config_hash(config: SectorScoutConfig) -> str:
     payload = canonical_config_payload(config).encode("utf-8")
     return hashlib.sha256(payload).hexdigest()
-

@@ -12,6 +12,9 @@ database:
 data:
   fixture_dir: data/fixtures
 
+data_quality:
+  stale_price_days: 1
+
 providers:
   prices_primary: FMP
   prices_fallback: yfinance
@@ -39,4 +42,3 @@ portfolio:
 
 validation:
   default_start_year: 2016
-
