@@ -66,14 +66,7 @@ def compute_data_quality(config: SectorScoutConfig, asof_date: date) -> DataQual
             """,
             [asof_date, asof_date, config.data_quality.stale_price_days],
         ).fetchone()[0]
-        split_adjustment_warnings = connection.execute(
-            """
-            SELECT COUNT(*)
-            FROM daily_prices
-            WHERE price_date <= ? AND adjustment_warning = true
-            """,
-            [asof_date],
-        ).fetchone()[0]
+        split_adjustment_warnings = int(chosen_prices["adjustment_warning"].sum()) if not chosen_prices.empty else 0
         provider_rows = connection.execute(
             """
             SELECT provider, COUNT(*) AS row_count
@@ -143,17 +136,8 @@ def compute_historical_data_quality(
     fallback_to_yfinance_count = int(
         price_snapshot_provider_mix.get(config.providers.prices_fallback, 0)
     )
+    split_adjustment_warnings = int(chosen_prices["adjustment_warning"].sum()) if not chosen_prices.empty else 0
     with connect_database(config.database.path) as connection:
-        split_adjustment_warnings = connection.execute(
-            """
-            SELECT COUNT(*)
-            FROM daily_prices
-            WHERE price_date <= ?
-              AND adjustment_warning = true
-              AND symbol IN (SELECT unnest(?))
-            """,
-            [asof_date, sorted(snapshot_symbols)],
-        ).fetchone()[0] if snapshot_symbols else 0
         symbols_with_fundamental_data = connection.execute(
             """
             SELECT COUNT(DISTINCT symbol)
@@ -203,6 +187,7 @@ def persist_data_quality(config: SectorScoutConfig, report: DataQualityReport) -
             """
             INSERT OR REPLACE INTO data_quality_daily (
                 asof_date,
+                universe_mode,
                 total_symbols,
                 symbols_with_price_data,
                 symbols_missing_price_data,
@@ -213,11 +198,15 @@ def persist_data_quality(config: SectorScoutConfig, report: DataQualityReport) -
                 provider_rate_limit_events,
                 fallback_to_yfinance_count,
                 provider_mix_json,
+                duplicate_provider_rows_dropped,
+                price_snapshot_provider_mix_json,
+                benchmark_symbols_with_price_data,
                 created_at_utc
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 date.fromisoformat(report.asof_date),
+                report.universe_mode,
                 report.total_symbols,
                 report.symbols_with_price_data,
                 report.symbols_missing_price_data,
@@ -228,6 +217,9 @@ def persist_data_quality(config: SectorScoutConfig, report: DataQualityReport) -
                 report.provider_rate_limit_events,
                 report.fallback_to_yfinance_count,
                 json.dumps(report.provider_mix, sort_keys=True),
+                report.duplicate_provider_rows_dropped,
+                json.dumps(report.price_snapshot_provider_mix, sort_keys=True),
+                report.benchmark_symbols_with_price_data,
                 datetime.now(timezone.utc),
             ],
         )

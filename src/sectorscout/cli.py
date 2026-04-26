@@ -14,6 +14,7 @@ from sectorscout.data_quality import (
     persist_data_quality,
 )
 from sectorscout.db import initialize_database, persist_run_metadata
+from sectorscout.execution import generate_execution_decisions
 from sectorscout.ingest import (
     ingest_corporate_actions_csv,
     ingest_fundamental_facts_csv,
@@ -275,6 +276,19 @@ def report(
 @app.command()
 def backtest() -> None:
     _phase0_not_implemented("backtest")
+
+
+@app.command("execution-decisions")
+def execution_decisions(
+    asof: str = typer.Option(..., "--asof"),
+    persist: bool = typer.Option(True, "--persist/--no-persist"),
+    config: Path = typer.Option(Path("config.yaml"), "--config"),
+) -> None:
+    loaded = _load(config)
+    parsed_asof = _parse_iso_date(asof)
+    assert parsed_asof is not None
+    result = generate_execution_decisions(loaded, parsed_asof, persist=persist)
+    typer.echo(json.dumps(result.to_dict(), indent=2, sort_keys=True))
 
 
 @app.command()

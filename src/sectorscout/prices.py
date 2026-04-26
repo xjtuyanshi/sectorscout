@@ -8,6 +8,18 @@ import pandas as pd
 from sectorscout.config import SectorScoutConfig
 from sectorscout.db import connect_database
 
+PRICE_SNAPSHOT_COLUMNS = [
+    "symbol",
+    "price_date",
+    "adj_open",
+    "adj_high",
+    "adj_low",
+    "adj_close",
+    "adj_volume",
+    "provider",
+    "adjustment_warning",
+]
+
 
 def provider_priority(config: SectorScoutConfig) -> list[str]:
     providers = [
@@ -45,6 +57,8 @@ def load_price_snapshot(
     symbols: Iterable[str] | None = None,
 ) -> tuple[pd.DataFrame, int]:
     symbol_list = sorted({symbol.upper() for symbol in symbols}) if symbols is not None else None
+    if symbols is not None and not symbol_list:
+        return pd.DataFrame(columns=PRICE_SNAPSHOT_COLUMNS), 0
     symbol_filter = "AND symbol IN (SELECT unnest(?))" if symbol_list else ""
     params: list[object] = [asof_date]
     if symbol_list:

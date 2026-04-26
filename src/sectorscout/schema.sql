@@ -66,7 +66,8 @@ CREATE TABLE IF NOT EXISTS corporate_actions (
 );
 
 CREATE TABLE IF NOT EXISTS data_quality_daily (
-    asof_date DATE PRIMARY KEY,
+    asof_date DATE NOT NULL,
+    universe_mode VARCHAR NOT NULL DEFAULT 'live',
     total_symbols INTEGER NOT NULL,
     symbols_with_price_data INTEGER NOT NULL,
     symbols_missing_price_data INTEGER NOT NULL,
@@ -77,7 +78,11 @@ CREATE TABLE IF NOT EXISTS data_quality_daily (
     provider_rate_limit_events INTEGER NOT NULL,
     fallback_to_yfinance_count INTEGER NOT NULL,
     provider_mix_json VARCHAR NOT NULL,
-    created_at_utc TIMESTAMPTZ NOT NULL
+    duplicate_provider_rows_dropped INTEGER NOT NULL DEFAULT 0,
+    price_snapshot_provider_mix_json VARCHAR NOT NULL DEFAULT '{}',
+    benchmark_symbols_with_price_data INTEGER NOT NULL DEFAULT 0,
+    created_at_utc TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (asof_date, universe_mode)
 );
 
 CREATE TABLE IF NOT EXISTS fundamental_facts (
@@ -294,4 +299,34 @@ CREATE TABLE IF NOT EXISTS signals (
     universe_version VARCHAR NOT NULL,
     theme_version VARCHAR NOT NULL,
     PRIMARY KEY (asof_date, symbol, theme_id, setup_type)
+);
+
+CREATE TABLE IF NOT EXISTS execution_decisions (
+    asof_date DATE NOT NULL,
+    symbol VARCHAR NOT NULL,
+    theme_id VARCHAR NOT NULL,
+    setup_type VARCHAR NOT NULL,
+    execution_model VARCHAR NOT NULL,
+    decision VARCHAR NOT NULL,
+    reject_reason VARCHAR,
+    signal_entry_trigger DOUBLE,
+    signal_stop_loss DOUBLE,
+    next_session_date DATE,
+    chosen_provider VARCHAR,
+    actual_entry_price DOUBLE,
+    actual_stop_loss DOUBLE,
+    risk_per_share DOUBLE,
+    target_2r DOUBLE,
+    target_3r DOUBLE,
+    reward_risk DOUBLE,
+    max_entry_extension_pct DOUBLE NOT NULL,
+    max_initial_stop_pct DOUBLE NOT NULL,
+    execution_data_quality_pass BOOLEAN NOT NULL,
+    signal_generated_at_utc TIMESTAMPTZ NOT NULL,
+    config_hash VARCHAR NOT NULL,
+    git_commit VARCHAR NOT NULL,
+    data_snapshot_id VARCHAR NOT NULL,
+    universe_version VARCHAR NOT NULL,
+    theme_version VARCHAR NOT NULL,
+    PRIMARY KEY (asof_date, symbol, theme_id, setup_type, execution_model)
 );

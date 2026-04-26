@@ -113,6 +113,11 @@ class PortfolioConfig(BaseModel):
     max_new_positions_per_day: int = 3
 
 
+class ExecutionConfig(BaseModel):
+    max_entry_extension_pct: float = 0.05
+    max_initial_stop_pct: float = 0.12
+
+
 class ValidationConfig(BaseModel):
     default_start_year: int = 2016
 
@@ -131,6 +136,7 @@ class SectorScoutConfig(BaseModel):
     missing_data_policy: MissingDataPolicy = Field(default_factory=MissingDataPolicy)
     reproducibility: ReproducibilityConfig = Field(default_factory=ReproducibilityConfig)
     portfolio: PortfolioConfig = Field(default_factory=PortfolioConfig)
+    execution: ExecutionConfig = Field(default_factory=ExecutionConfig)
     validation: ValidationConfig = Field(default_factory=ValidationConfig)
 
 

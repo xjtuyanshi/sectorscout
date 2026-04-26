@@ -402,18 +402,15 @@ def _detect_earnings_gap_base(
     frame["prev_close"] = frame["close"].shift(1)
     frame["volume_50d_avg"] = frame["volume"].rolling(50).mean()
     frame["gap_pct"] = frame["open"] / frame["prev_close"] - 1
+    frame["is_known_earnings_gap_date"] = frame["date"].apply(
+        lambda value: (value.date() if hasattr(value, "date") else date.fromisoformat(str(value)))
+        in known_gap_dates
+    )
     gap_rows = frame[
-        (frame["gap_pct"] >= config.setups.earnings_gap_min_gap_pct)
+        frame["is_known_earnings_gap_date"]
+        & (frame["gap_pct"] >= config.setups.earnings_gap_min_gap_pct)
         & (frame["volume"] >= config.setups.earnings_gap_min_volume_ratio * frame["volume_50d_avg"])
     ].tail(1)
-    if gap_rows.empty:
-        return None
-    gap_rows = gap_rows[
-        gap_rows["date"].apply(
-            lambda value: (value.date() if hasattr(value, "date") else date.fromisoformat(str(value)))
-            in known_gap_dates
-        )
-    ]
     if gap_rows.empty:
         return None
     gap_index = gap_rows.index[-1]

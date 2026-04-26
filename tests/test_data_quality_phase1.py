@@ -11,6 +11,7 @@ from sectorscout.data_quality import (
 )
 from sectorscout.db import initialize_database
 from sectorscout.ingest import ingest_prices_csv, ingest_universe_csv
+from sectorscout.prices import load_price_snapshot
 
 
 def test_data_quality_counts_provider_fallback_and_missing_prices(tmp_path: Path) -> None:
@@ -44,9 +45,18 @@ def test_data_quality_persists_report(tmp_path: Path) -> None:
     persist_data_quality(config, report)
     with duckdb.connect(str(config.database.path)) as connection:
         row = connection.execute(
-            "SELECT total_symbols, symbols_missing_price_data FROM data_quality_daily"
+            """
+            SELECT
+                total_symbols,
+                symbols_missing_price_data,
+                universe_mode,
+                duplicate_provider_rows_dropped,
+                price_snapshot_provider_mix_json,
+                benchmark_symbols_with_price_data
+            FROM data_quality_daily
+            """
         ).fetchone()
-    assert row == (4, 1)
+    assert row == (4, 1, "live", 0, '{"fixture": 4}', 1)
 
 
 def test_historical_data_quality_uses_asof_tradable_universe(tmp_path: Path) -> None:
@@ -80,3 +90,63 @@ def test_historical_data_quality_uses_asof_tradable_universe(tmp_path: Path) -> 
     assert report.symbols_with_price_data == 1
     assert report.symbols_missing_price_data == 1
     assert report.benchmark_symbols_with_price_data == 1
+
+
+def test_load_price_snapshot_empty_symbol_list_returns_empty_snapshot(tmp_path: Path) -> None:
+    config = SectorScoutConfig.model_validate(
+        {"database": {"path": tmp_path / "test.duckdb"}}
+    )
+    initialize_database(config)
+    ingest_prices_csv(config, "data/fixtures/prices_sample.csv", provider="fixture")
+
+    snapshot, duplicate_count = load_price_snapshot(config, date(2024, 11, 29), symbols=[])
+
+    assert snapshot.empty
+    assert list(snapshot.columns) == [
+        "symbol",
+        "price_date",
+        "adj_open",
+        "adj_high",
+        "adj_low",
+        "adj_close",
+        "adj_volume",
+        "provider",
+        "adjustment_warning",
+    ]
+    assert duplicate_count == 0
+
+
+def test_historical_split_warnings_use_chosen_provider_snapshot(tmp_path: Path) -> None:
+    config = SectorScoutConfig.model_validate(
+        {
+            "database": {"path": tmp_path / "test.duckdb"},
+            "providers": {"prices_primary": "FMP", "prices_fallback": "yfinance"},
+        }
+    )
+    initialize_database(config)
+    universe_csv = tmp_path / "universe.csv"
+    universe_csv.write_text(
+        "symbol,name,exchange,security_type,is_etf,is_active,ipo_date,delist_date,first_seen_at,last_seen_at\n"
+        "DUP,Duplicate Co,NASDAQ,common_stock,false,true,2020-01-01,,2020-01-01,2024-12-31\n",
+        encoding="utf-8",
+    )
+    ingest_universe_csv(config, universe_csv, provider="fixture")
+    with duckdb.connect(str(config.database.path)) as connection:
+        for provider, adjustment_warning in (("FMP", False), ("yfinance", True)):
+            connection.execute(
+                """
+                INSERT INTO daily_prices (
+                    symbol, price_date, open, high, low, close, volume,
+                    adj_open, adj_high, adj_low, adj_close, adj_volume,
+                    provider, is_adjusted, adjustment_warning, ingested_at_utc
+                ) VALUES ('DUP', DATE '2024-11-29', 100, 101, 99, 100, 1000,
+                    100, 101, 99, 100, 1000, ?, true, ?, now())
+                """,
+                [provider, adjustment_warning],
+            )
+
+    report = compute_historical_data_quality(config, date(2024, 11, 29))
+
+    assert report.duplicate_provider_rows_dropped == 1
+    assert report.price_snapshot_provider_mix == {"FMP": 1}
+    assert report.split_adjustment_warnings == 0

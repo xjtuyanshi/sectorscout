@@ -4,8 +4,9 @@ SectorScout is a staged, point-in-time research system for finding strong market
 themes, ranking strong stocks inside those themes, and waiting for technical
 setups before labeling anything actionable.
 
-Current status: Phase 4 foundation is implemented, with additional pre-Phase 5
-hardening based on static review feedback.
+Current status: Phase 5A foundation is implemented. It creates next-open
+execution-decision records from frozen Phase 4 triggered setup candidates, but it
+does not calculate strategy performance.
 
 Implemented so far:
 
@@ -24,22 +25,27 @@ Implemented so far:
 - Pre-Phase-5 hardening: provider-priority price snapshots, ranked portfolio
   candidate selection, earnings timestamp to gap-session mapping, historical
   data-quality reporting, and additional PIT/execution-boundary tests.
+- Phase 5A: read-only next-open execution-decision skeleton for frozen triggered
+  setup candidates, including next-session open lookup, entry-extension rejects,
+  stop validation, initial risk checks, and `execution_decisions` persistence.
 
 Not implemented yet:
 
-- Phase 5: backtesting, exits, baselines, ablation, and rolling/expanding
-  validation.
+- Formal Phase 5 backtesting: exits, baselines, ablation, rolling/expanding
+  validation, CAGR, Sharpe, max drawdown, annual returns, or performance
+  conclusions.
 - Phase 6: Streamlit dashboard, documentation polish, CI, and GitHub-ready demo
   workflow.
 - Live data providers. Current ingestion is CSV/fixture based.
 
-Current Phase 4 limitations:
+Current limitations:
 
-- No true backtest, no performance claims, and no live provider ingestion.
+- No true performance backtest, no performance claims, and no live provider
+  ingestion.
 - Triggered setups are labeled as research candidates only; `actionable` remains
-  false until Phase 5 implements next-session execution validation.
-- Reward/risk is still a structural estimate from trigger/stop, not a Phase 5
-  next-open execution calculation.
+  false in Phase 4 reports.
+- Phase 5A `execution_decisions` recompute next-open risk/RR for candidate
+  records only; they are not trade logs and not performance results.
 - Earnings Gap Base requires a known public earnings timestamp, but event
   sourcing is still based on fixture fundamentals rather than a dedicated live
   earnings-events provider.
@@ -78,6 +84,7 @@ Run the current research commands:
 .venv/bin/sectorscout theme-members-asof --asof 2024-11-29 --config config.yaml
 .venv/bin/sectorscout score --asof 2024-11-29 --config config.yaml
 .venv/bin/sectorscout detect-setups --asof 2024-11-29 --config config.yaml
+.venv/bin/sectorscout execution-decisions --asof 2024-11-29 --config config.yaml
 .venv/bin/sectorscout report --date 2024-11-29 --config config.yaml
 ```
 
@@ -94,5 +101,5 @@ Important design constraints to review:
   claims.
 - Scores rank candidates; Phase 4 setup triggers create research candidates only.
 - The system must not output direct buy labels or execution instructions.
-- Backtesting is intentionally not implemented yet, so no performance claims
-  should be inferred from the current repository.
+- Phase 5A execution-decision records are not a performance backtest, so no
+  performance claims should be inferred from the current repository.

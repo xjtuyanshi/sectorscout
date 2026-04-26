@@ -59,6 +59,18 @@ def market_session_open(session_date: date | str, config: SectorScoutConfig) -> 
     return open_ts.to_pydatetime().astimezone(UTC)
 
 
+def next_market_session(session_date: date | str, config: SectorScoutConfig) -> date:
+    """Return the next exchange session after session_date."""
+    calendar = get_exchange_calendar(config)
+    session = pd.Timestamp(session_date)
+    if session.tzinfo is not None:
+        session = session.tz_convert("UTC").tz_localize(None)
+    else:
+        session = session.tz_localize(None)
+    next_session = calendar.next_session(session)
+    return next_session.date()
+
+
 def to_market_time(timestamp_utc: datetime, config: SectorScoutConfig) -> datetime:
     if timestamp_utc.tzinfo is None:
         raise ValueError("timestamp_utc must be timezone-aware")

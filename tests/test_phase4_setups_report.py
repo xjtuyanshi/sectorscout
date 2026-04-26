@@ -6,7 +6,7 @@ from pathlib import Path
 import pandas as pd
 
 from sectorscout.config import SectorScoutConfig
-from sectorscout.db import initialize_database
+from sectorscout.db import connect_database, initialize_database
 from sectorscout.ingest import (
     ingest_fundamental_facts_csv,
     ingest_prices_csv,
@@ -175,6 +175,44 @@ def test_phase4_vcp_without_breakout_is_setup_not_triggered(tmp_path: Path) -> N
     assert result["signals"][0]["action_category"] == "Setup forming"
 
 
+def test_phase4_setup_detection_uses_provider_priority_price_snapshot(tmp_path: Path) -> None:
+    config = _seed_vcp_database(tmp_path)
+    with connect_database(config.database.path) as connection:
+        for provider, close, volume in (("FMP", 142.0, 350_000), ("yfinance", 146.0, 1_500_000)):
+            connection.execute(
+                """
+                INSERT INTO daily_prices (
+                    symbol, price_date, open, high, low, close, volume,
+                    adj_open, adj_high, adj_low, adj_close, adj_volume,
+                    provider, is_adjusted, adjustment_warning, ingested_at_utc
+                ) VALUES (
+                    'MU', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, true, false, now()
+                )
+                """,
+                [
+                    ASOF,
+                    close * 0.997,
+                    close * 1.012,
+                    close * 0.988,
+                    close,
+                    volume,
+                    close * 0.997,
+                    close * 1.012,
+                    close * 0.988,
+                    close,
+                    volume,
+                    provider,
+                ],
+            )
+
+    result = detect_setups(config, ASOF).to_dict()
+    vcp_setups = [row for row in result["setups"] if row["setup_type"] == "VCP"]
+
+    assert len(vcp_setups) == 1
+    assert vcp_setups[0]["state"] == "SETUP"
+    assert vcp_setups[0]["trigger_price"] is None
+
+
 def test_phase4_daily_report_uses_required_action_categories(tmp_path: Path) -> None:
     config = _seed_vcp_database(tmp_path)
     report = generate_daily_report(config, ASOF)
@@ -329,3 +367,72 @@ def test_phase4_earnings_gap_maps_premarket_to_same_session_and_after_close_to_n
 
     assert _known_earnings_gap_dates(config, "PRE", ASOF, prices) == {date(2024, 11, 20)}
     assert _known_earnings_gap_dates(config, "POST", ASOF, prices) == {date(2024, 11, 21)}
+
+
+def test_phase4_earnings_gap_filters_known_gap_dates_before_selecting_latest_gap(
+    tmp_path: Path,
+) -> None:
+    config = SectorScoutConfig.model_validate(
+        {"database": {"path": tmp_path / "test.duckdb"}}
+    )
+    initialize_database(config)
+    facts = tmp_path / "facts.csv"
+    facts.write_text(
+        "symbol,cik,fiscal_period,fiscal_year,fiscal_quarter,form_type,metric_name,metric_value,period_end_date,filing_date,accepted_at,earnings_release_datetime,available_at,provider_updated_at\n"
+        "GAP,0001,2024Q3,2024,3,10-Q,revenue,100,2024-09-30,2024-11-15,2024-11-15T21:30:00+00:00,2024-11-15T21:30:00+00:00,2024-11-15T21:30:00+00:00,2024-11-15T21:31:00+00:00\n",
+        encoding="utf-8",
+    )
+    ingest_fundamental_facts_csv(config, facts, source="fixture")
+    rows = []
+    dates = pd.bdate_range(end=ASOF, periods=90)
+    post_gap_mode = False
+    for index, session in enumerate(dates):
+        session_date = session.date()
+        close = 100.0 + index * 0.02
+        open_ = close
+        high = close * 1.005
+        low = close * 0.995
+        volume = 500_000
+        if session_date == date(2024, 11, 18):
+            post_gap_mode = True
+            open_ = 112.0
+            close = 113.0
+            high = 114.0
+            low = 111.0
+            volume = 2_000_000
+        elif session_date == date(2024, 11, 26):
+            open_ = 128.0
+            close = 129.0
+            high = 131.0
+            low = 126.0
+            volume = 2_000_000
+        elif post_gap_mode:
+            close = 113.0 + index * 0.05
+            open_ = close
+            high = min(close * 1.005, 130.0)
+            low = 111.5
+            volume = 600_000
+        if session_date == ASOF:
+            open_ = 132.0
+            close = 132.5
+            high = 133.0
+            low = 131.5
+            volume = 700_000
+        rows.append(
+            {
+                "date": session_date,
+                "open": open_,
+                "high": high,
+                "low": low,
+                "close": close,
+                "volume": volume,
+            }
+        )
+    prices = pd.DataFrame(rows)
+    candidate = {"symbol": "GAP", "theme_id": "ai-memory"}
+    metadata = _setup_row("GAP", "ai-memory")
+
+    setup = _detect_earnings_gap_base(config, candidate, prices, metadata)
+
+    assert setup is not None
+    assert setup.consolidation_start == "2024-11-18"
