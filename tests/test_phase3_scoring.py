@@ -16,7 +16,7 @@ from sectorscout.ingest import (
     ingest_universe_csv,
 )
 from sectorscout.market_regime import compute_market_regime
-from sectorscout.scoring import run_scoring
+from sectorscout.scoring import _fundamental_scores, run_scoring
 
 
 ASOF = date(2024, 11, 29)
@@ -173,3 +173,128 @@ def test_phase3_scores_rank_without_triggering_trades(tmp_path: Path) -> None:
             [ASOF],
         ).fetchone()[0]
     assert watchlist_state == "WATCH"
+
+
+def test_phase3_indicators_use_provider_priority_without_duplicate_price_rows(tmp_path: Path) -> None:
+    config = SectorScoutConfig.model_validate(
+        {
+            "database": {"path": tmp_path / "test.duckdb"},
+            "providers": {"prices_primary": "FMP", "prices_fallback": "yfinance"},
+        }
+    )
+    initialize_database(config)
+    universe_path = tmp_path / "universe.csv"
+    prices_path = tmp_path / "prices.csv"
+    universe_path.write_text(
+        "symbol,name,exchange,security_type,is_etf,is_active,ipo_date,delist_date,first_seen_at,last_seen_at\n"
+        "DUP,Duplicate Provider Co,NASDAQ,common_stock,false,true,2020-01-01,,2020-01-01,2024-12-31\n",
+        encoding="utf-8",
+    )
+    dates = pd.bdate_range(end=ASOF, periods=70)
+    lines = [
+        "symbol,date,open,high,low,close,volume,adj_open,adj_high,adj_low,adj_close,adj_volume,adjustment_warning"
+    ]
+    for session in dates:
+        for provider_close, provider in ((100.0, "FMP"), (999.0, "yfinance")):
+            lines.append(
+                ",".join(
+                    [
+                        "DUP",
+                        session.date().isoformat(),
+                        str(provider_close),
+                        str(provider_close + 1),
+                        str(provider_close - 1),
+                        str(provider_close),
+                        "1000000",
+                        str(provider_close),
+                        str(provider_close + 1),
+                        str(provider_close - 1),
+                        str(provider_close),
+                        "1000000",
+                        "false",
+                        provider,
+                    ]
+                )
+            )
+    prices_path.write_text(
+        "symbol,date,open,high,low,close,volume,adj_open,adj_high,adj_low,adj_close,adj_volume,adjustment_warning,provider\n"
+        + "\n".join(line for line in lines[1:])
+        + "\n",
+        encoding="utf-8",
+    )
+
+    ingest_universe_csv(config, universe_path, provider="fixture")
+    # The CSV ingestion takes provider as a command parameter, so insert duplicate
+    # providers directly to model a multi-provider snapshot.
+    with connect_database(config.database.path) as connection:
+        for line in prices_path.read_text(encoding="utf-8").splitlines()[1:]:
+            (
+                symbol,
+                session_date,
+                open_,
+                high,
+                low,
+                close,
+                volume,
+                adj_open,
+                adj_high,
+                adj_low,
+                adj_close,
+                adj_volume,
+                adjustment_warning,
+                provider,
+            ) = line.split(",")
+            connection.execute(
+                """
+                INSERT INTO daily_prices (
+                    symbol, price_date, open, high, low, close, volume,
+                    adj_open, adj_high, adj_low, adj_close, adj_volume,
+                    provider, is_adjusted, adjustment_warning, ingested_at_utc
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, true, ?, now())
+                """,
+                [
+                    symbol,
+                    date.fromisoformat(session_date),
+                    float(open_),
+                    float(high),
+                    float(low),
+                    float(close),
+                    int(volume),
+                    float(adj_open),
+                    float(adj_high),
+                    float(adj_low),
+                    float(adj_close),
+                    int(adj_volume),
+                    provider,
+                    adjustment_warning == "true",
+                ],
+            )
+    rows = compute_technical_indicators(config, ASOF)
+
+    assert len(rows) == 1
+    assert rows[0].symbol == "DUP"
+    assert rows[0].close == 100.0
+
+
+def test_phase3_fundamental_scores_use_median_across_metrics(tmp_path: Path) -> None:
+    config = SectorScoutConfig.model_validate(
+        {"database": {"path": tmp_path / "test.duckdb"}}
+    )
+    initialize_database(config)
+    facts = tmp_path / "facts.csv"
+    facts.write_text(
+        "symbol,cik,fiscal_period,fiscal_year,fiscal_quarter,form_type,metric_name,metric_value,period_end_date,filing_date,accepted_at,earnings_release_datetime,available_at,provider_updated_at\n"
+        "MU,0000723125,2023Q4,2023,4,10-K,revenue,100,2023-08-31,2023-10-05,2023-10-05T20:15:00+00:00,2023-09-27T20:05:00+00:00,2023-10-05T20:15:00+00:00,2023-10-05T20:16:00+00:00\n"
+        "MU,0000723125,2024Q4,2024,4,10-K,revenue,130,2024-08-29,2024-10-03,2024-10-03T20:15:00+00:00,2024-09-25T20:05:00+00:00,2024-10-03T20:15:00+00:00,2024-10-03T20:16:00+00:00\n"
+        "MU,0000723125,2023Q4,2023,4,10-K,gross_margin,100,2023-08-31,2023-10-05,2023-10-05T20:15:00+00:00,2023-09-27T20:05:00+00:00,2023-10-05T20:15:00+00:00,2023-10-05T20:16:00+00:00\n"
+        "MU,0000723125,2024Q4,2024,4,10-K,gross_margin,110,2024-08-29,2024-10-03,2024-10-03T20:15:00+00:00,2024-09-25T20:05:00+00:00,2024-10-03T20:15:00+00:00,2024-10-03T20:16:00+00:00\n"
+        "MU,0000723125,2023Q4,2023,4,10-K,eps,100,2023-08-31,2023-10-05,2023-10-05T20:15:00+00:00,2023-09-27T20:05:00+00:00,2023-10-05T20:15:00+00:00,2023-10-05T20:16:00+00:00\n"
+        "MU,0000723125,2024Q4,2024,4,10-K,eps,90,2024-08-29,2024-10-03,2024-10-03T20:15:00+00:00,2024-09-25T20:05:00+00:00,2024-10-03T20:15:00+00:00,2024-10-03T20:16:00+00:00\n",
+        encoding="utf-8",
+    )
+    ingest_fundamental_facts_csv(config, facts, source="fixture")
+
+    score, has_fundamental = _fundamental_scores(config, date(2024, 11, 29))["MU"]
+
+    assert has_fundamental is True
+    assert score == 60.0

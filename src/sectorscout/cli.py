@@ -8,7 +8,11 @@ import typer
 
 from sectorscout import __version__
 from sectorscout.config import config_hash, load_config
-from sectorscout.data_quality import compute_data_quality, persist_data_quality
+from sectorscout.data_quality import (
+    compute_data_quality,
+    compute_historical_data_quality,
+    persist_data_quality,
+)
 from sectorscout.db import initialize_database, persist_run_metadata
 from sectorscout.ingest import (
     ingest_corporate_actions_csv,
@@ -286,13 +290,19 @@ def dashboard() -> None:
 @app.command("data-quality")
 def data_quality(
     asof: str = typer.Option(..., "--asof"),
+    mode: str = typer.Option("live", "--mode"),
     persist: bool = typer.Option(True, "--persist/--no-persist"),
     config: Path = typer.Option(Path("config.yaml"), "--config"),
 ) -> None:
     loaded = _load(config)
     parsed_asof = _parse_iso_date(asof)
     assert parsed_asof is not None
-    report = compute_data_quality(loaded, parsed_asof)
+    if mode == "historical":
+        report = compute_historical_data_quality(loaded, parsed_asof)
+    elif mode == "live":
+        report = compute_data_quality(loaded, parsed_asof)
+    else:
+        raise typer.BadParameter("--mode must be live or historical")
     if persist:
         persist_data_quality(loaded, report)
     typer.echo(report.to_json())

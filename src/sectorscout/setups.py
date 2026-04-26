@@ -8,10 +8,11 @@ import pandas as pd
 
 from sectorscout.config import SectorScoutConfig
 from sectorscout.db import connect_database
-from sectorscout.market_calendar import asof_market_close
+from sectorscout.market_calendar import asof_market_close, market_session_open
 from sectorscout.market_regime import compute_market_regime
 from sectorscout.metadata import build_run_metadata
 from sectorscout.portfolio import market_gate_allows_new_long, portfolio_risk_passes
+from sectorscout.prices import load_price_snapshot
 from sectorscout.scoring import run_scoring
 
 
@@ -58,6 +59,9 @@ class SignalRow:
     entry_trigger: float | None
     stop_loss: float | None
     reward_risk: float | None
+    setup_data_present: bool
+    execution_data_quality_pass: bool
+    price_snapshot_quality_pass: bool
     data_quality_pass: bool
     data_quality_reason: str
     market_gate_pass: bool
@@ -87,17 +91,7 @@ class SetupRunResult:
 
 
 def _load_prices(config: SectorScoutConfig, symbol: str, asof_date: date) -> pd.DataFrame:
-    with connect_database(config.database.path) as connection:
-        frame = connection.execute(
-            """
-            SELECT
-                price_date, adj_open, adj_high, adj_low, adj_close, adj_volume
-            FROM daily_prices
-            WHERE symbol = ? AND price_date <= ?
-            ORDER BY price_date
-            """,
-            [symbol, asof_date],
-        ).fetchdf()
+    frame, _duplicate_count = load_price_snapshot(config, asof_date, symbols=[symbol])
     return frame.rename(
         columns={
             "price_date": "date",
@@ -198,10 +192,17 @@ def _known_earnings_gap_dates(
     ]
     gap_dates: set[date] = set()
     for (release_datetime,) in rows:
-        release_date = release_datetime.date()
-        next_sessions = [session for session in price_dates if session > release_date]
-        if next_sessions:
-            gap_dates.add(next_sessions[0])
+        for session in price_dates:
+            try:
+                session_open = market_session_open(session, config)
+                session_close = asof_market_close(session, config)
+            except ValueError:
+                continue
+            if release_datetime <= session_open:
+                gap_dates.add(session)
+                break
+            if session_open < release_datetime <= session_close:
+                break
     return gap_dates
 
 
@@ -489,43 +490,84 @@ def build_signals(
     setups: list[SetupRow],
     market_risk_state: str,
 ) -> list[SignalRow]:
-    triggered = sorted(
+    triggered_sorted = sorted(
         [row for row in setups if row.state == "TRIGGERED"],
         key=lambda row: row.setup_quality,
         reverse=True,
     )
-    rank_by_key = {
-        (row.symbol, row.theme_id, row.setup_type): index for index, row in enumerate(triggered)
-    }
     selected_theme_ids: list[str] = []
     selected_keys: set[tuple[str, str, str]] = set()
-    signals: list[SignalRow] = []
-    for setup in setups:
+    gate_by_key: dict[tuple[str, str, str], tuple[bool, str, bool, str, bool, bool, bool]] = {}
+
+    for setup in triggered_sorted:
+        key = (setup.symbol, setup.theme_id, setup.setup_type)
         market_gate_pass, market_gate_reason = market_gate_allows_new_long(market_risk_state)
-        data_quality_pass = setup.trigger_price is not None and setup.stop_loss is not None
-        data_quality_reason = (
-            "Phase 4 setup data is present; true next-open R/R validation is deferred to Phase 5."
-            if data_quality_pass
-            else "Setup is not triggered or lacks entry/stop data."
-        )
-        rank = rank_by_key.get((setup.symbol, setup.theme_id, setup.setup_type), 10**6)
+        setup_data_present = setup.trigger_price is not None and setup.stop_loss is not None
+        price_snapshot_quality_pass = True
+        execution_data_quality_pass = False
         portfolio_pass, portfolio_reason = portfolio_risk_passes(
             config,
-            candidate_rank=rank,
+            candidate_rank=len(selected_keys),
             theme_id=setup.theme_id,
             selected_theme_ids=selected_theme_ids,
+        )
+        passes_research_gates = (
+            market_gate_pass
+            and setup_data_present
+            and price_snapshot_quality_pass
+            and portfolio_pass
+        )
+        if passes_research_gates:
+            selected_theme_ids.append(setup.theme_id)
+            selected_keys.add(key)
+        gate_by_key[key] = (
+            market_gate_pass,
+            market_gate_reason,
+            portfolio_pass,
+            portfolio_reason,
+            setup_data_present,
+            execution_data_quality_pass,
+            price_snapshot_quality_pass,
+        )
+
+    signals: list[SignalRow] = []
+    for setup in setups:
+        key = (setup.symbol, setup.theme_id, setup.setup_type)
+        (
+            market_gate_pass,
+            market_gate_reason,
+            portfolio_pass,
+            portfolio_reason,
+            setup_data_present,
+            execution_data_quality_pass,
+            price_snapshot_quality_pass,
+        ) = gate_by_key.get(
+            key,
+            (
+                *market_gate_allows_new_long(market_risk_state),
+                False,
+                "Portfolio gate not evaluated before trigger.",
+                setup.trigger_price is not None and setup.stop_loss is not None,
+                False,
+                True,
+            ),
+        )
+        data_quality_pass = (
+            setup_data_present and execution_data_quality_pass and price_snapshot_quality_pass
+        )
+        data_quality_reason = (
+            "Execution data quality is deferred to Phase 5 next-open validation."
+            if setup_data_present and price_snapshot_quality_pass
+            else "Setup is not triggered or lacks entry/stop data."
         )
         phase5_execution_ready = False
         passes_all_research_gates = (
             setup.state == "TRIGGERED"
             and market_gate_pass
-            and data_quality_pass
+            and setup_data_present
+            and price_snapshot_quality_pass
             and portfolio_pass
         )
-        key = (setup.symbol, setup.theme_id, setup.setup_type)
-        if passes_all_research_gates:
-            selected_theme_ids.append(setup.theme_id)
-            selected_keys.add(key)
 
         actionable = passes_all_research_gates and phase5_execution_ready
         if not market_gate_pass:
@@ -555,6 +597,9 @@ def build_signals(
                 entry_trigger=setup.trigger_price,
                 stop_loss=setup.stop_loss,
                 reward_risk=setup.reward_risk,
+                setup_data_present=setup_data_present,
+                execution_data_quality_pass=execution_data_quality_pass,
+                price_snapshot_quality_pass=price_snapshot_quality_pass,
                 data_quality_pass=data_quality_pass,
                 data_quality_reason=data_quality_reason,
                 market_gate_pass=market_gate_pass,
@@ -624,13 +669,15 @@ def persist_signals(config: SectorScoutConfig, asof_date: date, rows: list[Signa
                 INSERT INTO signals (
                     asof_date, symbol, theme_id, setup_type, state,
                     action_category, actionable, reason, execution_model,
-                    entry_trigger, stop_loss, reward_risk, data_quality_pass,
+                    entry_trigger, stop_loss, reward_risk, setup_data_present,
+                    execution_data_quality_pass, price_snapshot_quality_pass,
+                    data_quality_pass,
                     data_quality_reason, market_gate_pass, market_gate_reason,
                     market_regime_risk_state, portfolio_risk_pass,
                     portfolio_risk_reason,
                     signal_generated_at_utc, config_hash, git_commit,
                     data_snapshot_id, universe_version, theme_version
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 [
                     asof_date,
@@ -645,6 +692,9 @@ def persist_signals(config: SectorScoutConfig, asof_date: date, rows: list[Signa
                     row.entry_trigger,
                     row.stop_loss,
                     row.reward_risk,
+                    row.setup_data_present,
+                    row.execution_data_quality_pass,
+                    row.price_snapshot_quality_pass,
                     row.data_quality_pass,
                     row.data_quality_reason,
                     row.market_gate_pass,

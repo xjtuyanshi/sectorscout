@@ -54,6 +54,30 @@ def test_theme_membership_is_point_in_time_and_ex_post_is_excluded_by_default(tm
     }
 
 
+def test_theme_members_valid_to_is_inclusive(tmp_path: Path) -> None:
+    config = SectorScoutConfig.model_validate(
+        {"database": {"path": tmp_path / "test.duckdb"}}
+    )
+    initialize_database(config)
+    themes = tmp_path / "themes.csv"
+    members = tmp_path / "members.csv"
+    themes.write_text(
+        "theme_id,name,theme_type,discovery_date,confidence,evidence\n"
+        "memory,Memory,live_research_theme,2024-01-01,0.9,fixture\n",
+        encoding="utf-8",
+    )
+    members.write_text(
+        "theme_id,symbol,valid_from,valid_to,confidence,evidence\n"
+        "memory,MU,2024-01-01,2024-11-29,0.9,fixture\n",
+        encoding="utf-8",
+    )
+    ingest_themes_csv(config, themes, source="fixture")
+    ingest_theme_members_csv(config, members, source="fixture")
+
+    assert [row["symbol"] for row in theme_members_asof(config, date(2024, 11, 29))] == ["MU"]
+    assert theme_members_asof(config, date(2024, 11, 30)) == []
+
+
 def test_universe_asof_respects_lifecycle_dates(tmp_path: Path) -> None:
     config = SectorScoutConfig.model_validate(
         {"database": {"path": tmp_path / "test.duckdb"}}
@@ -97,3 +121,20 @@ def test_revised_fundamental_facts_do_not_overwrite_prior_pit_rows(tmp_path: Pat
     assert [
         fact["metric_value"] for fact in available_fundamental_facts(config, date(2024, 10, 21))
     ] == [25000000000.0, 25100000000.0]
+
+
+def test_same_day_post_close_fundamental_availability_is_excluded(tmp_path: Path) -> None:
+    config = SectorScoutConfig.model_validate(
+        {"database": {"path": tmp_path / "test.duckdb"}}
+    )
+    initialize_database(config)
+    facts_csv = tmp_path / "facts.csv"
+    facts_csv.write_text(
+        "symbol,cik,fiscal_period,fiscal_year,fiscal_quarter,form_type,metric_name,metric_value,period_end_date,filing_date,accepted_at,earnings_release_datetime,available_at,provider_updated_at\n"
+        "A,0001,2024Q3,2024,3,10-Q,revenue,100,2024-09-30,2024-11-29,2024-11-29T17:59:00+00:00,2024-11-29T17:50:00+00:00,2024-11-29T17:59:00+00:00,2024-11-29T17:59:00+00:00\n"
+        "B,0002,2024Q3,2024,3,10-Q,revenue,100,2024-09-30,2024-11-29,2024-11-29T18:01:00+00:00,2024-11-29T17:50:00+00:00,2024-11-29T18:01:00+00:00,2024-11-29T18:01:00+00:00\n",
+        encoding="utf-8",
+    )
+    ingest_fundamental_facts_csv(config, facts_csv, source="fixture")
+
+    assert {fact["symbol"] for fact in available_fundamental_facts(config, date(2024, 11, 29))} == {"A"}

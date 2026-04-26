@@ -9,7 +9,7 @@ import duckdb
 from sectorscout.config import SectorScoutConfig, config_hash
 from sectorscout.metadata import RunMetadata, get_git_commit
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 SCHEMA_PATH = Path(__file__).with_name("schema.sql")
 
 

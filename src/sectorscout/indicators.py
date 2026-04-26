@@ -9,6 +9,7 @@ from sectorscout.config import SectorScoutConfig
 from sectorscout.db import connect_database
 from sectorscout.metadata import build_run_metadata
 from sectorscout.pit import BENCHMARK_SYMBOLS, tradable_universe_asof
+from sectorscout.prices import load_price_snapshot
 
 
 @dataclass(frozen=True)
@@ -47,23 +48,8 @@ def _optional_float(value: object) -> float | None:
 
 
 def _load_adjusted_prices(config: SectorScoutConfig, asof_date: date) -> pd.DataFrame:
-    with connect_database(config.database.path) as connection:
-        return connection.execute(
-            """
-            SELECT
-                symbol,
-                price_date,
-                adj_open,
-                adj_high,
-                adj_low,
-                adj_close,
-                adj_volume
-            FROM daily_prices
-            WHERE price_date <= ?
-            ORDER BY symbol, price_date
-            """,
-            [asof_date],
-        ).fetchdf()
+    prices, _duplicate_count = load_price_snapshot(config, asof_date)
+    return prices
 
 
 def _date_value(value: object) -> date:

@@ -5,7 +5,7 @@ from dataclasses import asdict, dataclass
 from datetime import date
 
 from sectorscout.config import SectorScoutConfig
-from sectorscout.data_quality import compute_data_quality
+from sectorscout.data_quality import compute_historical_data_quality
 from sectorscout.db import connect_database
 from sectorscout.setups import detect_setups
 
@@ -44,8 +44,10 @@ def generate_daily_report(config: SectorScoutConfig, asof_date: date) -> DailyRe
             SELECT
                 symbol, theme_id, setup_type, state, action_category,
                 actionable, entry_trigger, stop_loss, reward_risk,
-                data_quality_pass, data_quality_reason, market_gate_pass,
-                market_gate_reason, market_regime_risk_state,
+                setup_data_present, execution_data_quality_pass,
+                price_snapshot_quality_pass, data_quality_pass,
+                data_quality_reason, market_gate_pass, market_gate_reason,
+                market_regime_risk_state,
                 portfolio_risk_pass, portfolio_risk_reason, reason
             FROM signals
             WHERE asof_date = ?
@@ -74,6 +76,9 @@ def generate_daily_report(config: SectorScoutConfig, asof_date: date) -> DailyRe
             entry_trigger,
             stop_loss,
             reward_risk,
+            setup_data_present,
+            execution_data_quality_pass,
+            price_snapshot_quality_pass,
             data_quality_pass,
             data_quality_reason,
             market_gate_pass,
@@ -93,6 +98,9 @@ def generate_daily_report(config: SectorScoutConfig, asof_date: date) -> DailyRe
                 "entry_trigger": entry_trigger,
                 "stop_loss": stop_loss,
                 "reward_risk": reward_risk,
+                "setup_data_present": bool(setup_data_present),
+                "execution_data_quality_pass": bool(execution_data_quality_pass),
+                "price_snapshot_quality_pass": bool(price_snapshot_quality_pass),
                 "data_quality_pass": bool(data_quality_pass),
                 "data_quality_reason": data_quality_reason,
                 "market_gate_pass": bool(market_gate_pass),
@@ -125,6 +133,6 @@ def generate_daily_report(config: SectorScoutConfig, asof_date: date) -> DailyRe
             "Research output only. Rows are not instructions. "
             "Phase 4 triggered candidates still require Phase 5 execution validation."
         ),
-        data_quality=compute_data_quality(config, asof_date).to_dict(),
+        data_quality=compute_historical_data_quality(config, asof_date).to_dict(),
         categories=categories,
     )

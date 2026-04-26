@@ -183,7 +183,10 @@ def test_phase4_daily_report_uses_required_action_categories(tmp_path: Path) -> 
     assert "Triggered setup candidate" in payload["categories"]
     assert "Triggered actionable setup" in payload["categories"]
     assert payload["categories"]["Triggered setup candidate"][0]["symbol"] == "MU"
-    assert payload["categories"]["Triggered setup candidate"][0]["data_quality_pass"] is True
+    assert payload["categories"]["Triggered setup candidate"][0]["setup_data_present"] is True
+    assert payload["categories"]["Triggered setup candidate"][0]["price_snapshot_quality_pass"] is True
+    assert payload["categories"]["Triggered setup candidate"][0]["execution_data_quality_pass"] is False
+    assert payload["categories"]["Triggered setup candidate"][0]["data_quality_pass"] is False
     report_text = report.to_json().lower()
     for forbidden in ("buy", "sell", "order", "trade now", "execute"):
         assert forbidden not in report_text
@@ -238,6 +241,24 @@ def test_phase4_signal_gate_reasons_separate_regime_from_portfolio(tmp_path: Pat
     assert portfolio_blocked.portfolio_risk_reason == "Max new positions per day reached."
 
 
+def test_phase4_portfolio_selection_uses_quality_sorted_order(tmp_path: Path) -> None:
+    config = SectorScoutConfig.model_validate(
+        {
+            "database": {"path": tmp_path / "test.duckdb"},
+            "portfolio": {"max_new_positions_per_day": 1},
+        }
+    )
+    low = _setup_row("LOW", "ai-memory", 60)
+    high = _setup_row("HIGH", "ai-memory", 95)
+    signals = build_signals(config, [low, high], "RISK_ON")
+    by_symbol = {signal.symbol: signal for signal in signals}
+
+    assert by_symbol["HIGH"].action_category == "Triggered setup candidate"
+    assert by_symbol["HIGH"].portfolio_risk_pass is True
+    assert by_symbol["LOW"].portfolio_risk_pass is False
+    assert by_symbol["LOW"].portfolio_risk_reason == "Max new positions per day reached."
+
+
 def test_phase4_earnings_gap_requires_known_public_earnings_timestamp(tmp_path: Path) -> None:
     config = SectorScoutConfig.model_validate(
         {"database": {"path": tmp_path / "test.duckdb"}}
@@ -277,3 +298,34 @@ def test_phase4_earnings_gap_requires_known_public_earnings_timestamp(tmp_path: 
     metadata = _setup_row("GAP", "ai-memory")
 
     assert _detect_earnings_gap_base(config, candidate, prices, metadata) is None
+
+
+def test_phase4_earnings_gap_maps_premarket_to_same_session_and_after_close_to_next_session(
+    tmp_path: Path,
+) -> None:
+    config = SectorScoutConfig.model_validate(
+        {"database": {"path": tmp_path / "test.duckdb"}}
+    )
+    initialize_database(config)
+    facts = tmp_path / "facts.csv"
+    facts.write_text(
+        "symbol,cik,fiscal_period,fiscal_year,fiscal_quarter,form_type,metric_name,metric_value,period_end_date,filing_date,accepted_at,earnings_release_datetime,available_at,provider_updated_at\n"
+        "PRE,0001,2024Q3,2024,3,10-Q,revenue,100,2024-09-30,2024-11-20,2024-11-20T12:00:00+00:00,2024-11-20T12:00:00+00:00,2024-11-20T12:00:00+00:00,2024-11-20T12:01:00+00:00\n"
+        "POST,0002,2024Q3,2024,3,10-Q,revenue,100,2024-09-30,2024-11-20,2024-11-20T21:30:00+00:00,2024-11-20T21:30:00+00:00,2024-11-20T21:30:00+00:00,2024-11-20T21:31:00+00:00\n",
+        encoding="utf-8",
+    )
+    ingest_fundamental_facts_csv(config, facts, source="fixture")
+    prices = pd.DataFrame(
+        {
+            "date": [date(2024, 11, 20), date(2024, 11, 21)],
+            "open": [100.0, 100.0],
+            "high": [101.0, 101.0],
+            "low": [99.0, 99.0],
+            "close": [100.0, 100.0],
+            "volume": [1_000_000, 1_000_000],
+        }
+    )
+    from sectorscout.setups import _known_earnings_gap_dates
+
+    assert _known_earnings_gap_dates(config, "PRE", ASOF, prices) == {date(2024, 11, 20)}
+    assert _known_earnings_gap_dates(config, "POST", ASOF, prices) == {date(2024, 11, 21)}

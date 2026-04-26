@@ -39,6 +39,26 @@ def asof_market_close(session_date: date | str, config: SectorScoutConfig) -> da
     return close_ts.to_pydatetime().astimezone(UTC)
 
 
+def market_session_open(session_date: date | str, config: SectorScoutConfig) -> datetime:
+    """Return the actual session open in UTC for a NYSE trading session."""
+    calendar = get_exchange_calendar(config)
+    session = pd.Timestamp(session_date)
+    if session.tzinfo is not None:
+        session = session.tz_convert("UTC").tz_localize(None)
+    else:
+        session = session.tz_localize(None)
+
+    if not calendar.is_session(session):
+        raise ValueError(f"{session.date()} is not a session for {config.market.calendar}")
+
+    open_ts = calendar.session_open(session)
+    if open_ts.tzinfo is None:
+        open_ts = open_ts.tz_localize("UTC")
+    else:
+        open_ts = open_ts.tz_convert("UTC")
+    return open_ts.to_pydatetime().astimezone(UTC)
+
+
 def to_market_time(timestamp_utc: datetime, config: SectorScoutConfig) -> datetime:
     if timestamp_utc.tzinfo is None:
         raise ValueError("timestamp_utc must be timezone-aware")

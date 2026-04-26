@@ -21,6 +21,9 @@ Implemented so far:
   market regime, ThemeScore, StockOpportunityScore, and watchlist state machine.
 - Phase 4: deterministic VCP/Pullback/Earnings Gap Base setup scaffolding,
   separated market/portfolio gates, signal categories, and daily report output.
+- Pre-Phase-5 hardening: provider-priority price snapshots, ranked portfolio
+  candidate selection, earnings timestamp to gap-session mapping, historical
+  data-quality reporting, and additional PIT/execution-boundary tests.
 
 Not implemented yet:
 
@@ -42,6 +45,8 @@ Current Phase 4 limitations:
   earnings-events provider.
 - Portfolio risk is still a scaffold: it handles per-day count and theme exposure
   sequencing, but not full open-position risk, sector exposure, or NEUTRAL sizing.
+- Provider-priority price selection is currently an in-memory snapshot layer; it
+  is not yet persisted as a frozen price snapshot table.
 
 ## Quick Start
 
@@ -68,6 +73,7 @@ Run the current research commands:
 ```bash
 .venv/bin/sectorscout market-close 2024-11-29 --config config.yaml
 .venv/bin/sectorscout universe-asof --asof 2024-11-29 --mode historical --config config.yaml
+.venv/bin/sectorscout data-quality --asof 2024-11-29 --mode historical --config config.yaml
 .venv/bin/sectorscout fundamentals-asof --asof 2024-11-29 --config config.yaml
 .venv/bin/sectorscout theme-members-asof --asof 2024-11-29 --config config.yaml
 .venv/bin/sectorscout score --asof 2024-11-29 --config config.yaml
