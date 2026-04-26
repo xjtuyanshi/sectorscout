@@ -9,7 +9,7 @@ from sectorscout.db import connect_database
 from sectorscout.indicators import compute_technical_indicators
 from sectorscout.market_regime import MarketRegimeRow, compute_market_regime
 from sectorscout.metadata import build_run_metadata
-from sectorscout.pit import available_fundamental_facts, theme_members_asof
+from sectorscout.pit import available_fundamental_facts, theme_members_asof, tradable_universe_asof
 
 
 @dataclass(frozen=True)
@@ -24,6 +24,9 @@ class ThemeScoreRow:
     risk_valuation_penalty: float
     component_coverage_pct: float
     members_count: int
+    raw_members_count: int
+    eligible_members_count: int
+    excluded_members_count: int
     technical_coverage_pct: float
     theme_fundamental_coverage_pct: float
     members_with_valid_fundamentals: int
@@ -85,7 +88,7 @@ def _load_indicator_map(config: SectorScoutConfig, asof_date: date) -> dict[str,
             """
             SELECT
                 symbol, rs_percentile, trend_stage, volume_10d_avg,
-                volume_50d_avg
+                volume_50d_avg, universe_eligible
             FROM technical_indicators
             WHERE asof_date = ?
             """,
@@ -97,32 +100,53 @@ def _load_indicator_map(config: SectorScoutConfig, asof_date: date) -> dict[str,
             "trend_stage": trend_stage,
             "volume_10d_avg": volume_10d_avg,
             "volume_50d_avg": volume_50d_avg,
+            "universe_eligible": universe_eligible,
         }
-        for symbol, rs_percentile, trend_stage, volume_10d_avg, volume_50d_avg in rows
+        for symbol, rs_percentile, trend_stage, volume_10d_avg, volume_50d_avg, universe_eligible in rows
     }
+
+
+def _fact_revision_key(fact: dict) -> tuple:
+    return (
+        fact["available_at"],
+        fact.get("provider_updated_at") or fact["available_at"],
+    )
 
 
 def _fundamental_scores(config: SectorScoutConfig, asof_date: date) -> dict[str, tuple[float, bool]]:
     facts = available_fundamental_facts(config, asof_date)
-    by_symbol_metric: dict[tuple[str, str], list[dict]] = {}
+    latest_period_facts: dict[tuple[str, str, str], dict] = {}
     for fact in facts:
+        key = (fact["symbol"], fact["metric_name"], fact["fiscal_period"])
+        existing = latest_period_facts.get(key)
+        if existing is None or _fact_revision_key(fact) > _fact_revision_key(existing):
+            latest_period_facts[key] = fact
+
+    by_symbol_metric: dict[tuple[str, str], list[dict]] = {}
+    for fact in latest_period_facts.values():
         key = (fact["symbol"], fact["metric_name"])
         by_symbol_metric.setdefault(key, []).append(fact)
 
-    scores: dict[str, tuple[float, bool]] = {}
+    metric_scores_by_symbol: dict[str, list[float]] = {}
     for (symbol, _metric_name), metric_facts in by_symbol_metric.items():
-        ordered = sorted(metric_facts, key=lambda row: row["available_at"])
+        ordered = sorted(
+            metric_facts,
+            key=lambda row: (row["period_end_date"], row["available_at"], row.get("provider_updated_at")),
+        )
         latest = ordered[-1]["metric_value"]
         if len(ordered) < 2:
-            scores[symbol] = (50.0, True)
+            metric_scores_by_symbol.setdefault(symbol, []).append(50.0)
             continue
         previous = ordered[-2]["metric_value"]
         if previous == 0:
-            scores[symbol] = (50.0, True)
+            metric_scores_by_symbol.setdefault(symbol, []).append(50.0)
             continue
         growth = (latest - previous) / abs(previous)
-        scores[symbol] = (_clamp_score(50.0 + growth * 100.0), True)
-    return scores
+        metric_scores_by_symbol.setdefault(symbol, []).append(_clamp_score(50.0 + growth * 100.0))
+    return {
+        symbol: (median(metric_scores), True)
+        for symbol, metric_scores in metric_scores_by_symbol.items()
+    }
 
 
 def _volume_accumulation(indicator: dict | None) -> float:
@@ -153,6 +177,7 @@ def compute_theme_scores(
         indicators = _load_indicator_map(config, asof_date)
 
     members = theme_members_asof(config, asof_date)
+    eligible_symbols = set(tradable_universe_asof(config, asof_date, mode="historical"))
     fundamentals = _fundamental_scores(config, asof_date)
     grouped: dict[str, list[str]] = {}
     for member in members:
@@ -162,16 +187,18 @@ def compute_theme_scores(
     weights = config.scoring.theme_weights
     rows: list[ThemeScoreRow] = []
     for theme_id, symbols in sorted(grouped.items()):
-        member_count = len(symbols)
+        raw_member_count = len(symbols)
+        eligible_members = [symbol for symbol in symbols if symbol in eligible_symbols]
+        member_count = len(eligible_members)
         technical_values = [
             float(indicators[symbol]["rs_percentile"])
-            for symbol in symbols
+            for symbol in eligible_members
             if symbol in indicators and indicators[symbol]["rs_percentile"] is not None
         ]
         technical_coverage = len(technical_values) / member_count if member_count else 0.0
         technical_rs = median(technical_values) if technical_values else 0.0
         breadth = (
-            sum(indicators.get(symbol, {}).get("trend_stage") == "Stage 2" for symbol in symbols)
+            sum(indicators.get(symbol, {}).get("trend_stage") == "Stage 2" for symbol in eligible_members)
             / member_count
             * 100.0
             if member_count
@@ -180,7 +207,7 @@ def compute_theme_scores(
 
         fundamental_values = [
             fundamentals[symbol][0]
-            for symbol in symbols
+            for symbol in eligible_members
             if symbol in fundamentals and fundamentals[symbol][1]
         ]
         fundamental_coverage = len(fundamental_values) / member_count if member_count else 0.0
@@ -215,6 +242,9 @@ def compute_theme_scores(
                 risk_valuation_penalty=risk_penalty,
                 component_coverage_pct=component_coverage * 100.0,
                 members_count=member_count,
+                raw_members_count=raw_member_count,
+                eligible_members_count=member_count,
+                excluded_members_count=raw_member_count - member_count,
                 technical_coverage_pct=technical_coverage * 100.0,
                 theme_fundamental_coverage_pct=fundamental_coverage * 100.0,
                 members_with_valid_fundamentals=len(fundamental_values),
@@ -228,7 +258,7 @@ def compute_theme_scores(
         )
 
     if persist:
-        persist_theme_scores(config, rows)
+        persist_theme_scores(config, rows, asof_date=asof_date)
     return rows
 
 
@@ -242,6 +272,7 @@ def compute_stock_scores(
 ) -> list[StockScoreRow]:
     indicators = _load_indicator_map(config, asof_date)
     fundamentals = _fundamental_scores(config, asof_date)
+    eligible_symbols = set(tradable_universe_asof(config, asof_date, mode="historical"))
     members = theme_members_asof(config, asof_date)
     themes_by_id = {row.theme_id: row for row in theme_scores}
     weights = config.scoring.stock_weights
@@ -250,6 +281,8 @@ def compute_stock_scores(
 
     for member in members:
         symbol = member["symbol"]
+        if symbol not in eligible_symbols:
+            continue
         theme_id = member["theme_id"]
         theme = themes_by_id.get(theme_id)
         indicator = indicators.get(symbol)
@@ -316,8 +349,8 @@ def compute_stock_scores(
         )
 
     if persist:
-        persist_stock_scores(config, rows)
-        persist_watchlist(config, rows)
+        persist_stock_scores(config, rows, asof_date=asof_date)
+        persist_watchlist(config, rows, asof_date=asof_date)
     return rows
 
 
@@ -334,12 +367,17 @@ def run_scoring(config: SectorScoutConfig, asof_date: date) -> ScoreRunResult:
     )
 
 
-def persist_theme_scores(config: SectorScoutConfig, rows: list[ThemeScoreRow]) -> None:
-    if not rows:
+def persist_theme_scores(
+    config: SectorScoutConfig,
+    rows: list[ThemeScoreRow],
+    *,
+    asof_date: date | None = None,
+) -> None:
+    if not rows and asof_date is None:
         return
-    asof_date = date.fromisoformat(rows[0].asof_date)
+    target_date = asof_date or date.fromisoformat(rows[0].asof_date)
     with connect_database(config.database.path) as connection:
-        connection.execute("DELETE FROM theme_scores WHERE asof_date = ?", [asof_date])
+        connection.execute("DELETE FROM theme_scores WHERE asof_date = ?", [target_date])
         for row in rows:
             connection.execute(
                 """
@@ -347,14 +385,15 @@ def persist_theme_scores(config: SectorScoutConfig, rows: list[ThemeScoreRow]) -
                     asof_date, theme_id, theme_score, technical_relative_strength,
                     breadth, fundamental_acceleration, catalyst_score,
                     risk_valuation_penalty, component_coverage_pct, members_count,
+                    raw_members_count, eligible_members_count, excluded_members_count,
                     technical_coverage_pct, theme_fundamental_coverage_pct,
                     members_with_valid_fundamentals, signal_generated_at_utc,
                     config_hash, git_commit, data_snapshot_id, universe_version,
                     theme_version
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 [
-                    date.fromisoformat(row.asof_date),
+                    target_date,
                     row.theme_id,
                     row.theme_score,
                     row.technical_relative_strength,
@@ -364,6 +403,9 @@ def persist_theme_scores(config: SectorScoutConfig, rows: list[ThemeScoreRow]) -
                     row.risk_valuation_penalty,
                     row.component_coverage_pct,
                     row.members_count,
+                    row.raw_members_count,
+                    row.eligible_members_count,
+                    row.excluded_members_count,
                     row.technical_coverage_pct,
                     row.theme_fundamental_coverage_pct,
                     row.members_with_valid_fundamentals,
@@ -377,12 +419,17 @@ def persist_theme_scores(config: SectorScoutConfig, rows: list[ThemeScoreRow]) -
             )
 
 
-def persist_stock_scores(config: SectorScoutConfig, rows: list[StockScoreRow]) -> None:
-    if not rows:
+def persist_stock_scores(
+    config: SectorScoutConfig,
+    rows: list[StockScoreRow],
+    *,
+    asof_date: date | None = None,
+) -> None:
+    if not rows and asof_date is None:
         return
-    asof_date = date.fromisoformat(rows[0].asof_date)
+    target_date = asof_date or date.fromisoformat(rows[0].asof_date)
     with connect_database(config.database.path) as connection:
-        connection.execute("DELETE FROM stock_scores WHERE asof_date = ?", [asof_date])
+        connection.execute("DELETE FROM stock_scores WHERE asof_date = ?", [target_date])
         for row in rows:
             connection.execute(
                 """
@@ -396,7 +443,7 @@ def persist_stock_scores(config: SectorScoutConfig, rows: list[StockScoreRow]) -
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 [
-                    date.fromisoformat(row.asof_date),
+                    target_date,
                     row.symbol,
                     row.theme_id,
                     row.stock_opportunity_score,
@@ -419,12 +466,17 @@ def persist_stock_scores(config: SectorScoutConfig, rows: list[StockScoreRow]) -
             )
 
 
-def persist_watchlist(config: SectorScoutConfig, rows: list[StockScoreRow]) -> None:
-    if not rows:
+def persist_watchlist(
+    config: SectorScoutConfig,
+    rows: list[StockScoreRow],
+    *,
+    asof_date: date | None = None,
+) -> None:
+    if not rows and asof_date is None:
         return
-    asof_date = date.fromisoformat(rows[0].asof_date)
+    target_date = asof_date or date.fromisoformat(rows[0].asof_date)
     with connect_database(config.database.path) as connection:
-        connection.execute("DELETE FROM watchlist WHERE asof_date = ?", [asof_date])
+        connection.execute("DELETE FROM watchlist WHERE asof_date = ?", [target_date])
         for row in rows:
             if row.state == "WATCH":
                 reason = "Strong theme and RS; setup detection is Phase 4."
@@ -441,7 +493,7 @@ def persist_watchlist(config: SectorScoutConfig, rows: list[StockScoreRow]) -> N
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 [
-                    date.fromisoformat(row.asof_date),
+                    target_date,
                     row.symbol,
                     row.theme_id,
                     row.state,

@@ -8,6 +8,7 @@ import pandas as pd
 from sectorscout.config import SectorScoutConfig
 from sectorscout.db import connect_database
 from sectorscout.metadata import build_run_metadata
+from sectorscout.pit import BENCHMARK_SYMBOLS, tradable_universe_asof
 
 
 @dataclass(frozen=True)
@@ -26,6 +27,8 @@ class TechnicalIndicatorRow:
     rs_lookback_return: float | None
     rs_percentile: float | None
     trend_stage: str
+    universe_eligible: bool
+    benchmark_symbol: bool
     signal_generated_at: str
     config_hash: str
     git_commit: str
@@ -97,6 +100,11 @@ def compute_technical_indicators(
     prices = _load_adjusted_prices(config, asof_date)
     if prices.empty:
         return []
+    tradable_symbols = set(tradable_universe_asof(config, asof_date, mode="historical"))
+    symbols_to_compute = tradable_symbols | BENCHMARK_SYMBOLS
+    prices = prices[prices["symbol"].isin(symbols_to_compute)]
+    if prices.empty:
+        return []
 
     rows: list[dict] = []
     rs_values: dict[str, float] = {}
@@ -132,7 +140,9 @@ def compute_technical_indicators(
 
         latest = frame.iloc[-1]
         rs_return = _optional_float(latest["rs_lookback_return"])
-        if rs_return is not None:
+        universe_eligible = symbol in tradable_symbols
+        benchmark_symbol = symbol in BENCHMARK_SYMBOLS
+        if universe_eligible and rs_return is not None:
             rs_values[symbol] = rs_return
         rows.append(
             {
@@ -152,6 +162,8 @@ def compute_technical_indicators(
                 ),
                 "rs_lookback_return": rs_return,
                 "trend_stage": _trend_stage(latest, config),
+                "universe_eligible": universe_eligible,
+                "benchmark_symbol": benchmark_symbol,
             }
         )
 
@@ -172,6 +184,8 @@ def compute_technical_indicators(
             rs_lookback_return=row["rs_lookback_return"],
             rs_percentile=_optional_float(ranked.get(row["symbol"])),
             trend_stage=row["trend_stage"],
+            universe_eligible=row["universe_eligible"],
+            benchmark_symbol=row["benchmark_symbol"],
             signal_generated_at=metadata.signal_generated_at,
             config_hash=metadata.config_hash,
             git_commit=metadata.git_commit,
@@ -183,19 +197,21 @@ def compute_technical_indicators(
     ]
 
     if persist:
-        persist_technical_indicators(config, indicator_rows)
+        persist_technical_indicators(config, indicator_rows, asof_date=asof_date)
     return indicator_rows
 
 
 def persist_technical_indicators(
     config: SectorScoutConfig,
     rows: list[TechnicalIndicatorRow],
+    *,
+    asof_date: date | None = None,
 ) -> None:
-    if not rows:
+    if not rows and asof_date is None:
         return
-    asof_date = date.fromisoformat(rows[0].asof_date)
+    target_date = asof_date or date.fromisoformat(rows[0].asof_date)
     with connect_database(config.database.path) as connection:
-        connection.execute("DELETE FROM technical_indicators WHERE asof_date = ?", [asof_date])
+        connection.execute("DELETE FROM technical_indicators WHERE asof_date = ?", [target_date])
         for row in rows:
             connection.execute(
                 """
@@ -203,12 +219,13 @@ def persist_technical_indicators(
                     asof_date, symbol, close, sma_50, sma_150, sma_200,
                     ema_21, atr_14, volume_10d_avg, volume_50d_avg,
                     pct_from_252d_high, rs_lookback_return, rs_percentile,
-                    trend_stage, signal_generated_at_utc, config_hash,
+                    trend_stage, universe_eligible, benchmark_symbol,
+                    signal_generated_at_utc, config_hash,
                     git_commit, data_snapshot_id, universe_version, theme_version
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 [
-                    date.fromisoformat(row.asof_date),
+                    target_date,
                     row.symbol,
                     row.close,
                     row.sma_50,
@@ -222,6 +239,8 @@ def persist_technical_indicators(
                     row.rs_lookback_return,
                     row.rs_percentile,
                     row.trend_stage,
+                    row.universe_eligible,
+                    row.benchmark_symbol,
                     row.signal_generated_at,
                     row.config_hash,
                     row.git_commit,

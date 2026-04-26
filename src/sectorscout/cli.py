@@ -301,12 +301,22 @@ def data_quality(
 @app.command("universe-asof")
 def universe_asof_command(
     asof: str = typer.Option(..., "--asof"),
+    mode: str = typer.Option("historical", "--mode"),
     config: Path = typer.Option(Path("config.yaml"), "--config"),
 ) -> None:
     loaded = _load(config)
     parsed_asof = _parse_iso_date(asof)
     assert parsed_asof is not None
-    typer.echo(json.dumps({"asof_date": parsed_asof.isoformat(), "symbols": universe_asof(loaded, parsed_asof)}, indent=2))
+    typer.echo(
+        json.dumps(
+            {
+                "asof_date": parsed_asof.isoformat(),
+                "mode": mode,
+                "symbols": universe_asof(loaded, parsed_asof, mode=mode),
+            },
+            indent=2,
+        )
+    )
 
 
 @app.command("theme-members-asof")

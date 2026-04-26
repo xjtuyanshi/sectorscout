@@ -81,8 +81,14 @@ CREATE TABLE IF NOT EXISTS data_quality_daily (
 );
 
 CREATE TABLE IF NOT EXISTS fundamental_facts (
+    fact_id UUID PRIMARY KEY DEFAULT uuid(),
     symbol VARCHAR NOT NULL,
     cik VARCHAR,
+    accession_number VARCHAR,
+    filing_url VARCHAR,
+    provider_fact_id VARCHAR,
+    revision_number INTEGER NOT NULL DEFAULT 0,
+    is_restatement BOOLEAN NOT NULL DEFAULT false,
     fiscal_period VARCHAR NOT NULL,
     fiscal_year INTEGER NOT NULL,
     fiscal_quarter INTEGER,
@@ -96,8 +102,7 @@ CREATE TABLE IF NOT EXISTS fundamental_facts (
     available_at TIMESTAMPTZ,
     source VARCHAR NOT NULL,
     provider_updated_at TIMESTAMPTZ,
-    ingested_at_utc TIMESTAMPTZ NOT NULL,
-    PRIMARY KEY (symbol, fiscal_period, form_type, metric_name, source)
+    ingested_at_utc TIMESTAMPTZ NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS themes (
@@ -138,6 +143,8 @@ CREATE TABLE IF NOT EXISTS technical_indicators (
     rs_lookback_return DOUBLE,
     rs_percentile DOUBLE,
     trend_stage VARCHAR NOT NULL,
+    universe_eligible BOOLEAN NOT NULL,
+    benchmark_symbol BOOLEAN NOT NULL,
     signal_generated_at_utc TIMESTAMPTZ NOT NULL,
     config_hash VARCHAR NOT NULL,
     git_commit VARCHAR NOT NULL,
@@ -178,6 +185,9 @@ CREATE TABLE IF NOT EXISTS theme_scores (
     risk_valuation_penalty DOUBLE NOT NULL,
     component_coverage_pct DOUBLE NOT NULL,
     members_count INTEGER NOT NULL,
+    raw_members_count INTEGER NOT NULL,
+    eligible_members_count INTEGER NOT NULL,
+    excluded_members_count INTEGER NOT NULL,
     technical_coverage_pct DOUBLE NOT NULL,
     theme_fundamental_coverage_pct DOUBLE NOT NULL,
     members_with_valid_fundamentals INTEGER NOT NULL,
@@ -268,8 +278,12 @@ CREATE TABLE IF NOT EXISTS signals (
     stop_loss DOUBLE,
     reward_risk DOUBLE,
     data_quality_pass BOOLEAN NOT NULL,
+    data_quality_reason VARCHAR NOT NULL,
+    market_gate_pass BOOLEAN NOT NULL,
+    market_gate_reason VARCHAR NOT NULL,
     market_regime_risk_state VARCHAR NOT NULL,
     portfolio_risk_pass BOOLEAN NOT NULL,
+    portfolio_risk_reason VARCHAR NOT NULL,
     signal_generated_at_utc TIMESTAMPTZ NOT NULL,
     config_hash VARCHAR NOT NULL,
     git_commit VARCHAR NOT NULL,

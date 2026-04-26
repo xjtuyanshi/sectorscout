@@ -1,10 +1,14 @@
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date
+from typing import Literal
 
 from sectorscout.config import SectorScoutConfig
 from sectorscout.db import connect_database
 from sectorscout.market_calendar import asof_market_close
+
+BENCHMARK_SYMBOLS = {"SPY", "QQQ", "SMH"}
+TRADABLE_SECURITY_TYPES = {"common_stock"}
 
 
 def available_fundamental_facts(
@@ -19,11 +23,12 @@ def available_fundamental_facts(
             SELECT
                 symbol, fiscal_period, fiscal_year, fiscal_quarter, form_type,
                 metric_name, metric_value, period_end_date, filing_date,
-                accepted_at, earnings_release_datetime, available_at, source
+                accepted_at, earnings_release_datetime, available_at, source,
+                provider_updated_at
             FROM fundamental_facts
             WHERE available_at IS NOT NULL
               AND available_at <= ?
-            ORDER BY symbol, fiscal_period, metric_name
+            ORDER BY symbol, fiscal_period, metric_name, available_at, provider_updated_at
             """,
             [asof_close],
         ).fetchall()
@@ -41,25 +46,63 @@ def available_fundamental_facts(
         "earnings_release_datetime",
         "available_at",
         "source",
+        "provider_updated_at",
     ]
     return [dict(zip(columns, row, strict=True)) for row in rows]
 
 
-def universe_asof(config: SectorScoutConfig, asof_date: date) -> list[str]:
-    """Return lifecycle-aware active symbols for an as-of date."""
+def universe_asof(
+    config: SectorScoutConfig,
+    asof_date: date,
+    *,
+    mode: Literal["historical", "live"] = "historical",
+) -> list[str]:
+    """Return lifecycle-aware symbols for an as-of date.
+
+    Historical mode intentionally does not filter on today's is_active flag.
+    Live mode keeps is_active=true for current scans.
+    """
+    if mode not in {"historical", "live"}:
+        raise ValueError("mode must be 'historical' or 'live'")
+    active_clause = "AND is_active = true" if mode == "live" else ""
     with connect_database(config.database.path) as connection:
         rows = connection.execute(
-            """
+            f"""
             SELECT symbol
             FROM symbols
             WHERE (ipo_date IS NULL OR ipo_date <= ?)
               AND (delist_date IS NULL OR delist_date > ?)
               AND first_seen_at <= ?
               AND last_seen_at >= ?
-              AND is_active = true
+              {active_clause}
             ORDER BY symbol
             """,
             [asof_date, asof_date, asof_date, asof_date],
+        ).fetchall()
+    return [row[0] for row in rows]
+
+
+def tradable_universe_asof(
+    config: SectorScoutConfig,
+    asof_date: date,
+    *,
+    mode: Literal["historical", "live"] = "historical",
+) -> list[str]:
+    """Return common-stock symbols eligible for stock scoring as of a date."""
+    eligible = set(universe_asof(config, asof_date, mode=mode))
+    if not eligible:
+        return []
+    with connect_database(config.database.path) as connection:
+        rows = connection.execute(
+            """
+            SELECT symbol
+            FROM symbols
+            WHERE symbol IN (SELECT unnest(?))
+              AND lower(security_type) IN (SELECT unnest(?))
+              AND is_etf = false
+            ORDER BY symbol
+            """,
+            [sorted(eligible), sorted(TRADABLE_SECURITY_TYPES)],
         ).fetchall()
     return [row[0] for row in rows]
 

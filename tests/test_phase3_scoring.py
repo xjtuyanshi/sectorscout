@@ -27,6 +27,7 @@ def _write_universe(path: Path) -> None:
         "symbol,name,exchange,security_type,is_etf,is_active,ipo_date,delist_date,first_seen_at,last_seen_at\n"
         "SPY,SPDR S&P 500 ETF,NYSE,etf,true,true,1993-01-29,,2020-01-01,2024-12-31\n"
         "QQQ,Invesco QQQ,NASDAQ,etf,true,true,1999-03-10,,2020-01-01,2024-12-31\n"
+        "HOTETF,Hot ETF,NYSE,etf,true,true,2020-01-01,,2020-01-01,2024-12-31\n"
         "MU,Micron Technology,NASDAQ,common_stock,false,true,1984-01-01,,2020-01-01,2024-12-31\n"
         "WEAK,Weak Co,NASDAQ,common_stock,false,true,2020-01-01,,2020-01-01,2024-12-31\n",
         encoding="utf-8",
@@ -38,6 +39,7 @@ def _write_prices(path: Path) -> None:
     profiles = {
         "SPY": (100.0, 0.45, 5_000_000),
         "QQQ": (100.0, 0.60, 4_000_000),
+        "HOTETF": (25.0, 2.00, 10_000_000),
         "MU": (45.0, 0.80, 2_000_000),
         "WEAK": (100.0, -0.12, 300_000),
     }
@@ -128,6 +130,7 @@ def test_phase3_indicators_are_deterministic_and_stage_aware(tmp_path: Path) -> 
 
     assert by_symbol["SPY"].trend_stage == "Stage 2"
     assert by_symbol["QQQ"].trend_stage == "Stage 2"
+    assert "HOTETF" not in by_symbol
     assert by_symbol["MU"].trend_stage == "Stage 2"
     assert by_symbol["WEAK"].trend_stage != "Stage 2"
     assert by_symbol["MU"].rs_percentile > by_symbol["WEAK"].rs_percentile
@@ -148,7 +151,7 @@ def test_phase3_market_regime_uses_spy_qqq_and_breadth(tmp_path: Path) -> None:
     assert regime.spy_stage == "Stage 2"
     assert regime.qqq_stage == "Stage 2"
     assert regime.risk_state == "RISK_ON"
-    assert regime.pct_universe_stage2 == 0.75
+    assert regime.pct_universe_stage2 == 0.5
 
 
 def test_phase3_scores_rank_without_triggering_trades(tmp_path: Path) -> None:

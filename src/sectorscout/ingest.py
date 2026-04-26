@@ -213,16 +213,23 @@ def ingest_fundamental_facts_csv(
         for row in rows:
             connection.execute(
                 """
-                INSERT OR REPLACE INTO fundamental_facts (
-                    symbol, cik, fiscal_period, fiscal_year, fiscal_quarter,
-                    form_type, metric_name, metric_value, period_end_date,
-                    filing_date, accepted_at, earnings_release_datetime,
-                    available_at, source, provider_updated_at, ingested_at_utc
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO fundamental_facts (
+                    symbol, cik, accession_number, filing_url,
+                    provider_fact_id, revision_number, is_restatement,
+                    fiscal_period, fiscal_year, fiscal_quarter, form_type,
+                    metric_name, metric_value, period_end_date, filing_date,
+                    accepted_at, earnings_release_datetime, available_at,
+                    source, provider_updated_at, ingested_at_utc
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 [
                     row["symbol"].strip().upper(),
                     row.get("cik") or None,
+                    row.get("accession_number") or None,
+                    row.get("filing_url") or None,
+                    row.get("provider_fact_id") or None,
+                    int(row.get("revision_number") or 0),
+                    _parse_bool(row.get("is_restatement", "false")),
                     row["fiscal_period"],
                     int(row["fiscal_year"]),
                     int(row["fiscal_quarter"]) if row.get("fiscal_quarter") else None,

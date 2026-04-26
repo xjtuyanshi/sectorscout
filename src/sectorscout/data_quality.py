@@ -6,6 +6,7 @@ from datetime import date, datetime, timezone
 
 from sectorscout.config import SectorScoutConfig
 from sectorscout.db import connect_database
+from sectorscout.market_calendar import asof_market_close
 
 
 @dataclass(frozen=True)
@@ -30,6 +31,7 @@ class DataQualityReport:
 
 
 def compute_data_quality(config: SectorScoutConfig, asof_date: date) -> DataQualityReport:
+    asof_close = asof_market_close(asof_date, config)
     with connect_database(config.database.path) as connection:
         total_symbols = connection.execute(
             "SELECT COUNT(*) FROM symbols WHERE is_active = true"
@@ -77,13 +79,22 @@ def compute_data_quality(config: SectorScoutConfig, asof_date: date) -> DataQual
         ).fetchall()
         provider_mix = {provider: int(row_count) for provider, row_count in provider_rows}
         fallback_to_yfinance_count = int(provider_mix.get(config.providers.prices_fallback, 0))
+        symbols_with_fundamental_data = connection.execute(
+            """
+            SELECT COUNT(DISTINCT symbol)
+            FROM fundamental_facts
+            WHERE available_at IS NOT NULL
+              AND available_at <= ?
+            """,
+            [asof_close],
+        ).fetchone()[0]
 
     return DataQualityReport(
         asof_date=asof_date.isoformat(),
         total_symbols=total_symbols,
         symbols_with_price_data=symbols_with_price_data,
         symbols_missing_price_data=symbols_missing_price_data,
-        symbols_with_fundamental_data=0,
+        symbols_with_fundamental_data=symbols_with_fundamental_data,
         stale_price_count=stale_price_count,
         stale_fundamental_count=0,
         split_adjustment_warnings=split_adjustment_warnings,
@@ -127,4 +138,3 @@ def persist_data_quality(config: SectorScoutConfig, report: DataQualityReport) -
                 datetime.now(timezone.utc),
             ],
         )
-

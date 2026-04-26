@@ -38,7 +38,8 @@ def _load_indicator_rows(config: SectorScoutConfig, asof_date: date) -> list[dic
         rows = connection.execute(
             """
             SELECT
-                symbol, close, sma_50, sma_200, trend_stage
+                symbol, close, sma_50, sma_200, trend_stage,
+                universe_eligible, benchmark_symbol
             FROM technical_indicators
             WHERE asof_date = ?
             ORDER BY symbol
@@ -52,8 +53,10 @@ def _load_indicator_rows(config: SectorScoutConfig, asof_date: date) -> list[dic
             "sma_50": sma_50,
             "sma_200": sma_200,
             "trend_stage": trend_stage,
+            "universe_eligible": universe_eligible,
+            "benchmark_symbol": benchmark_symbol,
         }
-        for symbol, close, sma_50, sma_200, trend_stage in rows
+        for symbol, close, sma_50, sma_200, trend_stage, universe_eligible, benchmark_symbol in rows
     ]
 
 
@@ -75,10 +78,11 @@ def compute_market_regime(
     by_symbol = {row["symbol"]: row for row in rows}
     spy = by_symbol.get("SPY", {})
     qqq = by_symbol.get("QQQ", {})
-    count = len(rows) or 1
-    pct_above_50 = sum(_above(row["close"], row["sma_50"]) for row in rows) / count
-    pct_above_200 = sum(_above(row["close"], row["sma_200"]) for row in rows) / count
-    pct_stage2 = sum(row["trend_stage"] == "Stage 2" for row in rows) / count
+    breadth_rows = [row for row in rows if row["universe_eligible"]]
+    count = len(breadth_rows) or 1
+    pct_above_50 = sum(_above(row["close"], row["sma_50"]) for row in breadth_rows) / count
+    pct_above_200 = sum(_above(row["close"], row["sma_200"]) for row in breadth_rows) / count
+    pct_stage2 = sum(row["trend_stage"] == "Stage 2" for row in breadth_rows) / count
 
     spy_above_50 = _above(spy.get("close"), spy.get("sma_50"))
     spy_above_200 = _above(spy.get("close"), spy.get("sma_200"))

@@ -2,7 +2,7 @@ from datetime import date
 from pathlib import Path
 
 from sectorscout.config import SectorScoutConfig
-from sectorscout.db import initialize_database
+from sectorscout.db import connect_database, initialize_database
 from sectorscout.ingest import (
     ingest_fundamental_facts_csv,
     ingest_theme_members_csv,
@@ -64,9 +64,36 @@ def test_universe_asof_respects_lifecycle_dates(tmp_path: Path) -> None:
         "symbol,name,exchange,security_type,is_etf,is_active,ipo_date,delist_date,first_seen_at,last_seen_at\n"
         "OLD,Old Co,NASDAQ,common_stock,false,true,2010-01-01,2024-01-15,2020-01-01,2024-12-31\n"
         "NEW,New Co,NASDAQ,common_stock,false,true,2024-11-29,,2024-11-29,2024-12-31\n"
+        "DEAD,Dead Co,NASDAQ,common_stock,false,false,2010-01-01,2025-01-01,2020-01-01,2024-12-31\n"
         "LIVE,Live Co,NASDAQ,common_stock,false,true,2020-01-01,,2020-01-01,2024-12-31\n",
         encoding="utf-8",
     )
     ingest_universe_csv(config, universe_csv, provider="fixture")
-    assert universe_asof(config, date(2024, 11, 28)) == ["LIVE"]
-    assert universe_asof(config, date(2024, 11, 29)) == ["LIVE", "NEW"]
+    assert universe_asof(config, date(2024, 11, 28)) == ["DEAD", "LIVE"]
+    assert universe_asof(config, date(2024, 11, 28), mode="live") == ["LIVE"]
+    assert universe_asof(config, date(2024, 11, 29)) == ["DEAD", "LIVE", "NEW"]
+
+
+def test_revised_fundamental_facts_do_not_overwrite_prior_pit_rows(tmp_path: Path) -> None:
+    config = SectorScoutConfig.model_validate(
+        {"database": {"path": tmp_path / "test.duckdb"}}
+    )
+    initialize_database(config)
+    facts_csv = tmp_path / "facts.csv"
+    facts_csv.write_text(
+        "symbol,cik,fiscal_period,fiscal_year,fiscal_quarter,form_type,metric_name,metric_value,period_end_date,filing_date,accepted_at,earnings_release_datetime,available_at,provider_updated_at,revision_number,is_restatement\n"
+        "MU,0000723125,2024Q4,2024,4,10-K,revenue,25000000000,2024-08-29,2024-10-03,2024-10-03T20:15:00+00:00,2024-09-25T20:05:00+00:00,2024-10-03T20:15:00+00:00,2024-10-03T20:16:00+00:00,0,false\n"
+        "MU,0000723125,2024Q4,2024,4,10-K,revenue,25100000000,2024-08-29,2024-10-03,2024-10-03T20:15:00+00:00,2024-09-25T20:05:00+00:00,2024-10-20T20:15:00+00:00,2024-10-20T20:16:00+00:00,1,true\n",
+        encoding="utf-8",
+    )
+    ingest_fundamental_facts_csv(config, facts_csv, source="fixture")
+
+    with connect_database(config.database.path) as connection:
+        count = connection.execute("SELECT COUNT(*) FROM fundamental_facts").fetchone()[0]
+    assert count == 2
+    assert [
+        fact["metric_value"] for fact in available_fundamental_facts(config, date(2024, 10, 10))
+    ] == [25000000000.0]
+    assert [
+        fact["metric_value"] for fact in available_fundamental_facts(config, date(2024, 10, 21))
+    ] == [25000000000.0, 25100000000.0]

@@ -8,9 +8,10 @@ import pandas as pd
 
 from sectorscout.config import SectorScoutConfig
 from sectorscout.db import connect_database
+from sectorscout.market_calendar import asof_market_close
 from sectorscout.market_regime import compute_market_regime
 from sectorscout.metadata import build_run_metadata
-from sectorscout.portfolio import portfolio_risk_passes
+from sectorscout.portfolio import market_gate_allows_new_long, portfolio_risk_passes
 from sectorscout.scoring import run_scoring
 
 
@@ -58,8 +59,12 @@ class SignalRow:
     stop_loss: float | None
     reward_risk: float | None
     data_quality_pass: bool
+    data_quality_reason: str
+    market_gate_pass: bool
+    market_gate_reason: str
     market_regime_risk_state: str
     portfolio_risk_pass: bool
+    portfolio_risk_reason: str
     signal_generated_at: str
     config_hash: str
     git_commit: str
@@ -156,10 +161,65 @@ def _true_range(frame: pd.DataFrame) -> pd.Series:
     ).max(axis=1)
 
 
-def _reward_risk(entry: float | None, stop: float | None) -> float | None:
+def _estimated_reward_risk(entry: float | None, stop: float | None) -> float | None:
     if entry is None or stop is None or stop >= entry:
         return None
-    return 2.0
+    risk = entry - stop
+    target_2r = entry + 2 * risk
+    return (target_2r - entry) / risk
+
+
+def _known_earnings_gap_dates(
+    config: SectorScoutConfig,
+    symbol: str,
+    asof_date: date,
+    prices: pd.DataFrame,
+) -> set[date]:
+    if prices.empty:
+        return set()
+    asof_close = asof_market_close(asof_date, config)
+    with connect_database(config.database.path) as connection:
+        rows = connection.execute(
+            """
+            SELECT DISTINCT earnings_release_datetime
+            FROM fundamental_facts
+            WHERE symbol = ?
+              AND earnings_release_datetime IS NOT NULL
+              AND earnings_release_datetime <= ?
+              AND available_at IS NOT NULL
+              AND available_at <= ?
+            ORDER BY earnings_release_datetime
+            """,
+            [symbol, asof_close, asof_close],
+        ).fetchall()
+    price_dates = [
+        value.date() if hasattr(value, "date") else date.fromisoformat(str(value))
+        for value in prices["date"].tolist()
+    ]
+    gap_dates: set[date] = set()
+    for (release_datetime,) in rows:
+        release_date = release_datetime.date()
+        next_sessions = [session for session in price_dates if session > release_date]
+        if next_sessions:
+            gap_dates.add(next_sessions[0])
+    return gap_dates
+
+
+def _rs_line_holds(config: SectorScoutConfig, prices: pd.DataFrame, asof_date: date) -> bool:
+    spy = _load_prices(config, "SPY", asof_date)
+    if len(spy) < 20:
+        return False
+    merged = prices[["date", "close"]].merge(
+        spy[["date", "close"]],
+        on="date",
+        how="inner",
+        suffixes=("", "_spy"),
+    )
+    if len(merged) < 20:
+        return False
+    rs_line = merged["close"] / merged["close_spy"]
+    recent_low = rs_line.tail(20).min()
+    return bool(rs_line.iloc[-1] >= recent_low)
 
 
 def _detect_vcp(
@@ -241,7 +301,7 @@ def _detect_vcp(
         setup_quality=selected["quality"],
         trigger_price=entry,
         stop_loss=stop if entry else None,
-        reward_risk=_reward_risk(entry, stop),
+        reward_risk=_estimated_reward_risk(entry, stop),
         consolidation_start=_date_str(selected_window.iloc[0]["date"]),
         consolidation_end=_date_str(selected_window.iloc[-1]["date"]),
         pivot=selected["pivot"],
@@ -291,6 +351,8 @@ def _detect_pullback(
     trigger = latest["close"] > prior_3d_high
     if not ((near_ema or near_sma) and volume_ok):
         return None
+    if not _rs_line_holds(config, prices, date.fromisoformat(metadata.asof_date)):
+        return None
     stop = float(frame["low"].iloc[-10:].min())
     entry = prior_3d_high if trigger else None
     return SetupRow(
@@ -302,7 +364,7 @@ def _detect_pullback(
         setup_quality=max(0.0, min(100.0, 100 - pullback_depth * 300)),
         trigger_price=entry,
         stop_loss=stop if entry else None,
-        reward_risk=_reward_risk(entry, stop),
+        reward_risk=_estimated_reward_risk(entry, stop),
         consolidation_start=_date_str(frame.iloc[-20]["date"]),
         consolidation_end=_date_str(latest["date"]),
         pivot=prior_3d_high,
@@ -327,6 +389,14 @@ def _detect_earnings_gap_base(
 ) -> SetupRow | None:
     if len(prices) < 80:
         return None
+    known_gap_dates = _known_earnings_gap_dates(
+        config,
+        candidate["symbol"],
+        date.fromisoformat(metadata.asof_date),
+        prices,
+    )
+    if not known_gap_dates:
+        return None
     frame = prices.copy()
     frame["prev_close"] = frame["close"].shift(1)
     frame["volume_50d_avg"] = frame["volume"].rolling(50).mean()
@@ -335,6 +405,14 @@ def _detect_earnings_gap_base(
         (frame["gap_pct"] >= config.setups.earnings_gap_min_gap_pct)
         & (frame["volume"] >= config.setups.earnings_gap_min_volume_ratio * frame["volume_50d_avg"])
     ].tail(1)
+    if gap_rows.empty:
+        return None
+    gap_rows = gap_rows[
+        gap_rows["date"].apply(
+            lambda value: (value.date() if hasattr(value, "date") else date.fromisoformat(str(value)))
+            in known_gap_dates
+        )
+    ]
     if gap_rows.empty:
         return None
     gap_index = gap_rows.index[-1]
@@ -358,7 +436,7 @@ def _detect_earnings_gap_base(
         setup_quality=75.0,
         trigger_price=entry,
         stop_loss=gap_low if entry else None,
-        reward_risk=_reward_risk(entry, gap_low),
+        reward_risk=_estimated_reward_risk(entry, gap_low),
         consolidation_start=_date_str(frame.loc[gap_index, "date"]),
         consolidation_end=_date_str(latest["date"]),
         pivot=post_gap_high,
@@ -416,33 +494,46 @@ def build_signals(
         key=lambda row: row.setup_quality,
         reverse=True,
     )
-    triggered_theme_ids = [row.theme_id for row in triggered]
     rank_by_key = {
         (row.symbol, row.theme_id, row.setup_type): index for index, row in enumerate(triggered)
     }
+    selected_theme_ids: list[str] = []
+    selected_keys: set[tuple[str, str, str]] = set()
     signals: list[SignalRow] = []
     for setup in setups:
-        data_quality_pass = setup.reward_risk is not None and setup.reward_risk >= config.setups.min_reward_risk
+        market_gate_pass, market_gate_reason = market_gate_allows_new_long(market_risk_state)
+        data_quality_pass = setup.trigger_price is not None and setup.stop_loss is not None
+        data_quality_reason = (
+            "Phase 4 setup data is present; true next-open R/R validation is deferred to Phase 5."
+            if data_quality_pass
+            else "Setup is not triggered or lacks entry/stop data."
+        )
         rank = rank_by_key.get((setup.symbol, setup.theme_id, setup.setup_type), 10**6)
         portfolio_pass, portfolio_reason = portfolio_risk_passes(
             config,
             candidate_rank=rank,
             theme_id=setup.theme_id,
-            triggered_theme_ids=triggered_theme_ids,
-            market_risk_state=market_risk_state,
+            selected_theme_ids=selected_theme_ids,
         )
-        actionable = (
+        phase5_execution_ready = False
+        passes_all_research_gates = (
             setup.state == "TRIGGERED"
-            and market_risk_state != "RISK_OFF"
+            and market_gate_pass
             and data_quality_pass
             and portfolio_pass
         )
-        if market_risk_state == "RISK_OFF":
+        key = (setup.symbol, setup.theme_id, setup.setup_type)
+        if passes_all_research_gates:
+            selected_theme_ids.append(setup.theme_id)
+            selected_keys.add(key)
+
+        actionable = passes_all_research_gates and phase5_execution_ready
+        if not market_gate_pass:
             category = "Blocked by market regime"
-            reason = "Market regime is RISK_OFF; no new long entries."
-        elif actionable:
-            category = "Triggered actionable setup"
-            reason = "Triggered setup passes reward/risk, data quality, regime, and portfolio checks."
+            reason = market_gate_reason
+        elif setup.state == "TRIGGERED" and key in selected_keys:
+            category = "Triggered setup candidate"
+            reason = "Triggered setup passes Phase 4 research gates; Phase 5 execution/RR validation required."
         elif setup.state == "SETUP":
             category = "Setup forming"
             reason = "Setup structure exists but trigger has not fired."
@@ -465,8 +556,12 @@ def build_signals(
                 stop_loss=setup.stop_loss,
                 reward_risk=setup.reward_risk,
                 data_quality_pass=data_quality_pass,
+                data_quality_reason=data_quality_reason,
+                market_gate_pass=market_gate_pass,
+                market_gate_reason=market_gate_reason,
                 market_regime_risk_state=market_risk_state,
                 portfolio_risk_pass=portfolio_pass,
+                portfolio_risk_reason=portfolio_reason,
                 signal_generated_at=setup.signal_generated_at,
                 config_hash=setup.config_hash,
                 git_commit=setup.git_commit,
@@ -530,10 +625,12 @@ def persist_signals(config: SectorScoutConfig, asof_date: date, rows: list[Signa
                     asof_date, symbol, theme_id, setup_type, state,
                     action_category, actionable, reason, execution_model,
                     entry_trigger, stop_loss, reward_risk, data_quality_pass,
+                    data_quality_reason, market_gate_pass, market_gate_reason,
                     market_regime_risk_state, portfolio_risk_pass,
+                    portfolio_risk_reason,
                     signal_generated_at_utc, config_hash, git_commit,
                     data_snapshot_id, universe_version, theme_version
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 [
                     asof_date,
@@ -549,8 +646,12 @@ def persist_signals(config: SectorScoutConfig, asof_date: date, rows: list[Signa
                     row.stop_loss,
                     row.reward_risk,
                     row.data_quality_pass,
+                    row.data_quality_reason,
+                    row.market_gate_pass,
+                    row.market_gate_reason,
                     row.market_regime_risk_state,
                     row.portfolio_risk_pass,
+                    row.portfolio_risk_reason,
                     row.signal_generated_at,
                     row.config_hash,
                     row.git_commit,
