@@ -32,7 +32,7 @@ Implemented so far:
   run-level identity, and `execution_decisions` persistence.
 - Phase 5B1: position lifecycle / exits skeleton reading only accepted execution
   decisions, with `simulated_positions`, `exit_decisions`, and
-  `baseline_price_series` scaffold tables.
+  `lifecycle_skips`, `baseline_price_series`, and QA summary scaffolding.
 
 Not implemented yet:
 
@@ -52,6 +52,11 @@ Current limitations:
   records only; they are not trade logs and not performance results.
 - Phase 5B1 lifecycle records are scaffolding for exit-rule QA, not a formal
   result report.
+- Phase 5B1 skips lifecycle generation when `through_date` is before entry or
+  when the local price path is missing; those cases are recorded as lifecycle QA,
+  not silently treated as open positions.
+- Theme-score deterioration uses a strict consecutive market-session streak;
+  missing theme-score rows reset the streak.
 - `SIMULATED_NEXT_OPEN_ACCEPTED` means a research simulation record passed the
   current next-open filters; it is not a broker fill.
 - Execution records store source signal metadata separately from execution-run

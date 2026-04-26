@@ -409,6 +409,23 @@ CREATE TABLE IF NOT EXISTS exit_decisions (
     PRIMARY KEY (lifecycle_run_id, execution_run_id, asof_date, symbol, theme_id, setup_type, execution_model, exit_reason)
 );
 
+CREATE TABLE IF NOT EXISTS lifecycle_skips (
+    lifecycle_run_id VARCHAR NOT NULL,
+    execution_run_id VARCHAR NOT NULL,
+    asof_date DATE NOT NULL,
+    symbol VARCHAR NOT NULL,
+    theme_id VARCHAR NOT NULL,
+    setup_type VARCHAR NOT NULL,
+    execution_model VARCHAR NOT NULL,
+    skip_reason VARCHAR NOT NULL,
+    evidence_json VARCHAR NOT NULL,
+    lifecycle_generated_at_utc TIMESTAMPTZ NOT NULL,
+    lifecycle_config_hash VARCHAR NOT NULL,
+    lifecycle_git_commit VARCHAR NOT NULL,
+    lifecycle_data_snapshot_id VARCHAR NOT NULL,
+    PRIMARY KEY (lifecycle_run_id, execution_run_id, asof_date, symbol, theme_id, setup_type, execution_model, skip_reason)
+);
+
 CREATE TABLE IF NOT EXISTS baseline_price_series (
     lifecycle_run_id VARCHAR NOT NULL,
     symbol VARCHAR NOT NULL,

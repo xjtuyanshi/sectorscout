@@ -9,6 +9,7 @@ import pandas as pd
 
 from sectorscout.config import SectorScoutConfig
 from sectorscout.db import connect_database
+from sectorscout.market_calendar import get_exchange_calendar
 from sectorscout.metadata import build_run_metadata
 from sectorscout.pit import BENCHMARK_SYMBOLS
 from sectorscout.prices import load_price_snapshot
@@ -77,12 +78,34 @@ class ExitDecision:
 
 
 @dataclass(frozen=True)
+class LifecycleSkip:
+    lifecycle_run_id: str
+    execution_run_id: str
+    asof_date: str
+    symbol: str
+    theme_id: str
+    setup_type: str
+    execution_model: str
+    skip_reason: str
+    evidence: dict
+    lifecycle_generated_at: str
+    lifecycle_config_hash: str
+    lifecycle_git_commit: str
+    lifecycle_data_snapshot_id: str
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
 class PositionLifecycleRunResult:
     lifecycle_run_id: str
     execution_run_id: str
     through_date: str
     positions: list[dict]
     exit_decisions: list[dict]
+    skipped_executions: list[dict]
+    qa_summary: dict
     baseline_symbols: list[str]
     warning: str
 
@@ -163,6 +186,12 @@ def _load_prices(config: SectorScoutConfig, symbol: str, through_date: date) -> 
     ).copy()
     frame["date"] = frame["date"].apply(_date_value)
     return frame.sort_values("date").reset_index(drop=True)
+
+
+def _session_dates(config: SectorScoutConfig, start: date, end: date) -> list[date]:
+    calendar = get_exchange_calendar(config)
+    sessions = calendar.sessions_in_range(pd.Timestamp(start), pd.Timestamp(end))
+    return [session.date() for session in sessions]
 
 
 def _next_price_row_after(prices: pd.DataFrame, event_date: date) -> pd.Series | None:
@@ -312,10 +341,14 @@ def _theme_failure_event(
             """,
             [theme_id, entry_date, through_date],
         ).fetchall()
+    score_by_date = {_date_value(score_date): float(theme_score) for score_date, theme_score in rows}
     streak = 0
-    for score_date_raw, theme_score in rows:
-        score_date = _date_value(score_date_raw)
-        if float(theme_score) < config.lifecycle.theme_failure_score_threshold:
+    for score_date in _session_dates(config, entry_date, through_date):
+        theme_score = score_by_date.get(score_date)
+        if theme_score is None:
+            streak = 0
+            continue
+        if theme_score < config.lifecycle.theme_failure_score_threshold:
             streak += 1
         else:
             streak = 0
@@ -328,9 +361,10 @@ def _theme_failure_event(
                 _date_value(next_row["date"]),
                 float(next_row["open"]),
                 {
-                    "theme_score": float(theme_score),
+                    "theme_score": theme_score,
                     "consecutive_days": streak,
                     "threshold": config.lifecycle.theme_failure_score_threshold,
+                    "streak_policy": "strict_consecutive_market_sessions",
                 },
             )
     return None
@@ -376,6 +410,30 @@ def _exit_for_execution(
         if maybe_event is not None:
             events.append(maybe_event)
     return _select_exit_event(events)
+
+
+def _skip(
+    execution: dict,
+    lifecycle_run_id: str,
+    metadata,
+    reason: str,
+    evidence: dict,
+) -> LifecycleSkip:
+    return LifecycleSkip(
+        lifecycle_run_id=lifecycle_run_id,
+        execution_run_id=execution["execution_run_id"],
+        asof_date=_date_value(execution["asof_date"]).isoformat(),
+        symbol=execution["symbol"],
+        theme_id=execution["theme_id"],
+        setup_type=execution["setup_type"],
+        execution_model=execution["execution_model"],
+        skip_reason=reason,
+        evidence=evidence,
+        lifecycle_generated_at=metadata.signal_generated_at,
+        lifecycle_config_hash=metadata.config_hash,
+        lifecycle_git_commit=metadata.git_commit,
+        lifecycle_data_snapshot_id=metadata.data_snapshot_id,
+    )
 
 
 def _build_position(
@@ -469,6 +527,7 @@ def persist_position_lifecycle(
     through_date: date,
     positions: list[SimulatedPosition],
     exits: list[ExitDecision],
+    skips: list[LifecycleSkip],
     baselines: list[dict],
     metadata,
 ) -> None:
@@ -559,6 +618,33 @@ def persist_position_lifecycle(
                     row.lifecycle_data_snapshot_id,
                 ],
             )
+        for row in skips:
+            connection.execute(
+                """
+                INSERT INTO lifecycle_skips (
+                    lifecycle_run_id, execution_run_id, asof_date, symbol,
+                    theme_id, setup_type, execution_model, skip_reason,
+                    evidence_json, lifecycle_generated_at_utc,
+                    lifecycle_config_hash, lifecycle_git_commit,
+                    lifecycle_data_snapshot_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    row.lifecycle_run_id,
+                    row.execution_run_id,
+                    date.fromisoformat(row.asof_date),
+                    row.symbol,
+                    row.theme_id,
+                    row.setup_type,
+                    row.execution_model,
+                    row.skip_reason,
+                    json.dumps(row.evidence, sort_keys=True),
+                    row.lifecycle_generated_at,
+                    row.lifecycle_config_hash,
+                    row.lifecycle_git_commit,
+                    row.lifecycle_data_snapshot_id,
+                ],
+            )
         for row in baselines:
             connection.execute(
                 """
@@ -599,12 +685,54 @@ def generate_position_lifecycle(
     executions = _load_accepted_executions(config, execution_run_id)
     positions: list[SimulatedPosition] = []
     exits: list[ExitDecision] = []
+    skips: list[LifecycleSkip] = []
     for execution in executions:
+        entry_date = _date_value(execution["entry_date"])
+        if through_date < entry_date:
+            skips.append(
+                _skip(
+                    execution,
+                    lifecycle_run_id,
+                    metadata,
+                    "THROUGH_DATE_BEFORE_ENTRY_DATE",
+                    {
+                        "entry_date": entry_date.isoformat(),
+                        "through_date": through_date.isoformat(),
+                    },
+                )
+            )
+            continue
+        prices = _load_prices(config, execution["symbol"], through_date)
+        if prices.empty or prices[prices["date"] >= entry_date].empty:
+            skips.append(
+                _skip(
+                    execution,
+                    lifecycle_run_id,
+                    metadata,
+                    "MISSING_PRICE_PATH",
+                    {
+                        "entry_date": entry_date.isoformat(),
+                        "through_date": through_date.isoformat(),
+                    },
+                )
+            )
+            continue
         exit_event = _exit_for_execution(config, execution, through_date)
         positions.append(_build_position(execution, exit_event, lifecycle_run_id, metadata))
         if exit_event is not None:
             exits.append(_build_exit_decision(execution, exit_event, lifecycle_run_id, metadata))
     baselines = _baseline_rows(config, lifecycle_run_id, through_date, metadata)
+    qa_summary = {
+        "accepted_execution_count": len(executions),
+        "simulated_position_count": len(positions),
+        "closed_position_count": sum(1 for row in positions if row.status == "CLOSED"),
+        "open_position_count": sum(1 for row in positions if row.status == "OPEN"),
+        "skipped_count": len(skips),
+        "missing_price_path_count": sum(
+            1 for row in skips if row.skip_reason == "MISSING_PRICE_PATH"
+        ),
+        "baseline_rows_count": len(baselines),
+    }
     if persist:
         persist_position_lifecycle(
             config,
@@ -613,6 +741,7 @@ def generate_position_lifecycle(
             through_date,
             positions,
             exits,
+            skips,
             baselines,
             metadata,
         )
@@ -622,6 +751,8 @@ def generate_position_lifecycle(
         through_date=through_date.isoformat(),
         positions=[row.to_dict() for row in positions],
         exit_decisions=[row.to_dict() for row in exits],
+        skipped_executions=[row.to_dict() for row in skips],
+        qa_summary=qa_summary,
         baseline_symbols=sorted(BENCHMARK_SYMBOLS),
         warning=(
             "Phase 5B1 only: position lifecycle and exit-decision records are "
