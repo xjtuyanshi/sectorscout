@@ -156,6 +156,18 @@ def test_phase5b1_skips_missing_price_path(tmp_path: Path) -> None:
     assert persisted == ("MISSING_PRICE_PATH",)
 
 
+def test_phase5b1_skips_missing_entry_session_price(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    _insert_accepted_execution(config)
+    _insert_prices(config, "TEST", [(date(2024, 12, 3), 101.0, 103.0, 100.0, 102.0)])
+
+    result = generate_position_lifecycle(config, RUN_ID, date(2024, 12, 3)).to_dict()
+
+    assert result["positions"] == []
+    assert result["qa_summary"]["missing_entry_session_price_count"] == 1
+    assert result["skipped_executions"][0]["skip_reason"] == "MISSING_ENTRY_SESSION_PRICE"
+
+
 def test_phase5b1_gap_down_stop_at_open_exit(tmp_path: Path) -> None:
     config = _config(tmp_path)
     _insert_accepted_execution(config)

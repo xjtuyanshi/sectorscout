@@ -442,3 +442,55 @@ CREATE TABLE IF NOT EXISTS baseline_price_series (
     lifecycle_data_snapshot_id VARCHAR NOT NULL,
     PRIMARY KEY (lifecycle_run_id, symbol, price_date)
 );
+
+CREATE TABLE IF NOT EXISTS trade_ledger (
+    lifecycle_run_id VARCHAR NOT NULL,
+    execution_run_id VARCHAR NOT NULL,
+    symbol VARCHAR NOT NULL,
+    theme_id VARCHAR NOT NULL,
+    setup_type VARCHAR NOT NULL,
+    entry_date DATE NOT NULL,
+    entry_price DOUBLE NOT NULL,
+    initial_stop_loss DOUBLE NOT NULL,
+    risk_per_share DOUBLE NOT NULL,
+    status VARCHAR NOT NULL,
+    exit_date DATE,
+    exit_price DOUBLE,
+    exit_reason VARCHAR,
+    holding_days INTEGER,
+    gross_r_multiple DOUBLE,
+    qa_status VARCHAR NOT NULL,
+    lifecycle_generated_at_utc TIMESTAMPTZ NOT NULL,
+    lifecycle_config_hash VARCHAR NOT NULL,
+    lifecycle_git_commit VARCHAR NOT NULL,
+    lifecycle_data_snapshot_id VARCHAR NOT NULL,
+    PRIMARY KEY (lifecycle_run_id, execution_run_id, symbol, theme_id, setup_type, entry_date)
+);
+
+CREATE TABLE IF NOT EXISTS lifecycle_qa (
+    lifecycle_run_id VARCHAR PRIMARY KEY,
+    execution_run_id VARCHAR NOT NULL,
+    accepted_execution_count INTEGER NOT NULL,
+    simulated_position_count INTEGER NOT NULL,
+    closed_position_count INTEGER NOT NULL,
+    open_position_count INTEGER NOT NULL,
+    skipped_count INTEGER NOT NULL,
+    missing_price_path_count INTEGER NOT NULL,
+    missing_entry_session_price_count INTEGER NOT NULL,
+    baseline_rows_count INTEGER NOT NULL,
+    baseline_symbols_expected_json VARCHAR NOT NULL,
+    baseline_symbols_present_json VARCHAR NOT NULL,
+    baseline_symbols_missing_json VARCHAR NOT NULL,
+    baseline_provider_mix_json VARCHAR NOT NULL,
+    baseline_coverage_start DATE,
+    baseline_coverage_end DATE,
+    config_mismatch_warning BOOLEAN NOT NULL,
+    snapshot_mismatch_warning BOOLEAN NOT NULL,
+    missing_baseline_coverage_warning BOOLEAN NOT NULL,
+    missing_entry_session_price_warning BOOLEAN NOT NULL,
+    price_snapshot_mode VARCHAR NOT NULL,
+    lifecycle_generated_at_utc TIMESTAMPTZ NOT NULL,
+    lifecycle_config_hash VARCHAR NOT NULL,
+    lifecycle_git_commit VARCHAR NOT NULL,
+    lifecycle_data_snapshot_id VARCHAR NOT NULL
+);

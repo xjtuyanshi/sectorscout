@@ -1,0 +1,406 @@
+from __future__ import annotations
+
+import json
+from dataclasses import asdict, dataclass
+from datetime import date, datetime
+
+from sectorscout.config import SectorScoutConfig
+from sectorscout.db import connect_database
+from sectorscout.pit import BENCHMARK_SYMBOLS
+
+
+PRICE_SNAPSHOT_MODE = "in_memory_provider_priority"
+
+
+@dataclass(frozen=True)
+class TradeLedgerRow:
+    lifecycle_run_id: str
+    execution_run_id: str
+    symbol: str
+    theme_id: str
+    setup_type: str
+    entry_date: str
+    entry_price: float
+    initial_stop_loss: float
+    risk_per_share: float
+    status: str
+    exit_date: str | None
+    exit_price: float | None
+    exit_reason: str | None
+    holding_days: int | None
+    gross_r_multiple: float | None
+    qa_status: str
+    lifecycle_generated_at: str
+    lifecycle_config_hash: str
+    lifecycle_git_commit: str
+    lifecycle_data_snapshot_id: str
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class TradeLedgerQAResult:
+    lifecycle_run_id: str
+    execution_run_id: str
+    trade_ledger_rows: list[dict]
+    baseline_qa: dict
+    provenance: dict
+    warnings: dict
+    warning: str
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+def _date_value(value: object) -> date:
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if hasattr(value, "date"):
+        return value.date()
+    return date.fromisoformat(str(value))
+
+
+def _iso_timestamp(value: object) -> str:
+    if isinstance(value, datetime):
+        return value.isoformat()
+    return str(value)
+
+
+def _load_lifecycle_context(config: SectorScoutConfig, lifecycle_run_id: str) -> dict:
+    with connect_database(config.database.path) as connection:
+        row = connection.execute(
+            """
+            SELECT
+                lr.lifecycle_run_id,
+                lr.execution_run_id,
+                lr.through_date,
+                lr.lifecycle_generated_at_utc,
+                lr.lifecycle_config_hash,
+                lr.lifecycle_git_commit,
+                lr.lifecycle_data_snapshot_id,
+                er.execution_config_hash,
+                er.execution_git_commit,
+                er.execution_data_snapshot_id,
+                er.source_signal_snapshot_id
+            FROM lifecycle_runs lr
+            LEFT JOIN execution_runs er
+              ON er.execution_run_id = lr.execution_run_id
+            WHERE lr.lifecycle_run_id = ?
+            """,
+            [lifecycle_run_id],
+        ).fetchone()
+    if row is None:
+        raise ValueError(f"Unknown lifecycle_run_id: {lifecycle_run_id}")
+    columns = [
+        "lifecycle_run_id",
+        "execution_run_id",
+        "through_date",
+        "lifecycle_generated_at",
+        "lifecycle_config_hash",
+        "lifecycle_git_commit",
+        "lifecycle_data_snapshot_id",
+        "execution_config_hash",
+        "execution_git_commit",
+        "execution_data_snapshot_id",
+        "source_signal_snapshot_id",
+    ]
+    return dict(zip(columns, row, strict=True))
+
+
+def _load_positions(config: SectorScoutConfig, lifecycle_run_id: str) -> list[dict]:
+    with connect_database(config.database.path) as connection:
+        rows = connection.execute(
+            """
+            SELECT
+                lifecycle_run_id,
+                execution_run_id,
+                symbol,
+                theme_id,
+                setup_type,
+                entry_date,
+                entry_price,
+                initial_stop_loss,
+                risk_per_share,
+                status,
+                exit_date,
+                exit_price,
+                exit_reason,
+                lifecycle_generated_at_utc,
+                lifecycle_config_hash,
+                lifecycle_git_commit,
+                lifecycle_data_snapshot_id
+            FROM simulated_positions
+            WHERE lifecycle_run_id = ?
+            ORDER BY entry_date, symbol, theme_id, setup_type
+            """,
+            [lifecycle_run_id],
+        ).fetchall()
+    columns = [
+        "lifecycle_run_id",
+        "execution_run_id",
+        "symbol",
+        "theme_id",
+        "setup_type",
+        "entry_date",
+        "entry_price",
+        "initial_stop_loss",
+        "risk_per_share",
+        "status",
+        "exit_date",
+        "exit_price",
+        "exit_reason",
+        "lifecycle_generated_at",
+        "lifecycle_config_hash",
+        "lifecycle_git_commit",
+        "lifecycle_data_snapshot_id",
+    ]
+    return [dict(zip(columns, row, strict=True)) for row in rows]
+
+
+def _load_skips(config: SectorScoutConfig, lifecycle_run_id: str) -> list[dict]:
+    with connect_database(config.database.path) as connection:
+        rows = connection.execute(
+            """
+            SELECT skip_reason
+            FROM lifecycle_skips
+            WHERE lifecycle_run_id = ?
+            """,
+            [lifecycle_run_id],
+        ).fetchall()
+    return [{"skip_reason": row[0]} for row in rows]
+
+
+def _load_baseline_rows(config: SectorScoutConfig, lifecycle_run_id: str) -> list[dict]:
+    with connect_database(config.database.path) as connection:
+        rows = connection.execute(
+            """
+            SELECT symbol, price_date, provider
+            FROM baseline_price_series
+            WHERE lifecycle_run_id = ?
+            ORDER BY symbol, price_date
+            """,
+            [lifecycle_run_id],
+        ).fetchall()
+    columns = ["symbol", "price_date", "provider"]
+    return [dict(zip(columns, row, strict=True)) for row in rows]
+
+
+def _qa_status(position: dict) -> str:
+    if position["risk_per_share"] is None or float(position["risk_per_share"]) <= 0:
+        return "INVALID_RISK"
+    if position["status"] == "CLOSED" and not position["exit_reason"]:
+        return "MISSING_EXIT_REASON"
+    if position["status"] == "CLOSED":
+        return "CLOSED_WITH_EXIT_REASON"
+    if position["status"] == "OPEN":
+        return "OPEN_POSITION"
+    return "UNKNOWN_STATUS"
+
+
+def _ledger_row(position: dict) -> TradeLedgerRow:
+    entry_date = _date_value(position["entry_date"])
+    exit_date = _date_value(position["exit_date"]) if position["exit_date"] else None
+    risk_per_share = float(position["risk_per_share"])
+    gross_r_multiple: float | None = None
+    if exit_date is not None and position["exit_price"] is not None and risk_per_share > 0:
+        gross_r_multiple = (float(position["exit_price"]) - float(position["entry_price"])) / risk_per_share
+    return TradeLedgerRow(
+        lifecycle_run_id=position["lifecycle_run_id"],
+        execution_run_id=position["execution_run_id"],
+        symbol=position["symbol"],
+        theme_id=position["theme_id"],
+        setup_type=position["setup_type"],
+        entry_date=entry_date.isoformat(),
+        entry_price=float(position["entry_price"]),
+        initial_stop_loss=float(position["initial_stop_loss"]),
+        risk_per_share=risk_per_share,
+        status=position["status"],
+        exit_date=exit_date.isoformat() if exit_date else None,
+        exit_price=float(position["exit_price"]) if position["exit_price"] is not None else None,
+        exit_reason=position["exit_reason"],
+        holding_days=(exit_date - entry_date).days if exit_date else None,
+        gross_r_multiple=gross_r_multiple,
+        qa_status=_qa_status(position),
+        lifecycle_generated_at=_iso_timestamp(position["lifecycle_generated_at"]),
+        lifecycle_config_hash=position["lifecycle_config_hash"],
+        lifecycle_git_commit=position["lifecycle_git_commit"],
+        lifecycle_data_snapshot_id=position["lifecycle_data_snapshot_id"],
+    )
+
+
+def _baseline_qa(rows: list[dict]) -> dict:
+    expected = sorted(BENCHMARK_SYMBOLS)
+    present = sorted({row["symbol"] for row in rows})
+    missing = sorted(set(expected) - set(present))
+    provider_mix: dict[str, int] = {}
+    for row in rows:
+        provider_mix[row["provider"]] = provider_mix.get(row["provider"], 0) + 1
+    dates = [_date_value(row["price_date"]) for row in rows]
+    return {
+        "baseline_symbols_expected": expected,
+        "baseline_symbols_present": present,
+        "baseline_symbols_missing": missing,
+        "baseline_rows_count": len(rows),
+        "provider_mix": dict(sorted(provider_mix.items())),
+        "coverage_start": min(dates).isoformat() if dates else None,
+        "coverage_end": max(dates).isoformat() if dates else None,
+    }
+
+
+def _warning_flags(context: dict, baseline_qa: dict, skips: list[dict]) -> dict:
+    return {
+        "config_mismatch_warning": (
+            context.get("execution_config_hash") is not None
+            and context["execution_config_hash"] != context["lifecycle_config_hash"]
+        ),
+        "snapshot_mismatch_warning": (
+            context.get("execution_data_snapshot_id") is not None
+            and context["execution_data_snapshot_id"] != context["lifecycle_data_snapshot_id"]
+        ),
+        "missing_baseline_coverage_warning": bool(baseline_qa["baseline_symbols_missing"]),
+        "missing_entry_session_price_warning": any(
+            row["skip_reason"] == "MISSING_ENTRY_SESSION_PRICE" for row in skips
+        ),
+    }
+
+
+def _provenance(context: dict) -> dict:
+    return {
+        "lifecycle_run_id": context["lifecycle_run_id"],
+        "execution_run_id": context["execution_run_id"],
+        "source_signal_snapshot_id": context.get("source_signal_snapshot_id"),
+        "source_signal_config_hash": None,
+        "execution_config_hash": context.get("execution_config_hash"),
+        "execution_git_commit": context.get("execution_git_commit"),
+        "execution_data_snapshot_id": context.get("execution_data_snapshot_id"),
+        "lifecycle_config_hash": context["lifecycle_config_hash"],
+        "lifecycle_git_commit": context["lifecycle_git_commit"],
+        "lifecycle_data_snapshot_id": context["lifecycle_data_snapshot_id"],
+        "price_snapshot_mode": PRICE_SNAPSHOT_MODE,
+    }
+
+
+def persist_trade_ledger_qa(
+    config: SectorScoutConfig,
+    context: dict,
+    ledger_rows: list[TradeLedgerRow],
+    baseline_qa: dict,
+    warnings: dict,
+    skips: list[dict],
+) -> None:
+    lifecycle_run_id = context["lifecycle_run_id"]
+    with connect_database(config.database.path) as connection:
+        connection.execute("DELETE FROM trade_ledger WHERE lifecycle_run_id = ?", [lifecycle_run_id])
+        connection.execute("DELETE FROM lifecycle_qa WHERE lifecycle_run_id = ?", [lifecycle_run_id])
+        for row in ledger_rows:
+            connection.execute(
+                """
+                INSERT INTO trade_ledger (
+                    lifecycle_run_id, execution_run_id, symbol, theme_id, setup_type,
+                    entry_date, entry_price, initial_stop_loss, risk_per_share,
+                    status, exit_date, exit_price, exit_reason, holding_days,
+                    gross_r_multiple, qa_status, lifecycle_generated_at_utc,
+                    lifecycle_config_hash, lifecycle_git_commit, lifecycle_data_snapshot_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    row.lifecycle_run_id,
+                    row.execution_run_id,
+                    row.symbol,
+                    row.theme_id,
+                    row.setup_type,
+                    date.fromisoformat(row.entry_date),
+                    row.entry_price,
+                    row.initial_stop_loss,
+                    row.risk_per_share,
+                    row.status,
+                    date.fromisoformat(row.exit_date) if row.exit_date else None,
+                    row.exit_price,
+                    row.exit_reason,
+                    row.holding_days,
+                    row.gross_r_multiple,
+                    row.qa_status,
+                    row.lifecycle_generated_at,
+                    row.lifecycle_config_hash,
+                    row.lifecycle_git_commit,
+                    row.lifecycle_data_snapshot_id,
+                ],
+            )
+        connection.execute(
+            """
+            INSERT INTO lifecycle_qa (
+                lifecycle_run_id, execution_run_id, accepted_execution_count,
+                simulated_position_count, closed_position_count, open_position_count,
+                skipped_count, missing_price_path_count,
+                missing_entry_session_price_count, baseline_rows_count,
+                baseline_symbols_expected_json, baseline_symbols_present_json,
+                baseline_symbols_missing_json, baseline_provider_mix_json,
+                baseline_coverage_start, baseline_coverage_end,
+                config_mismatch_warning, snapshot_mismatch_warning,
+                missing_baseline_coverage_warning,
+                missing_entry_session_price_warning, price_snapshot_mode,
+                lifecycle_generated_at_utc, lifecycle_config_hash,
+                lifecycle_git_commit, lifecycle_data_snapshot_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                lifecycle_run_id,
+                context["execution_run_id"],
+                len(ledger_rows) + len(skips),
+                len(ledger_rows),
+                sum(1 for row in ledger_rows if row.status == "CLOSED"),
+                sum(1 for row in ledger_rows if row.status == "OPEN"),
+                len(skips),
+                sum(1 for row in skips if row["skip_reason"] == "MISSING_PRICE_PATH"),
+                sum(1 for row in skips if row["skip_reason"] == "MISSING_ENTRY_SESSION_PRICE"),
+                baseline_qa["baseline_rows_count"],
+                json.dumps(baseline_qa["baseline_symbols_expected"], sort_keys=True),
+                json.dumps(baseline_qa["baseline_symbols_present"], sort_keys=True),
+                json.dumps(baseline_qa["baseline_symbols_missing"], sort_keys=True),
+                json.dumps(baseline_qa["provider_mix"], sort_keys=True),
+                date.fromisoformat(baseline_qa["coverage_start"]) if baseline_qa["coverage_start"] else None,
+                date.fromisoformat(baseline_qa["coverage_end"]) if baseline_qa["coverage_end"] else None,
+                warnings["config_mismatch_warning"],
+                warnings["snapshot_mismatch_warning"],
+                warnings["missing_baseline_coverage_warning"],
+                warnings["missing_entry_session_price_warning"],
+                PRICE_SNAPSHOT_MODE,
+                context["lifecycle_generated_at"],
+                context["lifecycle_config_hash"],
+                context["lifecycle_git_commit"],
+                context["lifecycle_data_snapshot_id"],
+            ],
+        )
+
+
+def generate_trade_ledger_qa(
+    config: SectorScoutConfig,
+    lifecycle_run_id: str,
+    *,
+    persist: bool = True,
+) -> TradeLedgerQAResult:
+    context = _load_lifecycle_context(config, lifecycle_run_id)
+    positions = _load_positions(config, lifecycle_run_id)
+    skips = _load_skips(config, lifecycle_run_id)
+    baseline_rows = _load_baseline_rows(config, lifecycle_run_id)
+    ledger_rows = [_ledger_row(position) for position in positions]
+    baseline = _baseline_qa(baseline_rows)
+    warnings = _warning_flags(context, baseline, skips)
+    provenance = _provenance(context)
+    if persist:
+        persist_trade_ledger_qa(config, context, ledger_rows, baseline, warnings, skips)
+    return TradeLedgerQAResult(
+        lifecycle_run_id=context["lifecycle_run_id"],
+        execution_run_id=context["execution_run_id"],
+        trade_ledger_rows=[row.to_dict() for row in ledger_rows],
+        baseline_qa=baseline,
+        provenance=provenance,
+        warnings=warnings,
+        warning=(
+            "Phase 5B2 only: trade ledger rows and baseline coverage are QA "
+            "scaffolding, not a result report or strategy conclusion."
+        ),
+    )

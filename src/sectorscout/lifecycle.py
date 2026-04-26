@@ -717,6 +717,20 @@ def generate_position_lifecycle(
                 )
             )
             continue
+        if prices[prices["date"] == entry_date].empty:
+            skips.append(
+                _skip(
+                    execution,
+                    lifecycle_run_id,
+                    metadata,
+                    "MISSING_ENTRY_SESSION_PRICE",
+                    {
+                        "entry_date": entry_date.isoformat(),
+                        "through_date": through_date.isoformat(),
+                    },
+                )
+            )
+            continue
         exit_event = _exit_for_execution(config, execution, through_date)
         positions.append(_build_position(execution, exit_event, lifecycle_run_id, metadata))
         if exit_event is not None:
@@ -730,6 +744,9 @@ def generate_position_lifecycle(
         "skipped_count": len(skips),
         "missing_price_path_count": sum(
             1 for row in skips if row.skip_reason == "MISSING_PRICE_PATH"
+        ),
+        "missing_entry_session_price_count": sum(
+            1 for row in skips if row.skip_reason == "MISSING_ENTRY_SESSION_PRICE"
         ),
         "baseline_rows_count": len(baselines),
     }

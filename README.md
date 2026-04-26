@@ -4,10 +4,10 @@ SectorScout is a staged, point-in-time research system for finding strong market
 themes, ranking strong stocks inside those themes, and waiting for technical
 setups before labeling anything actionable.
 
-Current status: Phase 5B1 foundation is implemented. It creates next-open
+Current status: Phase 5B2 QA scaffolding is implemented. It creates next-open
 execution-decision records from frozen Phase 4 triggered setup candidates, then
-builds simulated position lifecycle and exit-decision records. It does not
-calculate strategy performance.
+builds simulated position lifecycle, exit-decision, trade-ledger QA, and
+baseline coverage QA records. It does not calculate strategy performance.
 
 Implemented so far:
 
@@ -33,6 +33,10 @@ Implemented so far:
 - Phase 5B1: position lifecycle / exits skeleton reading only accepted execution
   decisions, with `simulated_positions`, `exit_decisions`, and
   `lifecycle_skips`, `baseline_price_series`, and QA summary scaffolding.
+- Phase 5B2: trade ledger QA and baseline scaffold hardening reading only
+  lifecycle/execution-run tables, with `trade_ledger`, `lifecycle_qa`, row-level
+  gross R diagnostics, baseline coverage/provider mix QA, provenance blocks, and
+  warning flags.
 
 Not implemented yet:
 
@@ -53,8 +57,12 @@ Current limitations:
 - Phase 5B1 lifecycle records are scaffolding for exit-rule QA, not a formal
   result report.
 - Phase 5B1 skips lifecycle generation when `through_date` is before entry or
-  when the local price path is missing; those cases are recorded as lifecycle QA,
-  not silently treated as open positions.
+  when the local price path or entry-session price row is missing; those cases
+  are recorded as lifecycle QA, not silently treated as open positions.
+- Phase 5B2 `gross_r_multiple` is a row-level diagnostic field only. It is not
+  aggregated into summary metrics or used as evidence of strategy quality.
+- Phase 5B2 baseline rows are coverage/provider QA scaffolding only; they are
+  not a benchmark return model.
 - Theme-score deterioration uses a strict consecutive market-session streak;
   missing theme-score rows reset the streak.
 - `SIMULATED_NEXT_OPEN_ACCEPTED` means a research simulation record passed the
@@ -104,6 +112,7 @@ Run the current research commands:
 .venv/bin/sectorscout detect-setups --asof 2024-11-29 --config config.yaml
 .venv/bin/sectorscout execution-decisions --asof 2024-11-29 --config config.yaml
 .venv/bin/sectorscout position-lifecycle --execution-run-id <execution_run_id> --through 2024-12-31 --config config.yaml
+.venv/bin/sectorscout trade-ledger-qa --lifecycle-run-id <lifecycle_run_id> --config config.yaml
 .venv/bin/sectorscout report --date 2024-11-29 --config config.yaml
 ```
 
@@ -120,5 +129,5 @@ Important design constraints to review:
   claims.
 - Scores rank candidates; Phase 4 setup triggers create research candidates only.
 - The system must not output direct buy labels or execution instructions.
-- Phase 5A/5B1 records are not a performance backtest, so no
+- Phase 5A/5B1/5B2 records are not a performance backtest, so no
   performance claims should be inferred from the current repository.

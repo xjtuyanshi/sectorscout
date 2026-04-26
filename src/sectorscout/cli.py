@@ -24,6 +24,7 @@ from sectorscout.ingest import (
     ingest_universe_csv,
 )
 from sectorscout.indicators import compute_technical_indicators
+from sectorscout.ledger import generate_trade_ledger_qa
 from sectorscout.lifecycle import generate_position_lifecycle
 from sectorscout.market_regime import compute_market_regime
 from sectorscout.market_calendar import asof_market_close, to_market_time
@@ -306,6 +307,21 @@ def position_lifecycle(
         loaded,
         execution_run_id,
         through_date,
+        persist=persist,
+    )
+    typer.echo(json.dumps(result.to_dict(), indent=2, sort_keys=True))
+
+
+@app.command("trade-ledger-qa")
+def trade_ledger_qa(
+    lifecycle_run_id: str = typer.Option(..., "--lifecycle-run-id"),
+    persist: bool = typer.Option(True, "--persist/--no-persist"),
+    config: Path = typer.Option(Path("config.yaml"), "--config"),
+) -> None:
+    loaded = _load(config)
+    result = generate_trade_ledger_qa(
+        loaded,
+        lifecycle_run_id,
         persist=persist,
     )
     typer.echo(json.dumps(result.to_dict(), indent=2, sort_keys=True))
