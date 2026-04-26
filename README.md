@@ -4,9 +4,10 @@ SectorScout is a staged, point-in-time research system for finding strong market
 themes, ranking strong stocks inside those themes, and waiting for technical
 setups before labeling anything actionable.
 
-Current status: Phase 5A foundation is implemented. It creates next-open
-execution-decision records from frozen Phase 4 triggered setup candidates, but it
-does not calculate strategy performance.
+Current status: Phase 5B1 foundation is implemented. It creates next-open
+execution-decision records from frozen Phase 4 triggered setup candidates, then
+builds simulated position lifecycle and exit-decision records. It does not
+calculate strategy performance.
 
 Implemented so far:
 
@@ -29,10 +30,13 @@ Implemented so far:
   setup candidates, including next-session open lookup, entry-extension rejects,
   stop validation, initial risk checks, source-signal provenance preservation,
   run-level identity, and `execution_decisions` persistence.
+- Phase 5B1: position lifecycle / exits skeleton reading only accepted execution
+  decisions, with `simulated_positions`, `exit_decisions`, and
+  `baseline_price_series` scaffold tables.
 
 Not implemented yet:
 
-- Formal Phase 5 backtesting: exits, baselines, ablation, rolling/expanding
+- Formal Phase 5 backtesting: full baselines, ablation, rolling/expanding
   validation, performance metrics, or performance conclusions.
 - Phase 6: Streamlit dashboard, documentation polish, CI, and GitHub-ready demo
   workflow.
@@ -46,6 +50,8 @@ Current limitations:
   false in Phase 4 reports.
 - Phase 5A `execution_decisions` recompute next-open risk/RR for candidate
   records only; they are not trade logs and not performance results.
+- Phase 5B1 lifecycle records are scaffolding for exit-rule QA, not a formal
+  result report.
 - `SIMULATED_NEXT_OPEN_ACCEPTED` means a research simulation record passed the
   current next-open filters; it is not a broker fill.
 - Execution records store source signal metadata separately from execution-run
@@ -92,6 +98,7 @@ Run the current research commands:
 .venv/bin/sectorscout score --asof 2024-11-29 --config config.yaml
 .venv/bin/sectorscout detect-setups --asof 2024-11-29 --config config.yaml
 .venv/bin/sectorscout execution-decisions --asof 2024-11-29 --config config.yaml
+.venv/bin/sectorscout position-lifecycle --execution-run-id <execution_run_id> --through 2024-12-31 --config config.yaml
 .venv/bin/sectorscout report --date 2024-11-29 --config config.yaml
 ```
 
@@ -108,5 +115,5 @@ Important design constraints to review:
   claims.
 - Scores rank candidates; Phase 4 setup triggers create research candidates only.
 - The system must not output direct buy labels or execution instructions.
-- Phase 5A execution-decision records are not a performance backtest, so no
+- Phase 5A/5B1 records are not a performance backtest, so no
   performance claims should be inferred from the current repository.

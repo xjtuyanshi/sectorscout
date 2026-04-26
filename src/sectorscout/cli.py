@@ -24,6 +24,7 @@ from sectorscout.ingest import (
     ingest_universe_csv,
 )
 from sectorscout.indicators import compute_technical_indicators
+from sectorscout.lifecycle import generate_position_lifecycle
 from sectorscout.market_regime import compute_market_regime
 from sectorscout.market_calendar import asof_market_close, to_market_time
 from sectorscout.metadata import build_run_metadata
@@ -288,6 +289,25 @@ def execution_decisions(
     parsed_asof = _parse_iso_date(asof)
     assert parsed_asof is not None
     result = generate_execution_decisions(loaded, parsed_asof, persist=persist)
+    typer.echo(json.dumps(result.to_dict(), indent=2, sort_keys=True))
+
+
+@app.command("position-lifecycle")
+def position_lifecycle(
+    execution_run_id: str = typer.Option(..., "--execution-run-id"),
+    through: str = typer.Option(..., "--through"),
+    persist: bool = typer.Option(True, "--persist/--no-persist"),
+    config: Path = typer.Option(Path("config.yaml"), "--config"),
+) -> None:
+    loaded = _load(config)
+    through_date = _parse_iso_date(through)
+    assert through_date is not None
+    result = generate_position_lifecycle(
+        loaded,
+        execution_run_id,
+        through_date,
+        persist=persist,
+    )
     typer.echo(json.dumps(result.to_dict(), indent=2, sort_keys=True))
 
 

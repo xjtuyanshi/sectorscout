@@ -1,6 +1,6 @@
 project:
   name: SectorScout
-  schema_version: 9
+  schema_version: 10
 
 market:
   calendar: XNYS
@@ -88,6 +88,11 @@ execution:
   max_initial_stop_pct: 0.12
   require_next_open_above_trigger: false
   max_entry_drop_below_trigger_pct: 0.02
+
+lifecycle:
+  time_stop_days: 20
+  theme_failure_score_threshold: 50
+  theme_failure_consecutive_days: 5
 
 validation:
   default_start_year: 2016

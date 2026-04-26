@@ -36,6 +36,7 @@ def _insert_signal(
     actionable: bool = False,
     setup_data_present: bool = True,
     execution_data_quality_pass: bool = False,
+    price_snapshot_quality_pass: bool = True,
     data_quality_pass: bool = False,
     market_gate_pass: bool = True,
     portfolio_risk_pass: bool = True,
@@ -64,7 +65,7 @@ def _insert_signal(
                 ?, ?, 'ai-memory', 'VCP', ?,
                 'Triggered setup candidate', ?, 'Phase 4 candidate', 'next_open',
                 ?, ?, 2.0, ?,
-                ?, true, ?,
+                ?, ?, ?,
                 'Phase 5 execution validation required.', ?, 'Market gate pass.',
                 'RISK_ON', ?, 'Portfolio gate pass.',
                 ?, ?, ?,
@@ -80,6 +81,7 @@ def _insert_signal(
                 stop_loss,
                 setup_data_present,
                 execution_data_quality_pass,
+                price_snapshot_quality_pass,
                 data_quality_pass,
                 market_gate_pass,
                 portfolio_risk_pass,
@@ -206,6 +208,8 @@ def test_phase5a_rejects_initial_stop_too_wide(tmp_path: Path) -> None:
 
     assert decision["decision"] == "SIMULATED_NEXT_OPEN_REJECTED"
     assert decision["reject_reason"] == "INITIAL_STOP_TOO_WIDE"
+    assert decision["actual_stop_loss"] == 80.0
+    assert decision["risk_per_share"] == 21.0
     assert decision["execution_data_quality_pass"] is True
     assert decision["execution_rule_pass"] is True
     assert decision["risk_rule_pass"] is False
@@ -259,6 +263,16 @@ def test_phase5a_ignores_non_triggered_or_actionable_rows(tmp_path: Path) -> Non
     _insert_signal(config, symbol="ACTION", actionable=True)
     _insert_next_open(config, symbol="SETUP", open_price=101.0)
     _insert_next_open(config, symbol="ACTION", open_price=101.0)
+
+    result = generate_execution_decisions(config, ASOF).to_dict()
+
+    assert result["decisions"] == []
+
+
+def test_phase5a_ignores_failed_source_price_snapshot_quality_rows(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    _insert_signal(config, price_snapshot_quality_pass=False)
+    _insert_next_open(config, open_price=101.0)
 
     result = generate_execution_decisions(config, ASOF).to_dict()
 

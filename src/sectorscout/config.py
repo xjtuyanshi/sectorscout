@@ -120,6 +120,12 @@ class ExecutionConfig(BaseModel):
     max_entry_drop_below_trigger_pct: float = 0.02
 
 
+class LifecycleConfig(BaseModel):
+    time_stop_days: int = 20
+    theme_failure_score_threshold: float = 50
+    theme_failure_consecutive_days: int = 5
+
+
 class ValidationConfig(BaseModel):
     default_start_year: int = 2016
 
@@ -139,6 +145,7 @@ class SectorScoutConfig(BaseModel):
     reproducibility: ReproducibilityConfig = Field(default_factory=ReproducibilityConfig)
     portfolio: PortfolioConfig = Field(default_factory=PortfolioConfig)
     execution: ExecutionConfig = Field(default_factory=ExecutionConfig)
+    lifecycle: LifecycleConfig = Field(default_factory=LifecycleConfig)
     validation: ValidationConfig = Field(default_factory=ValidationConfig)
 
 

@@ -111,6 +111,7 @@ def _load_frozen_signal_candidates(config: SectorScoutConfig, asof_date: date) -
               AND action_category = 'Triggered setup candidate'
               AND actionable = false
               AND setup_data_present = true
+              AND price_snapshot_quality_pass = true
               AND execution_data_quality_pass = false
               AND data_quality_pass = false
               AND market_gate_pass = true
@@ -214,19 +215,24 @@ def _decision_for_candidate(
             reject_reason = "INITIAL_STOP_TOO_WIDE"
             risk_rule_pass = False
 
+    risk_per_share_value: float | None = None
+    actual_stop_loss_value: float | None = None
+    if actual_entry is not None and stop_loss is not None:
+        actual_stop_loss_value = float(stop_loss)
+        if actual_stop_loss_value < actual_entry:
+            risk_per_share_value = actual_entry - actual_stop_loss_value
+
     decision = (
         "SIMULATED_NEXT_OPEN_REJECTED"
         if reject_reason
         else "SIMULATED_NEXT_OPEN_ACCEPTED"
     )
-    risk_per_share_value: float | None = None
     target_2r: float | None = None
     target_3r: float | None = None
     reward_risk: float | None = None
     if decision == "SIMULATED_NEXT_OPEN_ACCEPTED":
         assert actual_entry is not None
-        assert stop_loss is not None
-        risk_per_share_value = actual_entry - float(stop_loss)
+        assert risk_per_share_value is not None
         target_2r = actual_entry + 2 * risk_per_share_value
         target_3r = actual_entry + 3 * risk_per_share_value
         reward_risk = (target_2r - actual_entry) / risk_per_share_value
@@ -245,11 +251,7 @@ def _decision_for_candidate(
         next_session_date=next_session.isoformat(),
         chosen_provider=chosen_provider,
         actual_entry_price=actual_entry,
-        actual_stop_loss=(
-            float(stop_loss)
-            if decision == "SIMULATED_NEXT_OPEN_ACCEPTED" and stop_loss is not None
-            else None
-        ),
+        actual_stop_loss=actual_stop_loss_value,
         risk_per_share=risk_per_share_value,
         target_2r=target_2r,
         target_3r=target_3r,

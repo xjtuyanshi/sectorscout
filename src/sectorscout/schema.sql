@@ -352,3 +352,76 @@ CREATE TABLE IF NOT EXISTS execution_decisions (
     execution_data_snapshot_id VARCHAR NOT NULL,
     PRIMARY KEY (execution_run_id, asof_date, symbol, theme_id, setup_type, execution_model)
 );
+
+CREATE TABLE IF NOT EXISTS lifecycle_runs (
+    lifecycle_run_id VARCHAR PRIMARY KEY,
+    execution_run_id VARCHAR NOT NULL,
+    through_date DATE NOT NULL,
+    lifecycle_generated_at_utc TIMESTAMPTZ NOT NULL,
+    lifecycle_config_hash VARCHAR NOT NULL,
+    lifecycle_git_commit VARCHAR NOT NULL,
+    lifecycle_data_snapshot_id VARCHAR NOT NULL,
+    created_at_utc TIMESTAMPTZ NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS simulated_positions (
+    lifecycle_run_id VARCHAR NOT NULL,
+    execution_run_id VARCHAR NOT NULL,
+    asof_date DATE NOT NULL,
+    symbol VARCHAR NOT NULL,
+    theme_id VARCHAR NOT NULL,
+    setup_type VARCHAR NOT NULL,
+    execution_model VARCHAR NOT NULL,
+    entry_date DATE NOT NULL,
+    entry_price DOUBLE NOT NULL,
+    initial_stop_loss DOUBLE NOT NULL,
+    risk_per_share DOUBLE NOT NULL,
+    target_1r DOUBLE NOT NULL,
+    target_2r DOUBLE,
+    target_3r DOUBLE,
+    status VARCHAR NOT NULL,
+    exit_date DATE,
+    exit_price DOUBLE,
+    exit_reason VARCHAR,
+    lifecycle_generated_at_utc TIMESTAMPTZ NOT NULL,
+    lifecycle_config_hash VARCHAR NOT NULL,
+    lifecycle_git_commit VARCHAR NOT NULL,
+    lifecycle_data_snapshot_id VARCHAR NOT NULL,
+    PRIMARY KEY (lifecycle_run_id, execution_run_id, asof_date, symbol, theme_id, setup_type, execution_model)
+);
+
+CREATE TABLE IF NOT EXISTS exit_decisions (
+    lifecycle_run_id VARCHAR NOT NULL,
+    execution_run_id VARCHAR NOT NULL,
+    asof_date DATE NOT NULL,
+    symbol VARCHAR NOT NULL,
+    theme_id VARCHAR NOT NULL,
+    setup_type VARCHAR NOT NULL,
+    execution_model VARCHAR NOT NULL,
+    exit_reason VARCHAR NOT NULL,
+    exit_date DATE NOT NULL,
+    exit_price DOUBLE NOT NULL,
+    evidence_json VARCHAR NOT NULL,
+    lifecycle_generated_at_utc TIMESTAMPTZ NOT NULL,
+    lifecycle_config_hash VARCHAR NOT NULL,
+    lifecycle_git_commit VARCHAR NOT NULL,
+    lifecycle_data_snapshot_id VARCHAR NOT NULL,
+    PRIMARY KEY (lifecycle_run_id, execution_run_id, asof_date, symbol, theme_id, setup_type, execution_model, exit_reason)
+);
+
+CREATE TABLE IF NOT EXISTS baseline_price_series (
+    lifecycle_run_id VARCHAR NOT NULL,
+    symbol VARCHAR NOT NULL,
+    price_date DATE NOT NULL,
+    adj_open DOUBLE NOT NULL,
+    adj_high DOUBLE NOT NULL,
+    adj_low DOUBLE NOT NULL,
+    adj_close DOUBLE NOT NULL,
+    adj_volume BIGINT NOT NULL,
+    provider VARCHAR NOT NULL,
+    lifecycle_generated_at_utc TIMESTAMPTZ NOT NULL,
+    lifecycle_config_hash VARCHAR NOT NULL,
+    lifecycle_git_commit VARCHAR NOT NULL,
+    lifecycle_data_snapshot_id VARCHAR NOT NULL,
+    PRIMARY KEY (lifecycle_run_id, symbol, price_date)
+);
