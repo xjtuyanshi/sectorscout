@@ -301,7 +301,20 @@ CREATE TABLE IF NOT EXISTS signals (
     PRIMARY KEY (asof_date, symbol, theme_id, setup_type)
 );
 
+CREATE TABLE IF NOT EXISTS execution_runs (
+    execution_run_id VARCHAR PRIMARY KEY,
+    asof_date DATE NOT NULL,
+    execution_model VARCHAR NOT NULL,
+    execution_generated_at_utc TIMESTAMPTZ NOT NULL,
+    execution_config_hash VARCHAR NOT NULL,
+    execution_git_commit VARCHAR NOT NULL,
+    execution_data_snapshot_id VARCHAR NOT NULL,
+    source_signal_snapshot_id VARCHAR,
+    created_at_utc TIMESTAMPTZ NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS execution_decisions (
+    execution_run_id VARCHAR NOT NULL,
     asof_date DATE NOT NULL,
     symbol VARCHAR NOT NULL,
     theme_id VARCHAR NOT NULL,
@@ -321,12 +334,21 @@ CREATE TABLE IF NOT EXISTS execution_decisions (
     reward_risk DOUBLE,
     max_entry_extension_pct DOUBLE NOT NULL,
     max_initial_stop_pct DOUBLE NOT NULL,
+    require_next_open_above_trigger BOOLEAN NOT NULL,
+    max_entry_drop_below_trigger_pct DOUBLE NOT NULL,
+    execution_price_available BOOLEAN NOT NULL,
     execution_data_quality_pass BOOLEAN NOT NULL,
-    signal_generated_at_utc TIMESTAMPTZ NOT NULL,
-    config_hash VARCHAR NOT NULL,
-    git_commit VARCHAR NOT NULL,
-    data_snapshot_id VARCHAR NOT NULL,
-    universe_version VARCHAR NOT NULL,
-    theme_version VARCHAR NOT NULL,
-    PRIMARY KEY (asof_date, symbol, theme_id, setup_type, execution_model)
+    execution_rule_pass BOOLEAN NOT NULL,
+    risk_rule_pass BOOLEAN NOT NULL,
+    source_signal_generated_at_utc TIMESTAMPTZ NOT NULL,
+    source_signal_config_hash VARCHAR NOT NULL,
+    source_signal_git_commit VARCHAR NOT NULL,
+    source_signal_data_snapshot_id VARCHAR NOT NULL,
+    source_universe_version VARCHAR NOT NULL,
+    source_theme_version VARCHAR NOT NULL,
+    execution_generated_at_utc TIMESTAMPTZ NOT NULL,
+    execution_config_hash VARCHAR NOT NULL,
+    execution_git_commit VARCHAR NOT NULL,
+    execution_data_snapshot_id VARCHAR NOT NULL,
+    PRIMARY KEY (execution_run_id, asof_date, symbol, theme_id, setup_type, execution_model)
 );

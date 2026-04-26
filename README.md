@@ -27,13 +27,13 @@ Implemented so far:
   data-quality reporting, and additional PIT/execution-boundary tests.
 - Phase 5A: read-only next-open execution-decision skeleton for frozen triggered
   setup candidates, including next-session open lookup, entry-extension rejects,
-  stop validation, initial risk checks, and `execution_decisions` persistence.
+  stop validation, initial risk checks, source-signal provenance preservation,
+  run-level identity, and `execution_decisions` persistence.
 
 Not implemented yet:
 
 - Formal Phase 5 backtesting: exits, baselines, ablation, rolling/expanding
-  validation, CAGR, Sharpe, max drawdown, annual returns, or performance
-  conclusions.
+  validation, performance metrics, or performance conclusions.
 - Phase 6: Streamlit dashboard, documentation polish, CI, and GitHub-ready demo
   workflow.
 - Live data providers. Current ingestion is CSV/fixture based.
@@ -46,6 +46,13 @@ Current limitations:
   false in Phase 4 reports.
 - Phase 5A `execution_decisions` recompute next-open risk/RR for candidate
   records only; they are not trade logs and not performance results.
+- `SIMULATED_NEXT_OPEN_ACCEPTED` means a research simulation record passed the
+  current next-open filters; it is not a broker fill.
+- Execution records store source signal metadata separately from execution-run
+  metadata so changed configs do not overwrite the provenance of frozen signals.
+- The default next-open policy allows opens below the trigger/pivot if other
+  execution and risk filters pass. `require_next_open_above_trigger` can tighten
+  that behavior for later research variants.
 - Earnings Gap Base requires a known public earnings timestamp, but event
   sourcing is still based on fixture fundamentals rather than a dedicated live
   earnings-events provider.

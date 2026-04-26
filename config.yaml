@@ -1,6 +1,6 @@
 project:
   name: SectorScout
-  schema_version: 8
+  schema_version: 9
 
 market:
   calendar: XNYS
@@ -86,6 +86,8 @@ portfolio:
 execution:
   max_entry_extension_pct: 0.05
   max_initial_stop_pct: 0.12
+  require_next_open_above_trigger: false
+  max_entry_drop_below_trigger_pct: 0.02
 
 validation:
   default_start_year: 2016

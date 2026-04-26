@@ -116,6 +116,8 @@ class PortfolioConfig(BaseModel):
 class ExecutionConfig(BaseModel):
     max_entry_extension_pct: float = 0.05
     max_initial_stop_pct: float = 0.12
+    require_next_open_above_trigger: bool = False
+    max_entry_drop_below_trigger_pct: float = 0.02
 
 
 class ValidationConfig(BaseModel):
