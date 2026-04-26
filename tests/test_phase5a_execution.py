@@ -154,7 +154,23 @@ def test_phase5a_next_open_execution_records_normal_fill(tmp_path: Path) -> None
         persisted = connection.execute(
             "SELECT decision, actual_entry_price, source_signal_config_hash FROM execution_decisions"
         ).fetchone()
+        run_metadata = connection.execute(
+            """
+            SELECT source_signal_config_hash, source_signal_git_commit,
+                   source_signal_snapshot_id, source_universe_version,
+                   source_theme_version, mixed_source_signal_metadata
+            FROM execution_runs
+            """
+        ).fetchone()
     assert persisted == ("SIMULATED_NEXT_OPEN_ACCEPTED", 101.0, "signal_hash")
+    assert run_metadata == (
+        "signal_hash",
+        "signal_commit",
+        "signal_snapshot",
+        "signal_universe",
+        "signal_theme",
+        False,
+    )
 
 
 def test_phase5a_rejects_gap_too_extended(tmp_path: Path) -> None:
@@ -255,6 +271,43 @@ def test_phase5a_multiple_execution_runs_do_not_overwrite_same_date_decisions(
         ).fetchone()[0]
     assert run_count == 2
     assert decision_count == 2
+
+
+def test_phase5a_execution_run_marks_mixed_source_signal_metadata(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    _insert_signal(
+        config,
+        symbol="A",
+        source_config_hash="hash_a",
+        source_git_commit="commit_a",
+        source_data_snapshot_id="snapshot_a",
+    )
+    _insert_signal(
+        config,
+        symbol="B",
+        source_config_hash="hash_b",
+        source_git_commit="commit_b",
+        source_data_snapshot_id="snapshot_b",
+    )
+    _insert_next_open(config, symbol="A", open_price=101.0)
+    _insert_next_open(config, symbol="B", open_price=101.0)
+
+    generate_execution_decisions(config, ASOF)
+
+    with connect_database(config.database.path) as connection:
+        run_metadata = connection.execute(
+            """
+            SELECT source_signal_config_hash, source_signal_git_commit,
+                   source_signal_snapshot_id, mixed_source_signal_metadata
+            FROM execution_runs
+            """
+        ).fetchone()
+    assert run_metadata == (
+        "mixed:hash_a,hash_b",
+        "mixed:commit_a,commit_b",
+        "mixed:snapshot_a,snapshot_b",
+        True,
+    )
 
 
 def test_phase5a_ignores_non_triggered_or_actionable_rows(tmp_path: Path) -> None:

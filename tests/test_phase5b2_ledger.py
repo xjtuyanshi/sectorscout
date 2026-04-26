@@ -31,6 +31,10 @@ def _insert_lifecycle_context(
     execution_config_hash: str = "execution_hash",
     lifecycle_snapshot: str = "lifecycle_snapshot",
     execution_snapshot: str = "execution_snapshot",
+    source_signal_config_hash: str = "signal_hash",
+    source_signal_git_commit: str = "signal_commit",
+    source_universe_version: str = "signal_universe",
+    source_theme_version: str = "signal_theme",
 ) -> None:
     with connect_database(config.database.path) as connection:
         connection.execute(
@@ -39,14 +43,26 @@ def _insert_lifecycle_context(
                 execution_run_id, asof_date, execution_model,
                 execution_generated_at_utc, execution_config_hash,
                 execution_git_commit, execution_data_snapshot_id,
-                source_signal_snapshot_id, created_at_utc
+                source_signal_snapshot_id, source_signal_config_hash,
+                source_signal_git_commit, source_universe_version,
+                source_theme_version, mixed_source_signal_metadata,
+                created_at_utc
             ) VALUES (
                 ?, DATE '2024-11-29', 'next_open',
                 '2024-11-29T18:01:00+00:00', ?, 'execution_commit',
-                ?, 'signal_snapshot', '2024-11-29T18:01:00+00:00'
+                ?, 'signal_snapshot', ?, ?, ?, ?, false,
+                '2024-11-29T18:01:00+00:00'
             )
             """,
-            [EXECUTION_RUN_ID, execution_config_hash, execution_snapshot],
+            [
+                EXECUTION_RUN_ID,
+                execution_config_hash,
+                execution_snapshot,
+                source_signal_config_hash,
+                source_signal_git_commit,
+                source_universe_version,
+                source_theme_version,
+            ],
         )
         connection.execute(
             """
@@ -68,6 +84,9 @@ def _insert_position(
     config: SectorScoutConfig,
     *,
     symbol: str = "TEST",
+    setup_type: str = "VCP",
+    execution_model: str = "next_open",
+    entry_date: date = date(2024, 12, 2),
     status: str = "CLOSED",
     exit_date: date | None = date(2024, 12, 5),
     exit_price: float | None = 115.0,
@@ -85,8 +104,8 @@ def _insert_position(
                 lifecycle_config_hash, lifecycle_git_commit,
                 lifecycle_data_snapshot_id
             ) VALUES (
-                ?, ?, DATE '2024-11-29', ?, 'ai-memory', 'VCP', 'next_open',
-                DATE '2024-12-02', 100, 90, 10, 110,
+                ?, ?, DATE '2024-11-29', ?, 'ai-memory', ?, ?,
+                ?, 100, 90, 10, 110,
                 120, 130, ?, ?, ?, ?,
                 '2024-12-06T21:00:00+00:00', 'lifecycle_hash',
                 'lifecycle_commit', 'lifecycle_snapshot'
@@ -96,6 +115,9 @@ def _insert_position(
                 LIFECYCLE_RUN_ID,
                 EXECUTION_RUN_ID,
                 symbol,
+                setup_type,
+                execution_model,
+                entry_date,
                 status,
                 exit_date,
                 exit_price,
@@ -158,7 +180,9 @@ def test_phase5b2_trade_ledger_records_position_qa_fields(tmp_path: Path) -> Non
     row = result["trade_ledger_rows"][0]
     assert row["lifecycle_run_id"] == LIFECYCLE_RUN_ID
     assert row["execution_run_id"] == EXECUTION_RUN_ID
+    assert row["asof_date"] == "2024-11-29"
     assert row["symbol"] == "TEST"
+    assert row["execution_model"] == "next_open"
     assert row["entry_date"] == "2024-12-02"
     assert row["entry_price"] == 100.0
     assert row["initial_stop_loss"] == 90.0
@@ -168,13 +192,73 @@ def test_phase5b2_trade_ledger_records_position_qa_fields(tmp_path: Path) -> Non
     assert row["exit_price"] == 115.0
     assert row["exit_reason"] == "HARD_STOP_INTRADAY"
     assert row["holding_days"] == 3
+    assert row["calendar_holding_days"] == 3
+    assert row["trading_holding_sessions"] == 4
     assert row["gross_r_multiple"] == 1.5
-    assert row["qa_status"] == "CLOSED_WITH_EXIT_REASON"
+    assert row["qa_status"] == "CLOSED_WITH_COMPLETE_EXIT"
+    assert row["source_signal_snapshot_id"] == "signal_snapshot"
+    assert row["execution_config_hash"] == "execution_hash"
+    assert row["execution_data_snapshot_id"] == "execution_snapshot"
     with connect_database(config.database.path) as connection:
         persisted = connection.execute(
             "SELECT symbol, gross_r_multiple, qa_status FROM trade_ledger"
         ).fetchone()
-    assert persisted == ("TEST", 1.5, "CLOSED_WITH_EXIT_REASON")
+    assert persisted == ("TEST", 1.5, "CLOSED_WITH_COMPLETE_EXIT")
+
+
+def test_phase5b3_closed_position_missing_exit_date_is_flagged(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    _insert_lifecycle_context(config)
+    _insert_position(config, status="CLOSED", exit_date=None, exit_price=115.0)
+
+    row = generate_trade_ledger_qa(config, LIFECYCLE_RUN_ID).to_dict()["trade_ledger_rows"][0]
+
+    assert row["qa_status"] == "MISSING_EXIT_DATE"
+
+
+def test_phase5b3_closed_position_missing_exit_price_is_flagged(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    _insert_lifecycle_context(config)
+    _insert_position(config, status="CLOSED", exit_date=date(2024, 12, 5), exit_price=None)
+
+    row = generate_trade_ledger_qa(config, LIFECYCLE_RUN_ID).to_dict()["trade_ledger_rows"][0]
+
+    assert row["qa_status"] == "MISSING_EXIT_PRICE"
+    assert row["gross_r_multiple"] is None
+
+
+def test_phase5b3_weekend_calendar_days_differ_from_trading_sessions(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    _insert_lifecycle_context(config)
+    _insert_position(
+        config,
+        entry_date=date(2024, 12, 6),
+        exit_date=date(2024, 12, 9),
+        exit_price=105.0,
+    )
+
+    row = generate_trade_ledger_qa(config, LIFECYCLE_RUN_ID).to_dict()["trade_ledger_rows"][0]
+
+    assert row["calendar_holding_days"] == 3
+    assert row["trading_holding_sessions"] == 2
+
+
+def test_phase5b3_execution_model_is_part_of_trade_ledger_identity(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    _insert_lifecycle_context(config)
+    _insert_position(config, symbol="TEST", setup_type="VCP", execution_model="next_open")
+    _insert_position(config, symbol="TEST", setup_type="VCP", execution_model="next_close")
+
+    result = generate_trade_ledger_qa(config, LIFECYCLE_RUN_ID).to_dict()
+
+    assert len(result["trade_ledger_rows"]) == 2
+    assert {row["execution_model"] for row in result["trade_ledger_rows"]} == {
+        "next_open",
+        "next_close",
+    }
+    with connect_database(config.database.path) as connection:
+        count = connection.execute("SELECT COUNT(*) FROM trade_ledger").fetchone()[0]
+    assert count == 2
 
 
 def test_phase5b2_open_position_has_no_exit_diagnostic(tmp_path: Path) -> None:
@@ -216,6 +300,16 @@ def test_phase5b2_baseline_qa_reports_coverage_and_provider_mix(tmp_path: Path) 
     assert baseline["provider_mix"] == {"FMP": 2, "yfinance": 1}
     assert baseline["coverage_start"] == "2024-12-02"
     assert baseline["coverage_end"] == "2024-12-03"
+    assert baseline["per_symbol"]["SPY"] == {
+        "expected_sessions": 5,
+        "present_sessions": 2,
+        "missing_sessions": 3,
+        "coverage_start": "2024-12-02",
+        "coverage_end": "2024-12-03",
+        "provider_mix": {"FMP": 2},
+    }
+    assert baseline["per_symbol"]["QQQ"]["missing_sessions"] == 4
+    assert baseline["per_symbol"]["SMH"]["missing_sessions"] == 5
     assert result["warnings"]["missing_baseline_coverage_warning"] is True
 
 
@@ -237,7 +331,11 @@ def test_phase5b2_provenance_and_warnings_are_persisted(tmp_path: Path) -> None:
         "lifecycle_run_id": LIFECYCLE_RUN_ID,
         "execution_run_id": EXECUTION_RUN_ID,
         "source_signal_snapshot_id": "signal_snapshot",
-        "source_signal_config_hash": None,
+        "source_signal_config_hash": "signal_hash",
+        "source_signal_git_commit": "signal_commit",
+        "source_universe_version": "signal_universe",
+        "source_theme_version": "signal_theme",
+        "mixed_source_signal_metadata": False,
         "execution_config_hash": "execution_hash",
         "execution_git_commit": "execution_commit",
         "execution_data_snapshot_id": "execution_snapshot",
@@ -288,10 +386,14 @@ def test_phase5b2_cli_output_has_no_formal_metric_terms(tmp_path: Path) -> None:
         "sharpe",
         "max drawdown",
         "annual return",
+        "annual returns",
         "win_rate",
+        "win rate",
         "profit_factor",
+        "profit factor",
         "expectancy",
         "edge claim",
+        "claim edge",
     ):
         assert forbidden not in output
 

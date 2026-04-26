@@ -296,8 +296,13 @@ def persist_execution_decisions(
                 execution_git_commit,
                 execution_data_snapshot_id,
                 source_signal_snapshot_id,
+                source_signal_config_hash,
+                source_signal_git_commit,
+                source_universe_version,
+                source_theme_version,
+                mixed_source_signal_metadata,
                 created_at_utc
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 execution_run_id,
@@ -308,6 +313,11 @@ def persist_execution_decisions(
                 metadata.git_commit,
                 metadata.data_snapshot_id,
                 _source_snapshot_id(rows),
+                _source_field_summary(rows, "source_signal_config_hash"),
+                _source_field_summary(rows, "source_signal_git_commit"),
+                _source_field_summary(rows, "source_universe_version"),
+                _source_field_summary(rows, "source_theme_version"),
+                _mixed_source_metadata(rows),
                 metadata.created_at,
             ],
         )
@@ -372,12 +382,31 @@ def persist_execution_decisions(
 
 
 def _source_snapshot_id(rows: list[ExecutionDecision]) -> str | None:
-    snapshots = sorted({row.source_signal_data_snapshot_id for row in rows})
-    if not snapshots:
+    return _source_field_summary(rows, "source_signal_data_snapshot_id")
+
+
+def _source_field_summary(rows: list[ExecutionDecision], field_name: str) -> str | None:
+    values = sorted({str(getattr(row, field_name)) for row in rows if getattr(row, field_name)})
+    if not values:
         return None
-    if len(snapshots) == 1:
-        return snapshots[0]
-    return "mixed:" + ",".join(snapshots)
+    if len(values) == 1:
+        return values[0]
+    return "mixed:" + ",".join(values)
+
+
+def _mixed_source_metadata(rows: list[ExecutionDecision]) -> bool:
+    source_fields = [
+        "source_signal_config_hash",
+        "source_signal_git_commit",
+        "source_signal_data_snapshot_id",
+        "source_universe_version",
+        "source_theme_version",
+    ]
+    for field_name in source_fields:
+        values = {str(getattr(row, field_name)) for row in rows if getattr(row, field_name)}
+        if len(values) > 1:
+            return True
+    return False
 
 
 def generate_execution_decisions(

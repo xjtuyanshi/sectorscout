@@ -310,6 +310,11 @@ CREATE TABLE IF NOT EXISTS execution_runs (
     execution_git_commit VARCHAR NOT NULL,
     execution_data_snapshot_id VARCHAR NOT NULL,
     source_signal_snapshot_id VARCHAR,
+    source_signal_config_hash VARCHAR,
+    source_signal_git_commit VARCHAR,
+    source_universe_version VARCHAR,
+    source_theme_version VARCHAR,
+    mixed_source_signal_metadata BOOLEAN NOT NULL DEFAULT false,
     created_at_utc TIMESTAMPTZ NOT NULL
 );
 
@@ -446,9 +451,11 @@ CREATE TABLE IF NOT EXISTS baseline_price_series (
 CREATE TABLE IF NOT EXISTS trade_ledger (
     lifecycle_run_id VARCHAR NOT NULL,
     execution_run_id VARCHAR NOT NULL,
+    asof_date DATE NOT NULL,
     symbol VARCHAR NOT NULL,
     theme_id VARCHAR NOT NULL,
     setup_type VARCHAR NOT NULL,
+    execution_model VARCHAR NOT NULL,
     entry_date DATE NOT NULL,
     entry_price DOUBLE NOT NULL,
     initial_stop_loss DOUBLE NOT NULL,
@@ -458,13 +465,18 @@ CREATE TABLE IF NOT EXISTS trade_ledger (
     exit_price DOUBLE,
     exit_reason VARCHAR,
     holding_days INTEGER,
+    calendar_holding_days INTEGER,
+    trading_holding_sessions INTEGER,
     gross_r_multiple DOUBLE,
     qa_status VARCHAR NOT NULL,
+    source_signal_snapshot_id VARCHAR,
+    execution_config_hash VARCHAR,
+    execution_data_snapshot_id VARCHAR,
     lifecycle_generated_at_utc TIMESTAMPTZ NOT NULL,
     lifecycle_config_hash VARCHAR NOT NULL,
     lifecycle_git_commit VARCHAR NOT NULL,
     lifecycle_data_snapshot_id VARCHAR NOT NULL,
-    PRIMARY KEY (lifecycle_run_id, execution_run_id, symbol, theme_id, setup_type, entry_date)
+    PRIMARY KEY (lifecycle_run_id, execution_run_id, asof_date, symbol, theme_id, setup_type, execution_model, entry_date)
 );
 
 CREATE TABLE IF NOT EXISTS lifecycle_qa (
@@ -482,6 +494,7 @@ CREATE TABLE IF NOT EXISTS lifecycle_qa (
     baseline_symbols_present_json VARCHAR NOT NULL,
     baseline_symbols_missing_json VARCHAR NOT NULL,
     baseline_provider_mix_json VARCHAR NOT NULL,
+    baseline_symbol_qa_json VARCHAR NOT NULL DEFAULT '{}',
     baseline_coverage_start DATE,
     baseline_coverage_end DATE,
     config_mismatch_warning BOOLEAN NOT NULL,
@@ -493,4 +506,33 @@ CREATE TABLE IF NOT EXISTS lifecycle_qa (
     lifecycle_config_hash VARCHAR NOT NULL,
     lifecycle_git_commit VARCHAR NOT NULL,
     lifecycle_data_snapshot_id VARCHAR NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS price_snapshot_runs (
+    price_snapshot_id VARCHAR PRIMARY KEY,
+    asof_date DATE NOT NULL,
+    provider_priority_json VARCHAR NOT NULL,
+    provider_mix_json VARCHAR NOT NULL,
+    duplicate_provider_rows_dropped INTEGER NOT NULL,
+    min_price_date DATE,
+    max_price_date DATE,
+    raw_row_count INTEGER NOT NULL,
+    chosen_row_count INTEGER NOT NULL,
+    config_hash VARCHAR NOT NULL,
+    git_commit VARCHAR NOT NULL,
+    created_at_utc TIMESTAMPTZ NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS price_snapshot_rows (
+    price_snapshot_id VARCHAR NOT NULL,
+    symbol VARCHAR NOT NULL,
+    price_date DATE NOT NULL,
+    adj_open DOUBLE NOT NULL,
+    adj_high DOUBLE NOT NULL,
+    adj_low DOUBLE NOT NULL,
+    adj_close DOUBLE NOT NULL,
+    adj_volume BIGINT NOT NULL,
+    provider VARCHAR NOT NULL,
+    adjustment_warning BOOLEAN NOT NULL,
+    PRIMARY KEY (price_snapshot_id, symbol, price_date)
 );

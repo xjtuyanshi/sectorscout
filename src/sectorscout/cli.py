@@ -30,6 +30,7 @@ from sectorscout.market_regime import compute_market_regime
 from sectorscout.market_calendar import asof_market_close, to_market_time
 from sectorscout.metadata import build_run_metadata
 from sectorscout.pit import available_fundamental_facts, theme_members_asof, universe_asof
+from sectorscout.prices import create_frozen_price_snapshot
 from sectorscout.reports import generate_daily_report
 from sectorscout.scoring import run_scoring
 from sectorscout.setups import detect_setups
@@ -324,6 +325,19 @@ def trade_ledger_qa(
         lifecycle_run_id,
         persist=persist,
     )
+    typer.echo(json.dumps(result.to_dict(), indent=2, sort_keys=True))
+
+
+@app.command("price-snapshot")
+def price_snapshot(
+    asof: str = typer.Option(..., "--asof"),
+    persist: bool = typer.Option(True, "--persist/--no-persist"),
+    config: Path = typer.Option(Path("config.yaml"), "--config"),
+) -> None:
+    loaded = _load(config)
+    parsed_asof = _parse_iso_date(asof)
+    assert parsed_asof is not None
+    result = create_frozen_price_snapshot(loaded, parsed_asof, persist=persist)
     typer.echo(json.dumps(result.to_dict(), indent=2, sort_keys=True))
 
 
