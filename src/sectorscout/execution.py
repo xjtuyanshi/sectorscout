@@ -453,6 +453,9 @@ def generate_execution_decisions(
             config,
             price_snapshot_id,
             required_symbols={candidate["symbol"] for candidate in candidates},
+            required_symbol_dates={
+                candidate["symbol"]: [next_session] for candidate in candidates
+            },
             through_date=next_session,
             require_rows=bool(candidates),
         )

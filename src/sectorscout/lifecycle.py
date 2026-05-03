@@ -742,10 +742,16 @@ def generate_position_lifecycle(
     )
     executions = _load_accepted_executions(config, execution_run_id)
     if effective_price_snapshot_id is not None:
+        required_entry_dates: dict[str, set[date]] = {}
+        for execution in executions:
+            entry_date = _date_value(execution["entry_date"])
+            if through_date >= entry_date:
+                required_entry_dates.setdefault(execution["symbol"], set()).add(entry_date)
         validate_price_snapshot_usage(
             config,
             effective_price_snapshot_id,
             required_symbols={execution["symbol"] for execution in executions},
+            required_symbol_dates=required_entry_dates,
             through_date=through_date,
             require_rows=bool(executions),
         )

@@ -64,6 +64,51 @@ def _insert_price(
         )
 
 
+def _insert_manual_price_snapshot(
+    config: SectorScoutConfig,
+    *,
+    price_snapshot_id: str,
+    symbol: str,
+    price_date: date,
+    close: float,
+    provider: str = "FMP",
+) -> None:
+    with connect_database(config.database.path) as connection:
+        connection.execute(
+            """
+            INSERT INTO price_snapshot_runs (
+                price_snapshot_id, asof_date, provider_priority_json,
+                provider_mix_json, duplicate_provider_rows_dropped,
+                min_price_date, max_price_date, raw_row_count,
+                chosen_row_count, config_hash, git_commit, created_at_utc
+            ) VALUES (
+                ?, ?, '["FMP", "yfinance", "fixture"]', '{"FMP": 1}',
+                0, ?, ?, 1, 1, 'snapshot_hash', 'snapshot_commit', now()
+            )
+            """,
+            [price_snapshot_id, price_date, price_date, price_date],
+        )
+        connection.execute(
+            """
+            INSERT INTO price_snapshot_rows (
+                price_snapshot_id, symbol, price_date, adj_open,
+                adj_high, adj_low, adj_close, adj_volume, provider,
+                adjustment_warning
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, 1000000, ?, false)
+            """,
+            [
+                price_snapshot_id,
+                symbol,
+                price_date,
+                close,
+                close + 1,
+                close - 1,
+                close,
+                provider,
+            ],
+        )
+
+
 def _insert_signal(config: SectorScoutConfig) -> None:
     with connect_database(config.database.path) as connection:
         connection.execute(
@@ -286,6 +331,25 @@ def test_phase5b3_execution_rejects_snapshot_undercovered_required_symbol(
         generate_execution_decisions(config, SIGNAL_ASOF, price_snapshot_id=price_snapshot_id)
 
 
+def test_phase5b3_execution_rejects_snapshot_missing_exact_next_session(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    _insert_signal(config)
+    _insert_price(config, "MU", date(2024, 12, 3), 103.0, "FMP")
+    price_snapshot_id = create_frozen_price_snapshot(
+        config,
+        date(2024, 12, 3),
+        symbols=["MU"],
+    ).price_snapshot_id
+
+    with pytest.raises(
+        PriceSnapshotValidationError,
+        match="PRICE_SNAPSHOT_MISSING_REQUIRED_SESSIONS",
+    ):
+        generate_execution_decisions(config, SIGNAL_ASOF, price_snapshot_id=price_snapshot_id)
+
+
 def test_phase5b3_lifecycle_rejects_undercovered_price_snapshot(tmp_path: Path) -> None:
     config = _config(tmp_path)
     _insert_signal(config)
@@ -306,6 +370,33 @@ def test_phase5b3_lifecycle_rejects_undercovered_price_snapshot(tmp_path: Path) 
             config,
             execution["execution_run_id"],
             date(2024, 12, 3),
+        )
+
+
+def test_phase5b3_lifecycle_rejects_snapshot_missing_exact_entry_session(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    _insert_signal(config)
+    _insert_price(config, "MU", NEXT_SESSION, 101.0, "FMP", low=100.0)
+    execution = generate_execution_decisions(config, SIGNAL_ASOF).to_dict()
+    _insert_manual_price_snapshot(
+        config,
+        price_snapshot_id="sparse-entry-snapshot",
+        symbol="MU",
+        price_date=date(2024, 12, 3),
+        close=103.0,
+    )
+
+    with pytest.raises(
+        PriceSnapshotValidationError,
+        match="PRICE_SNAPSHOT_MISSING_REQUIRED_SESSIONS",
+    ):
+        generate_position_lifecycle(
+            config,
+            execution["execution_run_id"],
+            date(2024, 12, 3),
+            price_snapshot_id="sparse-entry-snapshot",
         )
 
 

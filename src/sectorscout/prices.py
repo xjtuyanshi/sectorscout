@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, dataclass
 from datetime import date, datetime
-from typing import Iterable
+from typing import Iterable, Mapping
 from uuid import uuid4
 
 import pandas as pd
@@ -57,6 +57,8 @@ class PriceSnapshotUsage:
     chosen_row_count: int
     required_symbols: list[str]
     missing_symbols: list[str]
+    required_symbol_dates: dict[str, list[str]]
+    missing_symbol_dates: list[str]
     through_date: str
     price_snapshot_mode: str = "persisted_price_snapshot"
 
@@ -220,13 +222,25 @@ def validate_price_snapshot_usage(
     price_snapshot_id: str,
     *,
     required_symbols: Iterable[str],
+    required_symbol_dates: Mapping[str, Iterable[date]] | None = None,
     through_date: date,
     require_rows: bool = True,
 ) -> PriceSnapshotUsage:
     if price_snapshot_id == "":
         raise PriceSnapshotValidationError("EMPTY_PRICE_SNAPSHOT_ID")
 
-    required = sorted({symbol.upper() for symbol in required_symbols})
+    required_dates = {
+        symbol.upper(): sorted({_date_value(session) for session in sessions})
+        for symbol, sessions in (required_symbol_dates or {}).items()
+        if sessions
+    }
+    required = sorted(
+        {symbol.upper() for symbol in required_symbols} | set(required_dates)
+    )
+    exact_symbols = sorted(required_dates)
+    exact_dates = sorted(
+        {session for sessions in required_dates.values() for session in sessions}
+    )
     with connect_database(config.database.path) as connection:
         run = connection.execute(
             """
@@ -260,6 +274,19 @@ def validate_price_snapshot_usage(
             ).fetchall()
         else:
             present_rows = []
+        if exact_symbols and exact_dates:
+            present_exact_rows = connection.execute(
+                """
+                SELECT symbol, price_date
+                FROM price_snapshot_rows
+                WHERE price_snapshot_id = ?
+                  AND symbol IN (SELECT unnest(?))
+                  AND price_date IN (SELECT unnest(?))
+                """,
+                [price_snapshot_id, exact_symbols, exact_dates],
+            ).fetchall()
+        else:
+            present_exact_rows = []
 
     (
         asof_date,
@@ -290,6 +317,21 @@ def validate_price_snapshot_usage(
         raise PriceSnapshotValidationError(
             f"PRICE_SNAPSHOT_MISSING_SYMBOLS: {price_snapshot_id} missing={','.join(missing_symbols)}"
         )
+    present_exact_pairs = {
+        (str(symbol).upper(), _date_value(price_date))
+        for symbol, price_date in present_exact_rows
+    }
+    missing_symbol_dates = [
+        f"{symbol}:{required_date.isoformat()}"
+        for symbol, dates in required_dates.items()
+        for required_date in dates
+        if (symbol, required_date) not in present_exact_pairs
+    ]
+    if require_rows and missing_symbol_dates:
+        raise PriceSnapshotValidationError(
+            f"PRICE_SNAPSHOT_MISSING_REQUIRED_SESSIONS: {price_snapshot_id} "
+            f"missing={','.join(missing_symbol_dates)}"
+        )
 
     return PriceSnapshotUsage(
         price_snapshot_id=price_snapshot_id,
@@ -303,6 +345,11 @@ def validate_price_snapshot_usage(
         chosen_row_count=int(chosen_row_count),
         required_symbols=required,
         missing_symbols=missing_symbols,
+        required_symbol_dates={
+            symbol: [session.isoformat() for session in sessions]
+            for symbol, sessions in required_dates.items()
+        },
+        missing_symbol_dates=missing_symbol_dates,
         through_date=through_date.isoformat(),
     )
 
