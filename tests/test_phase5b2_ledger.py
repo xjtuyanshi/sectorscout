@@ -342,6 +342,8 @@ def test_phase5b2_provenance_and_warnings_are_persisted(tmp_path: Path) -> None:
         "lifecycle_config_hash": "lifecycle_hash",
         "lifecycle_git_commit": "lifecycle_commit",
         "lifecycle_data_snapshot_id": "lifecycle_snapshot",
+        "lifecycle_price_snapshot_id": None,
+        "execution_price_snapshot_id": None,
         "price_snapshot_mode": "in_memory_provider_priority",
     }
     assert result["warnings"]["config_mismatch_warning"] is True

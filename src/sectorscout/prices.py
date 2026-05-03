@@ -109,6 +109,46 @@ def load_price_snapshot(
     return choose_provider_rows(rows, config)
 
 
+def load_persisted_price_snapshot(
+    config: SectorScoutConfig,
+    price_snapshot_id: str,
+    *,
+    symbols: Iterable[str] | None = None,
+    through_date: date | None = None,
+) -> pd.DataFrame:
+    symbol_list = sorted({symbol.upper() for symbol in symbols}) if symbols is not None else None
+    if symbols is not None and not symbol_list:
+        return pd.DataFrame(columns=PRICE_SNAPSHOT_COLUMNS)
+    symbol_filter = "AND symbol IN (SELECT unnest(?))" if symbol_list else ""
+    date_filter = "AND price_date <= ?" if through_date else ""
+    params: list[object] = [price_snapshot_id]
+    if symbol_list:
+        params.append(symbol_list)
+    if through_date:
+        params.append(through_date)
+    with connect_database(config.database.path) as connection:
+        return connection.execute(
+            f"""
+            SELECT
+                symbol,
+                price_date,
+                adj_open,
+                adj_high,
+                adj_low,
+                adj_close,
+                adj_volume,
+                provider,
+                adjustment_warning
+            FROM price_snapshot_rows
+            WHERE price_snapshot_id = ?
+              {symbol_filter}
+              {date_filter}
+            ORDER BY symbol, price_date, provider
+            """,
+            params,
+        ).fetchdf()
+
+
 def _provider_mix(rows: pd.DataFrame) -> dict[str, int]:
     if rows.empty:
         return {}

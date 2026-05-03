@@ -315,6 +315,7 @@ CREATE TABLE IF NOT EXISTS execution_runs (
     source_universe_version VARCHAR,
     source_theme_version VARCHAR,
     mixed_source_signal_metadata BOOLEAN NOT NULL DEFAULT false,
+    price_snapshot_id VARCHAR,
     created_at_utc TIMESTAMPTZ NOT NULL
 );
 
@@ -355,6 +356,7 @@ CREATE TABLE IF NOT EXISTS execution_decisions (
     execution_config_hash VARCHAR NOT NULL,
     execution_git_commit VARCHAR NOT NULL,
     execution_data_snapshot_id VARCHAR NOT NULL,
+    price_snapshot_id VARCHAR,
     PRIMARY KEY (execution_run_id, asof_date, symbol, theme_id, setup_type, execution_model)
 );
 
@@ -366,6 +368,7 @@ CREATE TABLE IF NOT EXISTS lifecycle_runs (
     lifecycle_config_hash VARCHAR NOT NULL,
     lifecycle_git_commit VARCHAR NOT NULL,
     lifecycle_data_snapshot_id VARCHAR NOT NULL,
+    price_snapshot_id VARCHAR,
     created_at_utc TIMESTAMPTZ NOT NULL
 );
 

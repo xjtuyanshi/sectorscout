@@ -12,7 +12,7 @@ from sectorscout.db import connect_database
 from sectorscout.market_calendar import get_exchange_calendar
 from sectorscout.metadata import build_run_metadata
 from sectorscout.pit import BENCHMARK_SYMBOLS
-from sectorscout.prices import load_price_snapshot
+from sectorscout.prices import load_persisted_price_snapshot, load_price_snapshot
 
 
 ACCEPTED_DECISION = "SIMULATED_NEXT_OPEN_ACCEPTED"
@@ -102,6 +102,7 @@ class PositionLifecycleRunResult:
     lifecycle_run_id: str
     execution_run_id: str
     through_date: str
+    price_snapshot_id: str | None
     positions: list[dict]
     exit_decisions: list[dict]
     skipped_executions: list[dict]
@@ -170,8 +171,38 @@ def _load_accepted_executions(
     return [dict(zip(columns, row, strict=True)) for row in rows]
 
 
-def _load_prices(config: SectorScoutConfig, symbol: str, through_date: date) -> pd.DataFrame:
-    prices, _duplicate_count = load_price_snapshot(config, through_date, symbols=[symbol])
+def _load_execution_price_snapshot_id(
+    config: SectorScoutConfig,
+    execution_run_id: str,
+) -> str | None:
+    with connect_database(config.database.path) as connection:
+        row = connection.execute(
+            """
+            SELECT price_snapshot_id
+            FROM execution_runs
+            WHERE execution_run_id = ?
+            """,
+            [execution_run_id],
+        ).fetchone()
+    return row[0] if row else None
+
+
+def _load_prices(
+    config: SectorScoutConfig,
+    symbol: str,
+    through_date: date,
+    *,
+    price_snapshot_id: str | None = None,
+) -> pd.DataFrame:
+    if price_snapshot_id:
+        prices = load_persisted_price_snapshot(
+            config,
+            price_snapshot_id,
+            symbols=[symbol],
+            through_date=through_date,
+        )
+    else:
+        prices, _duplicate_count = load_price_snapshot(config, through_date, symbols=[symbol])
     if prices.empty:
         return prices
     frame = prices.rename(
@@ -386,9 +417,16 @@ def _exit_for_execution(
     config: SectorScoutConfig,
     execution: dict,
     through_date: date,
+    *,
+    price_snapshot_id: str | None = None,
 ) -> dict | None:
     entry_date = _date_value(execution["entry_date"])
-    prices = _load_prices(config, execution["symbol"], through_date)
+    prices = _load_prices(
+        config,
+        execution["symbol"],
+        through_date,
+        price_snapshot_id=price_snapshot_id,
+    )
     if prices.empty:
         return None
     stop_loss = float(execution["initial_stop_loss"])
@@ -495,10 +533,17 @@ def _build_exit_decision(
     )
 
 
-def _baseline_rows(config: SectorScoutConfig, lifecycle_run_id: str, through_date: date, metadata) -> list[dict]:
+def _baseline_rows(
+    config: SectorScoutConfig,
+    lifecycle_run_id: str,
+    through_date: date,
+    metadata,
+    *,
+    price_snapshot_id: str | None = None,
+) -> list[dict]:
     rows: list[dict] = []
     for symbol in sorted(BENCHMARK_SYMBOLS):
-        prices = _load_prices(config, symbol, through_date)
+        prices = _load_prices(config, symbol, through_date, price_snapshot_id=price_snapshot_id)
         for _, row in prices.iterrows():
             rows.append(
                 {
@@ -530,6 +575,7 @@ def persist_position_lifecycle(
     skips: list[LifecycleSkip],
     baselines: list[dict],
     metadata,
+    price_snapshot_id: str | None,
 ) -> None:
     with connect_database(config.database.path) as connection:
         connection.execute(
@@ -537,8 +583,9 @@ def persist_position_lifecycle(
             INSERT INTO lifecycle_runs (
                 lifecycle_run_id, execution_run_id, through_date,
                 lifecycle_generated_at_utc, lifecycle_config_hash,
-                lifecycle_git_commit, lifecycle_data_snapshot_id, created_at_utc
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                lifecycle_git_commit, lifecycle_data_snapshot_id,
+                price_snapshot_id, created_at_utc
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 lifecycle_run_id,
@@ -548,6 +595,7 @@ def persist_position_lifecycle(
                 metadata.config_hash,
                 metadata.git_commit,
                 metadata.data_snapshot_id,
+                price_snapshot_id,
                 metadata.created_at,
             ],
         )
@@ -679,9 +727,14 @@ def generate_position_lifecycle(
     through_date: date,
     *,
     persist: bool = True,
+    price_snapshot_id: str | None = None,
 ) -> PositionLifecycleRunResult:
     metadata = build_run_metadata(config, "position-lifecycle", asof_date=through_date)
     lifecycle_run_id = str(uuid4())
+    effective_price_snapshot_id = price_snapshot_id or _load_execution_price_snapshot_id(
+        config,
+        execution_run_id,
+    )
     executions = _load_accepted_executions(config, execution_run_id)
     positions: list[SimulatedPosition] = []
     exits: list[ExitDecision] = []
@@ -702,7 +755,12 @@ def generate_position_lifecycle(
                 )
             )
             continue
-        prices = _load_prices(config, execution["symbol"], through_date)
+        prices = _load_prices(
+            config,
+            execution["symbol"],
+            through_date,
+            price_snapshot_id=effective_price_snapshot_id,
+        )
         if prices.empty or prices[prices["date"] >= entry_date].empty:
             skips.append(
                 _skip(
@@ -731,11 +789,22 @@ def generate_position_lifecycle(
                 )
             )
             continue
-        exit_event = _exit_for_execution(config, execution, through_date)
+        exit_event = _exit_for_execution(
+            config,
+            execution,
+            through_date,
+            price_snapshot_id=effective_price_snapshot_id,
+        )
         positions.append(_build_position(execution, exit_event, lifecycle_run_id, metadata))
         if exit_event is not None:
             exits.append(_build_exit_decision(execution, exit_event, lifecycle_run_id, metadata))
-    baselines = _baseline_rows(config, lifecycle_run_id, through_date, metadata)
+    baselines = _baseline_rows(
+        config,
+        lifecycle_run_id,
+        through_date,
+        metadata,
+        price_snapshot_id=effective_price_snapshot_id,
+    )
     qa_summary = {
         "accepted_execution_count": len(executions),
         "simulated_position_count": len(positions),
@@ -761,11 +830,13 @@ def generate_position_lifecycle(
             skips,
             baselines,
             metadata,
+            effective_price_snapshot_id,
         )
     return PositionLifecycleRunResult(
         lifecycle_run_id=lifecycle_run_id,
         execution_run_id=execution_run_id,
         through_date=through_date.isoformat(),
+        price_snapshot_id=effective_price_snapshot_id,
         positions=[row.to_dict() for row in positions],
         exit_decisions=[row.to_dict() for row in exits],
         skipped_executions=[row.to_dict() for row in skips],

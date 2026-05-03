@@ -10,7 +10,7 @@ from sectorscout.config import SectorScoutConfig
 from sectorscout.db import connect_database
 from sectorscout.market_calendar import next_market_session
 from sectorscout.metadata import build_run_metadata
-from sectorscout.prices import load_price_snapshot
+from sectorscout.prices import load_persisted_price_snapshot, load_price_snapshot
 
 
 EXECUTION_MODEL = "next_open"
@@ -54,6 +54,7 @@ class ExecutionDecision:
     execution_config_hash: str
     execution_git_commit: str
     execution_data_snapshot_id: str
+    price_snapshot_id: str | None
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -66,6 +67,7 @@ class ExecutionRunResult:
     execution_model: str
     decisions: list[dict]
     performance_metrics: dict
+    price_snapshot_id: str | None
     warning: str
 
     def to_dict(self) -> dict:
@@ -140,8 +142,18 @@ def _next_open_row(
     config: SectorScoutConfig,
     symbol: str,
     next_session: date,
+    *,
+    price_snapshot_id: str | None = None,
 ) -> dict | None:
-    prices, _duplicate_count = load_price_snapshot(config, next_session, symbols=[symbol])
+    if price_snapshot_id:
+        prices = load_persisted_price_snapshot(
+            config,
+            price_snapshot_id,
+            symbols=[symbol],
+            through_date=next_session,
+        )
+    else:
+        prices, _duplicate_count = load_price_snapshot(config, next_session, symbols=[symbol])
     if prices.empty:
         return None
     session_prices = prices[prices["price_date"].apply(_date_value) == next_session]
@@ -163,10 +175,16 @@ def _decision_for_candidate(
     next_session: date,
     metadata,
     execution_run_id: str,
+    price_snapshot_id: str | None,
 ) -> ExecutionDecision:
     entry_trigger = candidate["entry_trigger"]
     stop_loss = candidate["stop_loss"]
-    next_open = _next_open_row(config, candidate["symbol"], next_session)
+    next_open = _next_open_row(
+        config,
+        candidate["symbol"],
+        next_session,
+        price_snapshot_id=price_snapshot_id,
+    )
     chosen_provider = next_open["provider"] if next_open else None
     actual_entry = next_open["open"] if next_open else None
     reject_reason: str | None = None
@@ -274,6 +292,7 @@ def _decision_for_candidate(
         execution_config_hash=metadata.config_hash,
         execution_git_commit=metadata.git_commit,
         execution_data_snapshot_id=metadata.data_snapshot_id,
+        price_snapshot_id=price_snapshot_id,
     )
 
 
@@ -283,6 +302,7 @@ def persist_execution_decisions(
     metadata,
     execution_run_id: str,
     rows: list[ExecutionDecision],
+    price_snapshot_id: str | None,
 ) -> None:
     with connect_database(config.database.path) as connection:
         connection.execute(
@@ -301,8 +321,9 @@ def persist_execution_decisions(
                 source_universe_version,
                 source_theme_version,
                 mixed_source_signal_metadata,
+                price_snapshot_id,
                 created_at_utc
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 execution_run_id,
@@ -318,6 +339,7 @@ def persist_execution_decisions(
                 _source_field_summary(rows, "source_universe_version"),
                 _source_field_summary(rows, "source_theme_version"),
                 _mixed_source_metadata(rows),
+                price_snapshot_id,
                 metadata.created_at,
             ],
         )
@@ -337,8 +359,9 @@ def persist_execution_decisions(
                     source_signal_git_commit, source_signal_data_snapshot_id,
                     source_universe_version, source_theme_version,
                     execution_generated_at_utc, execution_config_hash,
-                    execution_git_commit, execution_data_snapshot_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    execution_git_commit, execution_data_snapshot_id,
+                    price_snapshot_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 [
                     row.execution_run_id,
@@ -377,6 +400,7 @@ def persist_execution_decisions(
                     row.execution_config_hash,
                     row.execution_git_commit,
                     row.execution_data_snapshot_id,
+                    row.price_snapshot_id,
                 ],
             )
 
@@ -414,6 +438,7 @@ def generate_execution_decisions(
     asof_date: date,
     *,
     persist: bool = True,
+    price_snapshot_id: str | None = None,
 ) -> ExecutionRunResult:
     metadata = build_run_metadata(config, "execution-decisions", asof_date=asof_date)
     execution_run_id = str(uuid4())
@@ -427,17 +452,26 @@ def generate_execution_decisions(
             next_session,
             metadata,
             execution_run_id,
+            price_snapshot_id,
         )
         for candidate in candidates
     ]
     if persist:
-        persist_execution_decisions(config, asof_date, metadata, execution_run_id, decisions)
+        persist_execution_decisions(
+            config,
+            asof_date,
+            metadata,
+            execution_run_id,
+            decisions,
+            price_snapshot_id,
+        )
     return ExecutionRunResult(
         execution_run_id=execution_run_id,
         asof_date=asof_date.isoformat(),
         execution_model=EXECUTION_MODEL,
         decisions=[row.to_dict() for row in decisions],
         performance_metrics={},
+        price_snapshot_id=price_snapshot_id,
         warning=(
             "Phase 5A only: next-open execution decisions are research simulation records, "
             "not broker fills, trade logs, performance results, or strategy conclusions."
