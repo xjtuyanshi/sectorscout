@@ -10,7 +10,11 @@ from sectorscout.config import SectorScoutConfig
 from sectorscout.db import connect_database
 from sectorscout.market_calendar import next_market_session
 from sectorscout.metadata import build_run_metadata
-from sectorscout.prices import load_persisted_price_snapshot, load_price_snapshot
+from sectorscout.prices import (
+    load_persisted_price_snapshot,
+    load_price_snapshot,
+    validate_price_snapshot_usage,
+)
 
 
 EXECUTION_MODEL = "next_open"
@@ -145,7 +149,7 @@ def _next_open_row(
     *,
     price_snapshot_id: str | None = None,
 ) -> dict | None:
-    if price_snapshot_id:
+    if price_snapshot_id is not None:
         prices = load_persisted_price_snapshot(
             config,
             price_snapshot_id,
@@ -444,6 +448,14 @@ def generate_execution_decisions(
     execution_run_id = str(uuid4())
     next_session = next_market_session(asof_date, config)
     candidates = _load_frozen_signal_candidates(config, asof_date)
+    if price_snapshot_id is not None:
+        validate_price_snapshot_usage(
+            config,
+            price_snapshot_id,
+            required_symbols={candidate["symbol"] for candidate in candidates},
+            through_date=next_session,
+            require_rows=bool(candidates),
+        )
     decisions = [
         _decision_for_candidate(
             config,

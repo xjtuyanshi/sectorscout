@@ -4,14 +4,16 @@ import json
 from datetime import date
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from sectorscout.cli import app
 from sectorscout.config import SectorScoutConfig
 from sectorscout.db import connect_database, initialize_database
 from sectorscout.execution import generate_execution_decisions
+from sectorscout.ledger import generate_trade_ledger_qa
 from sectorscout.lifecycle import generate_position_lifecycle
-from sectorscout.prices import create_frozen_price_snapshot
+from sectorscout.prices import PriceSnapshotValidationError, create_frozen_price_snapshot
 
 
 ASOF = date(2024, 12, 3)
@@ -247,3 +249,180 @@ def test_phase5b4_lifecycle_inherits_execution_price_snapshot(tmp_path: Path) ->
             "SELECT price_snapshot_id FROM lifecycle_runs"
         ).fetchone()
     assert persisted == (price_snapshot_id,)
+
+
+def test_phase5b3_execution_rejects_unknown_price_snapshot_id(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    _insert_signal(config)
+
+    with pytest.raises(PriceSnapshotValidationError, match="UNKNOWN_PRICE_SNAPSHOT_ID"):
+        generate_execution_decisions(config, SIGNAL_ASOF, price_snapshot_id="missing-snapshot")
+
+
+def test_phase5b3_execution_rejects_snapshot_missing_required_symbol(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    _insert_signal(config)
+    _insert_price(config, "NVDA", NEXT_SESSION, 120.0, "FMP")
+    price_snapshot_id = create_frozen_price_snapshot(
+        config,
+        NEXT_SESSION,
+        symbols=["NVDA"],
+    ).price_snapshot_id
+
+    with pytest.raises(PriceSnapshotValidationError, match="PRICE_SNAPSHOT_MISSING_SYMBOLS"):
+        generate_execution_decisions(config, SIGNAL_ASOF, price_snapshot_id=price_snapshot_id)
+
+
+def test_phase5b3_execution_rejects_snapshot_undercovered_required_symbol(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    _insert_signal(config)
+    _insert_price(config, "MU", SIGNAL_ASOF, 99.0, "FMP")
+    _insert_price(config, "SPY", NEXT_SESSION, 500.0, "FMP")
+    price_snapshot_id = create_frozen_price_snapshot(config, NEXT_SESSION).price_snapshot_id
+
+    with pytest.raises(PriceSnapshotValidationError, match="PRICE_SNAPSHOT_MISSING_SYMBOLS"):
+        generate_execution_decisions(config, SIGNAL_ASOF, price_snapshot_id=price_snapshot_id)
+
+
+def test_phase5b3_lifecycle_rejects_undercovered_price_snapshot(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    _insert_signal(config)
+    _insert_price(config, "MU", NEXT_SESSION, 101.0, "FMP", low=100.0)
+    price_snapshot_id = create_frozen_price_snapshot(
+        config,
+        NEXT_SESSION,
+        symbols=["MU"],
+    ).price_snapshot_id
+    execution = generate_execution_decisions(
+        config,
+        SIGNAL_ASOF,
+        price_snapshot_id=price_snapshot_id,
+    ).to_dict()
+
+    with pytest.raises(PriceSnapshotValidationError, match="PRICE_SNAPSHOT_UNDERCOVERED"):
+        generate_position_lifecycle(
+            config,
+            execution["execution_run_id"],
+            date(2024, 12, 3),
+        )
+
+
+def test_phase5b3_trade_ledger_marks_persisted_price_snapshot_mode(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    _insert_signal(config)
+    _insert_price(config, "MU", NEXT_SESSION, 101.0, "FMP", low=100.0)
+    price_snapshot_id = create_frozen_price_snapshot(
+        config,
+        NEXT_SESSION,
+        symbols=["MU"],
+    ).price_snapshot_id
+    execution = generate_execution_decisions(
+        config,
+        SIGNAL_ASOF,
+        price_snapshot_id=price_snapshot_id,
+    ).to_dict()
+    lifecycle = generate_position_lifecycle(
+        config,
+        execution["execution_run_id"],
+        NEXT_SESSION,
+    ).to_dict()
+
+    result = generate_trade_ledger_qa(config, lifecycle["lifecycle_run_id"]).to_dict()
+
+    assert result["provenance"]["source_signal_config_hash"] == "signal_hash"
+    assert result["provenance"]["price_snapshot_mode"] == "persisted_price_snapshot"
+    assert result["provenance"]["execution_price_snapshot_id"] == price_snapshot_id
+    assert result["provenance"]["lifecycle_price_snapshot_id"] == price_snapshot_id
+    with connect_database(config.database.path) as connection:
+        mode = connection.execute("SELECT price_snapshot_mode FROM lifecycle_qa").fetchone()
+    assert mode == ("persisted_price_snapshot",)
+
+
+def test_phase5b3_execution_cli_accepts_price_snapshot_id(tmp_path: Path) -> None:
+    config = _config(
+        tmp_path,
+        providers={"prices_primary": "FMP", "prices_fallback": "yfinance"},
+    )
+    _insert_signal(config)
+    _insert_price(config, "MU", NEXT_SESSION, 101.0, "FMP")
+    _insert_price(config, "MU", NEXT_SESSION, 999.0, "yfinance")
+    price_snapshot_id = create_frozen_price_snapshot(
+        config,
+        NEXT_SESSION,
+        symbols=["MU"],
+    ).price_snapshot_id
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        f"""
+database:
+  path: {config.database.path}
+providers:
+  prices_primary: yfinance
+  prices_fallback: FMP
+""",
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "execution-decisions",
+            "--asof",
+            SIGNAL_ASOF.isoformat(),
+            "--price-snapshot-id",
+            price_snapshot_id,
+            "--no-persist",
+            "--config",
+            str(config_path),
+        ],
+    )
+    payload = json.loads(result.stdout)
+
+    assert result.exit_code == 0
+    assert payload["price_snapshot_id"] == price_snapshot_id
+    assert payload["decisions"][0]["actual_entry_price"] == 101.0
+    for forbidden in ("cagr", "sharpe", "drawdown", "win_rate", "profit_factor"):
+        assert forbidden not in result.stdout.lower()
+
+
+def test_phase5b3_lifecycle_cli_accepts_price_snapshot_id(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    _insert_signal(config)
+    _insert_price(config, "MU", NEXT_SESSION, 101.0, "FMP", low=100.0)
+    price_snapshot_id = create_frozen_price_snapshot(
+        config,
+        NEXT_SESSION,
+        symbols=["MU"],
+    ).price_snapshot_id
+    execution = generate_execution_decisions(
+        config,
+        SIGNAL_ASOF,
+        price_snapshot_id=price_snapshot_id,
+    ).to_dict()
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(f"database:\n  path: {config.database.path}\n", encoding="utf-8")
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "position-lifecycle",
+            "--execution-run-id",
+            execution["execution_run_id"],
+            "--through",
+            NEXT_SESSION.isoformat(),
+            "--price-snapshot-id",
+            price_snapshot_id,
+            "--no-persist",
+            "--config",
+            str(config_path),
+        ],
+    )
+    payload = json.loads(result.stdout)
+
+    assert result.exit_code == 0
+    assert payload["price_snapshot_id"] == price_snapshot_id
+    assert payload["positions"][0]["status"] == "OPEN"
+    for forbidden in ("cagr", "sharpe", "drawdown", "win_rate", "profit_factor"):
+        assert forbidden not in result.stdout.lower()

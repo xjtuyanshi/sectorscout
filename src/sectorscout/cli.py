@@ -284,13 +284,19 @@ def backtest() -> None:
 @app.command("execution-decisions")
 def execution_decisions(
     asof: str = typer.Option(..., "--asof"),
+    price_snapshot_id: str | None = typer.Option(None, "--price-snapshot-id"),
     persist: bool = typer.Option(True, "--persist/--no-persist"),
     config: Path = typer.Option(Path("config.yaml"), "--config"),
 ) -> None:
     loaded = _load(config)
     parsed_asof = _parse_iso_date(asof)
     assert parsed_asof is not None
-    result = generate_execution_decisions(loaded, parsed_asof, persist=persist)
+    result = generate_execution_decisions(
+        loaded,
+        parsed_asof,
+        persist=persist,
+        price_snapshot_id=price_snapshot_id,
+    )
     typer.echo(json.dumps(result.to_dict(), indent=2, sort_keys=True))
 
 
@@ -298,6 +304,7 @@ def execution_decisions(
 def position_lifecycle(
     execution_run_id: str = typer.Option(..., "--execution-run-id"),
     through: str = typer.Option(..., "--through"),
+    price_snapshot_id: str | None = typer.Option(None, "--price-snapshot-id"),
     persist: bool = typer.Option(True, "--persist/--no-persist"),
     config: Path = typer.Option(Path("config.yaml"), "--config"),
 ) -> None:
@@ -309,6 +316,7 @@ def position_lifecycle(
         execution_run_id,
         through_date,
         persist=persist,
+        price_snapshot_id=price_snapshot_id,
     )
     typer.echo(json.dumps(result.to_dict(), indent=2, sort_keys=True))
 

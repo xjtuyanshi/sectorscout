@@ -44,6 +44,30 @@ class FrozenPriceSnapshotResult:
         return asdict(self)
 
 
+@dataclass(frozen=True)
+class PriceSnapshotUsage:
+    price_snapshot_id: str
+    asof_date: str
+    provider_priority: list[str]
+    provider_mix: dict[str, int]
+    duplicate_provider_rows_dropped: int
+    min_price_date: str | None
+    max_price_date: str | None
+    raw_row_count: int
+    chosen_row_count: int
+    required_symbols: list[str]
+    missing_symbols: list[str]
+    through_date: str
+    price_snapshot_mode: str = "persisted_price_snapshot"
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+class PriceSnapshotValidationError(ValueError):
+    """Raised when a requested persisted price snapshot cannot support a run."""
+
+
 def provider_priority(config: SectorScoutConfig) -> list[str]:
     providers = [
         config.providers.prices_primary,
@@ -149,6 +173,16 @@ def load_persisted_price_snapshot(
         ).fetchdf()
 
 
+def _date_value(value: object) -> date:
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if hasattr(value, "date"):
+        return value.date()
+    return date.fromisoformat(str(value))
+
+
 def _provider_mix(rows: pd.DataFrame) -> dict[str, int]:
     if rows.empty:
         return {}
@@ -166,6 +200,111 @@ def _date_iso(value: object | None) -> str | None:
     if hasattr(value, "date"):
         return value.date().isoformat()
     return date.fromisoformat(str(value)).isoformat()
+
+
+def _json_dict(value: object) -> dict[str, int]:
+    if not value:
+        return {}
+    payload = json.loads(str(value))
+    return {str(key): int(payload[key]) for key in sorted(payload)}
+
+
+def _json_list(value: object) -> list[str]:
+    if not value:
+        return []
+    return [str(item) for item in json.loads(str(value))]
+
+
+def validate_price_snapshot_usage(
+    config: SectorScoutConfig,
+    price_snapshot_id: str,
+    *,
+    required_symbols: Iterable[str],
+    through_date: date,
+    require_rows: bool = True,
+) -> PriceSnapshotUsage:
+    if price_snapshot_id == "":
+        raise PriceSnapshotValidationError("EMPTY_PRICE_SNAPSHOT_ID")
+
+    required = sorted({symbol.upper() for symbol in required_symbols})
+    with connect_database(config.database.path) as connection:
+        run = connection.execute(
+            """
+            SELECT
+                asof_date,
+                provider_priority_json,
+                provider_mix_json,
+                duplicate_provider_rows_dropped,
+                min_price_date,
+                max_price_date,
+                raw_row_count,
+                chosen_row_count
+            FROM price_snapshot_runs
+            WHERE price_snapshot_id = ?
+            """,
+            [price_snapshot_id],
+        ).fetchone()
+        if run is None:
+            raise PriceSnapshotValidationError(f"UNKNOWN_PRICE_SNAPSHOT_ID: {price_snapshot_id}")
+
+        if required:
+            present_rows = connection.execute(
+                """
+                SELECT symbol, MAX(price_date) AS symbol_max_price_date
+                FROM price_snapshot_rows
+                WHERE price_snapshot_id = ?
+                  AND symbol IN (SELECT unnest(?))
+                GROUP BY symbol
+                """,
+                [price_snapshot_id, required],
+            ).fetchall()
+        else:
+            present_rows = []
+
+    (
+        asof_date,
+        priority_json,
+        mix_json,
+        duplicate_provider_rows_dropped,
+        min_price_date,
+        max_price_date,
+        raw_row_count,
+        chosen_row_count,
+    ) = run
+    if require_rows and int(chosen_row_count) == 0:
+        raise PriceSnapshotValidationError(f"EMPTY_PRICE_SNAPSHOT: {price_snapshot_id}")
+    if require_rows and max_price_date is None:
+        raise PriceSnapshotValidationError(f"PRICE_SNAPSHOT_HAS_NO_MAX_DATE: {price_snapshot_id}")
+    if max_price_date is not None and _date_value(max_price_date) < through_date:
+        raise PriceSnapshotValidationError(
+            f"PRICE_SNAPSHOT_UNDERCOVERED: {price_snapshot_id} max_price_date={_date_value(max_price_date).isoformat()} through_date={through_date.isoformat()}"
+        )
+
+    present_symbols = {
+        str(symbol).upper()
+        for symbol, symbol_max_price_date in present_rows
+        if symbol_max_price_date is not None and _date_value(symbol_max_price_date) >= through_date
+    }
+    missing_symbols = sorted(set(required) - present_symbols)
+    if require_rows and missing_symbols:
+        raise PriceSnapshotValidationError(
+            f"PRICE_SNAPSHOT_MISSING_SYMBOLS: {price_snapshot_id} missing={','.join(missing_symbols)}"
+        )
+
+    return PriceSnapshotUsage(
+        price_snapshot_id=price_snapshot_id,
+        asof_date=_date_value(asof_date).isoformat(),
+        provider_priority=_json_list(priority_json),
+        provider_mix=_json_dict(mix_json),
+        duplicate_provider_rows_dropped=int(duplicate_provider_rows_dropped),
+        min_price_date=_date_iso(min_price_date),
+        max_price_date=_date_iso(max_price_date),
+        raw_row_count=int(raw_row_count),
+        chosen_row_count=int(chosen_row_count),
+        required_symbols=required,
+        missing_symbols=missing_symbols,
+        through_date=through_date.isoformat(),
+    )
 
 
 def create_frozen_price_snapshot(

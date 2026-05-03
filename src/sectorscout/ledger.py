@@ -10,7 +10,8 @@ from sectorscout.market_calendar import get_exchange_calendar
 from sectorscout.pit import BENCHMARK_SYMBOLS
 
 
-PRICE_SNAPSHOT_MODE = "in_memory_provider_priority"
+IN_MEMORY_PRICE_SNAPSHOT_MODE = "in_memory_provider_priority"
+PERSISTED_PRICE_SNAPSHOT_MODE = "persisted_price_snapshot"
 
 
 @dataclass(frozen=True)
@@ -346,6 +347,12 @@ def _warning_flags(context: dict, baseline_qa: dict, skips: list[dict]) -> dict:
     }
 
 
+def _price_snapshot_mode(context: dict) -> str:
+    if context.get("lifecycle_price_snapshot_id") or context.get("execution_price_snapshot_id"):
+        return PERSISTED_PRICE_SNAPSHOT_MODE
+    return IN_MEMORY_PRICE_SNAPSHOT_MODE
+
+
 def _provenance(context: dict) -> dict:
     return {
         "lifecycle_run_id": context["lifecycle_run_id"],
@@ -364,7 +371,7 @@ def _provenance(context: dict) -> dict:
         "lifecycle_data_snapshot_id": context["lifecycle_data_snapshot_id"],
         "lifecycle_price_snapshot_id": context.get("lifecycle_price_snapshot_id"),
         "execution_price_snapshot_id": context.get("execution_price_snapshot_id"),
-        "price_snapshot_mode": PRICE_SNAPSHOT_MODE,
+        "price_snapshot_mode": _price_snapshot_mode(context),
     }
 
 
@@ -464,7 +471,7 @@ def persist_trade_ledger_qa(
                 warnings["snapshot_mismatch_warning"],
                 warnings["missing_baseline_coverage_warning"],
                 warnings["missing_entry_session_price_warning"],
-                PRICE_SNAPSHOT_MODE,
+                _price_snapshot_mode(context),
                 context["lifecycle_generated_at"],
                 context["lifecycle_config_hash"],
                 context["lifecycle_git_commit"],

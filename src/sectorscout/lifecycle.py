@@ -12,7 +12,11 @@ from sectorscout.db import connect_database
 from sectorscout.market_calendar import get_exchange_calendar
 from sectorscout.metadata import build_run_metadata
 from sectorscout.pit import BENCHMARK_SYMBOLS
-from sectorscout.prices import load_persisted_price_snapshot, load_price_snapshot
+from sectorscout.prices import (
+    load_persisted_price_snapshot,
+    load_price_snapshot,
+    validate_price_snapshot_usage,
+)
 
 
 ACCEPTED_DECISION = "SIMULATED_NEXT_OPEN_ACCEPTED"
@@ -194,7 +198,7 @@ def _load_prices(
     *,
     price_snapshot_id: str | None = None,
 ) -> pd.DataFrame:
-    if price_snapshot_id:
+    if price_snapshot_id is not None:
         prices = load_persisted_price_snapshot(
             config,
             price_snapshot_id,
@@ -731,11 +735,20 @@ def generate_position_lifecycle(
 ) -> PositionLifecycleRunResult:
     metadata = build_run_metadata(config, "position-lifecycle", asof_date=through_date)
     lifecycle_run_id = str(uuid4())
-    effective_price_snapshot_id = price_snapshot_id or _load_execution_price_snapshot_id(
-        config,
-        execution_run_id,
+    effective_price_snapshot_id = (
+        price_snapshot_id
+        if price_snapshot_id is not None
+        else _load_execution_price_snapshot_id(config, execution_run_id)
     )
     executions = _load_accepted_executions(config, execution_run_id)
+    if effective_price_snapshot_id is not None:
+        validate_price_snapshot_usage(
+            config,
+            effective_price_snapshot_id,
+            required_symbols={execution["symbol"] for execution in executions},
+            through_date=through_date,
+            require_rows=bool(executions),
+        )
     positions: list[SimulatedPosition] = []
     exits: list[ExitDecision] = []
     skips: list[LifecycleSkip] = []
