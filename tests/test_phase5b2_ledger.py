@@ -35,6 +35,8 @@ def _insert_lifecycle_context(
     source_signal_git_commit: str = "signal_commit",
     source_universe_version: str = "signal_universe",
     source_theme_version: str = "signal_theme",
+    execution_price_snapshot_id: str | None = None,
+    lifecycle_price_snapshot_id: str | None = None,
 ) -> None:
     with connect_database(config.database.path) as connection:
         connection.execute(
@@ -46,11 +48,13 @@ def _insert_lifecycle_context(
                 source_signal_snapshot_id, source_signal_config_hash,
                 source_signal_git_commit, source_universe_version,
                 source_theme_version, mixed_source_signal_metadata,
+                price_snapshot_id,
                 created_at_utc
             ) VALUES (
                 ?, DATE '2024-11-29', 'next_open',
                 '2024-11-29T18:01:00+00:00', ?, 'execution_commit',
                 ?, 'signal_snapshot', ?, ?, ?, ?, false,
+                ?,
                 '2024-11-29T18:01:00+00:00'
             )
             """,
@@ -62,6 +66,7 @@ def _insert_lifecycle_context(
                 source_signal_git_commit,
                 source_universe_version,
                 source_theme_version,
+                execution_price_snapshot_id,
             ],
         )
         connection.execute(
@@ -69,14 +74,21 @@ def _insert_lifecycle_context(
             INSERT INTO lifecycle_runs (
                 lifecycle_run_id, execution_run_id, through_date,
                 lifecycle_generated_at_utc, lifecycle_config_hash,
-                lifecycle_git_commit, lifecycle_data_snapshot_id, created_at_utc
+                lifecycle_git_commit, lifecycle_data_snapshot_id,
+                price_snapshot_id, created_at_utc
             ) VALUES (
                 ?, ?, DATE '2024-12-06',
                 '2024-12-06T21:00:00+00:00', ?, 'lifecycle_commit',
-                ?, '2024-12-06T21:00:00+00:00'
+                ?, ?, '2024-12-06T21:00:00+00:00'
             )
             """,
-            [LIFECYCLE_RUN_ID, EXECUTION_RUN_ID, lifecycle_config_hash, lifecycle_snapshot],
+            [
+                LIFECYCLE_RUN_ID,
+                EXECUTION_RUN_ID,
+                lifecycle_config_hash,
+                lifecycle_snapshot,
+                lifecycle_price_snapshot_id,
+            ],
         )
 
 
@@ -358,6 +370,28 @@ def test_phase5b2_provenance_and_warnings_are_persisted(tmp_path: Path) -> None:
             """
         ).fetchone()
     assert row == (True, True, True, "in_memory_provider_priority")
+
+
+def test_phase5b4_price_snapshot_mismatch_warning_is_persisted(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    _insert_lifecycle_context(
+        config,
+        execution_price_snapshot_id="execution-snapshot",
+        lifecycle_price_snapshot_id="lifecycle-snapshot",
+    )
+    _insert_position(config)
+
+    result = generate_trade_ledger_qa(config, LIFECYCLE_RUN_ID).to_dict()
+
+    assert result["warnings"]["price_snapshot_mismatch_warning"] is True
+    assert result["provenance"]["execution_price_snapshot_id"] == "execution-snapshot"
+    assert result["provenance"]["lifecycle_price_snapshot_id"] == "lifecycle-snapshot"
+    assert result["provenance"]["price_snapshot_mode"] == "persisted_price_snapshot"
+    with connect_database(config.database.path) as connection:
+        row = connection.execute(
+            "SELECT price_snapshot_mismatch_warning, price_snapshot_mode FROM lifecycle_qa"
+        ).fetchone()
+    assert row == (True, "persisted_price_snapshot")
 
 
 def test_phase5b2_cli_output_has_no_formal_metric_terms(tmp_path: Path) -> None:

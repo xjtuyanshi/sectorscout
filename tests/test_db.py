@@ -106,6 +106,9 @@ def test_initialize_database_adds_missing_phase5b3_columns(tmp_path: Path) -> No
         ledger_columns = {
             row[1] for row in connection.execute("PRAGMA table_info('trade_ledger')").fetchall()
         }
+        lifecycle_qa_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info('lifecycle_qa')").fetchall()
+        }
     assert {
         "source_signal_config_hash",
         "source_signal_git_commit",
@@ -124,3 +127,4 @@ def test_initialize_database_adds_missing_phase5b3_columns(tmp_path: Path) -> No
         "execution_config_hash",
         "execution_data_snapshot_id",
     }.issubset(ledger_columns)
+    assert "price_snapshot_mismatch_warning" in lifecycle_qa_columns

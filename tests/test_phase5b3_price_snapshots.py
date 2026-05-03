@@ -19,6 +19,7 @@ from sectorscout.prices import PriceSnapshotValidationError, create_frozen_price
 ASOF = date(2024, 12, 3)
 SIGNAL_ASOF = date(2024, 11, 29)
 NEXT_SESSION = date(2024, 12, 2)
+BENCHMARKS = ("QQQ", "SMH", "SPY")
 
 
 def _config(tmp_path: Path, **overrides) -> SectorScoutConfig:
@@ -64,6 +65,11 @@ def _insert_price(
         )
 
 
+def _insert_benchmark_prices(config: SectorScoutConfig, price_date: date) -> None:
+    for symbol in BENCHMARKS:
+        _insert_price(config, symbol, price_date, 500.0, "FMP")
+
+
 def _insert_manual_price_snapshot(
     config: SectorScoutConfig,
     *,
@@ -76,7 +82,7 @@ def _insert_manual_price_snapshot(
     with connect_database(config.database.path) as connection:
         connection.execute(
             """
-            INSERT INTO price_snapshot_runs (
+            INSERT OR IGNORE INTO price_snapshot_runs (
                 price_snapshot_id, asof_date, provider_priority_json,
                 provider_mix_json, duplicate_provider_rows_dropped,
                 min_price_date, max_price_date, raw_row_count,
@@ -263,10 +269,11 @@ def test_phase5b4_lifecycle_inherits_execution_price_snapshot(tmp_path: Path) ->
     _insert_signal(snapshot_config)
     _insert_price(snapshot_config, "MU", NEXT_SESSION, 101.0, "FMP", low=100.0)
     _insert_price(snapshot_config, "MU", NEXT_SESSION, 101.0, "yfinance", low=80.0)
+    _insert_benchmark_prices(snapshot_config, NEXT_SESSION)
     price_snapshot_id = create_frozen_price_snapshot(
         snapshot_config,
         NEXT_SESSION,
-        symbols=["MU"],
+        symbols=["MU", *BENCHMARKS],
     ).price_snapshot_id
     lifecycle_config = SectorScoutConfig.model_validate(
         {
@@ -387,6 +394,14 @@ def test_phase5b3_lifecycle_rejects_snapshot_missing_exact_entry_session(
         price_date=date(2024, 12, 3),
         close=103.0,
     )
+    for symbol in BENCHMARKS:
+        _insert_manual_price_snapshot(
+            config,
+            price_snapshot_id="sparse-entry-snapshot",
+            symbol=symbol,
+            price_date=date(2024, 12, 3),
+            close=500.0,
+        )
 
     with pytest.raises(
         PriceSnapshotValidationError,
@@ -400,7 +415,7 @@ def test_phase5b3_lifecycle_rejects_snapshot_missing_exact_entry_session(
         )
 
 
-def test_phase5b3_trade_ledger_marks_persisted_price_snapshot_mode(tmp_path: Path) -> None:
+def test_phase5b3_lifecycle_rejects_snapshot_missing_benchmarks(tmp_path: Path) -> None:
     config = _config(tmp_path)
     _insert_signal(config)
     _insert_price(config, "MU", NEXT_SESSION, 101.0, "FMP", low=100.0)
@@ -408,6 +423,30 @@ def test_phase5b3_trade_ledger_marks_persisted_price_snapshot_mode(tmp_path: Pat
         config,
         NEXT_SESSION,
         symbols=["MU"],
+    ).price_snapshot_id
+    execution = generate_execution_decisions(
+        config,
+        SIGNAL_ASOF,
+        price_snapshot_id=price_snapshot_id,
+    ).to_dict()
+
+    with pytest.raises(PriceSnapshotValidationError, match="PRICE_SNAPSHOT_MISSING_SYMBOLS"):
+        generate_position_lifecycle(
+            config,
+            execution["execution_run_id"],
+            NEXT_SESSION,
+        )
+
+
+def test_phase5b3_trade_ledger_marks_persisted_price_snapshot_mode(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    _insert_signal(config)
+    _insert_price(config, "MU", NEXT_SESSION, 101.0, "FMP", low=100.0)
+    _insert_benchmark_prices(config, NEXT_SESSION)
+    price_snapshot_id = create_frozen_price_snapshot(
+        config,
+        NEXT_SESSION,
+        symbols=["MU", *BENCHMARKS],
     ).price_snapshot_id
     execution = generate_execution_decisions(
         config,
@@ -482,10 +521,11 @@ def test_phase5b3_lifecycle_cli_accepts_price_snapshot_id(tmp_path: Path) -> Non
     config = _config(tmp_path)
     _insert_signal(config)
     _insert_price(config, "MU", NEXT_SESSION, 101.0, "FMP", low=100.0)
+    _insert_benchmark_prices(config, NEXT_SESSION)
     price_snapshot_id = create_frozen_price_snapshot(
         config,
         NEXT_SESSION,
-        symbols=["MU"],
+        symbols=["MU", *BENCHMARKS],
     ).price_snapshot_id
     execution = generate_execution_decisions(
         config,

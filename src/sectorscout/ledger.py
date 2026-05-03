@@ -331,6 +331,8 @@ def _baseline_qa(config: SectorScoutConfig, rows: list[dict], through_date: date
 
 
 def _warning_flags(context: dict, baseline_qa: dict, skips: list[dict]) -> dict:
+    lifecycle_snapshot_id = context.get("lifecycle_price_snapshot_id")
+    execution_snapshot_id = context.get("execution_price_snapshot_id")
     return {
         "config_mismatch_warning": (
             context.get("execution_config_hash") is not None
@@ -343,6 +345,11 @@ def _warning_flags(context: dict, baseline_qa: dict, skips: list[dict]) -> dict:
         "missing_baseline_coverage_warning": bool(baseline_qa["baseline_symbols_missing"]),
         "missing_entry_session_price_warning": any(
             row["skip_reason"] == "MISSING_ENTRY_SESSION_PRICE" for row in skips
+        ),
+        "price_snapshot_mismatch_warning": (
+            lifecycle_snapshot_id is not None
+            and execution_snapshot_id is not None
+            and lifecycle_snapshot_id != execution_snapshot_id
         ),
     }
 
@@ -444,10 +451,11 @@ def persist_trade_ledger_qa(
                 baseline_symbol_qa_json, baseline_coverage_start, baseline_coverage_end,
                 config_mismatch_warning, snapshot_mismatch_warning,
                 missing_baseline_coverage_warning,
-                missing_entry_session_price_warning, price_snapshot_mode,
+                missing_entry_session_price_warning,
+                price_snapshot_mismatch_warning, price_snapshot_mode,
                 lifecycle_generated_at_utc, lifecycle_config_hash,
                 lifecycle_git_commit, lifecycle_data_snapshot_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 lifecycle_run_id,
@@ -471,6 +479,7 @@ def persist_trade_ledger_qa(
                 warnings["snapshot_mismatch_warning"],
                 warnings["missing_baseline_coverage_warning"],
                 warnings["missing_entry_session_price_warning"],
+                warnings["price_snapshot_mismatch_warning"],
                 _price_snapshot_mode(context),
                 context["lifecycle_generated_at"],
                 context["lifecycle_config_hash"],

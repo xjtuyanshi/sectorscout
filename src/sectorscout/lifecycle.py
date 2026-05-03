@@ -747,10 +747,14 @@ def generate_position_lifecycle(
             entry_date = _date_value(execution["entry_date"])
             if through_date >= entry_date:
                 required_entry_dates.setdefault(execution["symbol"], set()).add(entry_date)
+        for symbol in BENCHMARK_SYMBOLS:
+            required_entry_dates.setdefault(symbol, set()).add(through_date)
         validate_price_snapshot_usage(
             config,
             effective_price_snapshot_id,
-            required_symbols={execution["symbol"] for execution in executions},
+            required_symbols={
+                execution["symbol"] for execution in executions
+            } | set(BENCHMARK_SYMBOLS),
             required_symbol_dates=required_entry_dates,
             through_date=through_date,
             require_rows=bool(executions),

@@ -504,6 +504,7 @@ CREATE TABLE IF NOT EXISTS lifecycle_qa (
     snapshot_mismatch_warning BOOLEAN NOT NULL,
     missing_baseline_coverage_warning BOOLEAN NOT NULL,
     missing_entry_session_price_warning BOOLEAN NOT NULL,
+    price_snapshot_mismatch_warning BOOLEAN NOT NULL DEFAULT false,
     price_snapshot_mode VARCHAR NOT NULL,
     lifecycle_generated_at_utc TIMESTAMPTZ NOT NULL,
     lifecycle_config_hash VARCHAR NOT NULL,
