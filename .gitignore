@@ -11,3 +11,11 @@ dist/
 build/
 *.egg-info/
 
+data/intel/manual/*
+!data/intel/manual/.gitkeep
+data/intel/captures/*
+!data/intel/captures/.gitkeep
+data/intel/media/*
+!data/intel/media/.gitkeep
+data/intel/reports/*
+!data/intel/reports/.gitkeep

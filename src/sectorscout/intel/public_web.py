@@ -1,0 +1,143 @@
+from __future__ import annotations
+
+import re
+import urllib.error
+import urllib.parse
+import urllib.request
+from dataclasses import dataclass
+from datetime import date
+from html.parser import HTMLParser
+
+from sectorscout.config import SectorScoutConfig
+from sectorscout.intel.storage import insert_raw_item, insert_trade_view, trade_view_exists
+from sectorscout.intel.text_extract import extract_trade_view, normalize_text
+
+
+class _ReadableHTMLParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.title: str | None = None
+        self._in_title = False
+        self._skip_depth = 0
+        self.text_parts: list[str] = []
+        self.media_urls: list[str] = []
+        self.outbound_links: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        attrs_dict = dict(attrs)
+        if tag in {"script", "style", "noscript"}:
+            self._skip_depth += 1
+        if tag == "title":
+            self._in_title = True
+        if tag == "img" and attrs_dict.get("src"):
+            self.media_urls.append(attrs_dict["src"] or "")
+        if tag == "a" and attrs_dict.get("href"):
+            self.outbound_links.append(attrs_dict["href"] or "")
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in {"script", "style", "noscript"} and self._skip_depth:
+            self._skip_depth -= 1
+        if tag == "title":
+            self._in_title = False
+
+    def handle_data(self, data: str) -> None:
+        cleaned = data.strip()
+        if not cleaned:
+            return
+        if self._in_title:
+            self.title = cleaned
+        if self._skip_depth == 0:
+            self.text_parts.append(cleaned)
+
+
+@dataclass(frozen=True)
+class PublicWebResult:
+    status: str
+    raw_item_id: str | None
+    title: str | None
+    url: str
+    reason: str | None = None
+
+
+def _looks_login_required(text: str) -> bool:
+    lowered = text.lower()
+    login_terms = ["log in", "login", "sign in", "password", "captcha"]
+    return sum(1 for term in login_terms if term in lowered) >= 2 and len(text) < 2500
+
+
+def _fetch_url(url: str) -> tuple[str, str]:
+    request = urllib.request.Request(
+        url,
+        headers={"User-Agent": "SectorScoutIntel/0.1 public research fetcher"},
+    )
+    with urllib.request.urlopen(request, timeout=20) as response:
+        content_type = response.headers.get("content-type", "")
+        payload = response.read(2_000_000).decode("utf-8", errors="replace")
+    return content_type, payload
+
+
+def collect_public_url(
+    config: SectorScoutConfig,
+    url: str,
+    *,
+    source_id: str | None = None,
+    asof_date: date | None = None,
+    metadata: dict | None = None,
+) -> PublicWebResult:
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in {"http", "https"}:
+        return PublicWebResult("SKIPPED", None, None, url, "Only public http/https URLs are supported.")
+    try:
+        content_type, payload = _fetch_url(url)
+    except urllib.error.HTTPError as exc:
+        if exc.code in {401, 403}:
+            return PublicWebResult("LOGIN_REQUIRED", None, None, url, f"HTTP {exc.code}")
+        return PublicWebResult("ERROR", None, None, url, f"HTTP {exc.code}")
+    except Exception as exc:
+        return PublicWebResult("ERROR", None, None, url, str(exc))
+
+    parser = _ReadableHTMLParser()
+    if "html" in content_type.lower() or re.search(r"<html|<article|<body", payload, re.I):
+        parser.feed(payload)
+        raw_text = "\n".join(parser.text_parts)
+        title = parser.title
+    else:
+        raw_text = payload
+        title = parsed.netloc
+    if _looks_login_required(raw_text):
+        return PublicWebResult("LOGIN_REQUIRED", None, title, url, "Page appears to require login.")
+    normalized = normalize_text(raw_text)
+    raw_item_id = insert_raw_item(
+        config,
+        source_id=source_id or parsed.netloc.replace(".", "_"),
+        source_type="public_web",
+        title=title,
+        author=None,
+        platform="website",
+        url=url,
+        asof_date=asof_date,
+        raw_text=raw_text,
+        normalized_text=normalized,
+        rights_scope="public",
+        collection_method="public_web",
+        metadata={
+            "content_type": content_type,
+            "media_urls": parser.media_urls,
+            "outbound_links": parser.outbound_links,
+            **(metadata or {}),
+        },
+    )
+    if not trade_view_exists(config, raw_item_id, "rule_text_v1"):
+        draft = extract_trade_view(
+            raw_text,
+            source_id=source_id or parsed.netloc.replace(".", "_"),
+            source_type="public_web",
+            source_title=title,
+            platform="website",
+            url=url,
+            asof_date=asof_date,
+            rights_scope="public",
+            requires_review=True,
+        )
+        insert_trade_view(config, raw_item_id=raw_item_id, draft=draft)
+    return PublicWebResult("COLLECTED", raw_item_id, title, url)

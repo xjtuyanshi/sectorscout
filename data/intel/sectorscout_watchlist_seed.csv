@@ -1,0 +1,4 @@
+symbol,source,internal_status,internal_score,theme,setup_status,external_status,external_sources,external_bias,overlap_label,notes
+NVDA,seed_watchlist,watch_only,,semiconductors,needs_review,,,,WATCH_ONLY,Seed row for dashboard fallback
+SMH,seed_watchlist,watch_only,,semiconductors,needs_review,,,,WATCH_ONLY,Seed row for dashboard fallback
+QQQ,seed_watchlist,watch_only,,index,needs_review,,,,WATCH_ONLY,Seed row for dashboard fallback
