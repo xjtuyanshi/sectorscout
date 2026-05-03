@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 from datetime import date
 from pathlib import Path
 
@@ -24,6 +26,12 @@ from sectorscout.ingest import (
     ingest_universe_csv,
 )
 from sectorscout.indicators import compute_technical_indicators
+from sectorscout.intel.capture_inbox import capture_image_file, capture_markdown_file, capture_text
+from sectorscout.intel.chandler_seed import seed_chandler_fixture
+from sectorscout.intel.public_sources import DEFAULT_PUBLIC_SOURCES_PATH, collect_public_sources, load_public_sources
+from sectorscout.intel.public_web import collect_public_url
+from sectorscout.intel.report import generate_intel_daily_report
+from sectorscout.intel.storage import ensure_intel_tables
 from sectorscout.ledger import generate_trade_ledger_qa
 from sectorscout.lifecycle import generate_position_lifecycle
 from sectorscout.market_regime import compute_market_regime
@@ -36,6 +44,12 @@ from sectorscout.scoring import run_scoring
 from sectorscout.setups import detect_setups
 
 app = typer.Typer(help="SectorScout research system CLI.")
+intel_capture_app = typer.Typer(help="Human-in-the-loop external intel capture.")
+intel_report_app = typer.Typer(help="External intel report commands.")
+intel_sources_app = typer.Typer(help="Configured public intel sources.")
+app.add_typer(intel_capture_app, name="intel-capture")
+app.add_typer(intel_report_app, name="intel-report")
+app.add_typer(intel_sources_app, name="intel-sources")
 
 
 def _load(config: Path):
@@ -354,9 +368,181 @@ def validate() -> None:
     _phase0_not_implemented("validate")
 
 
+def _launch_streamlit(config: Path, port: int) -> None:
+    app_path = Path(__file__).with_name("ui") / "app.py"
+    command = [
+        sys.executable,
+        "-m",
+        "streamlit",
+        "run",
+        str(app_path),
+        "--server.headless",
+        "true",
+        "--server.port",
+        str(port),
+        "--",
+        "--config",
+        str(config),
+    ]
+    try:
+        subprocess.run(command, check=False)
+    except ModuleNotFoundError:
+        typer.echo("Streamlit is not installed. Run: uv pip install -e '.[dev]'", err=True)
+
+
 @app.command()
-def dashboard() -> None:
-    _phase0_not_implemented("dashboard")
+def dashboard(
+    config: Path = typer.Option(Path("config.yaml"), "--config"),
+    port: int = typer.Option(8501, "--port"),
+) -> None:
+    """Launch the local Streamlit research dashboard."""
+    _launch_streamlit(config, port)
+
+
+@app.command()
+def ui(
+    config: Path = typer.Option(Path("config.yaml"), "--config"),
+    port: int = typer.Option(8501, "--port"),
+) -> None:
+    """Launch the local Streamlit research dashboard."""
+    _launch_streamlit(config, port)
+
+
+@app.command("intel-ui")
+def intel_ui(
+    config: Path = typer.Option(Path("config.yaml"), "--config"),
+    port: int = typer.Option(8501, "--port"),
+) -> None:
+    """Launch the local Streamlit intel dashboard."""
+    _launch_streamlit(config, port)
+
+
+@intel_capture_app.command("add-file")
+def intel_capture_add_file(
+    path: Path = typer.Argument(...),
+    config: Path = typer.Option(Path("config.yaml"), "--config"),
+) -> None:
+    """Capture a markdown/text/image file into the intel overlay."""
+    loaded = _load(config)
+    ensure_intel_tables(loaded)
+    suffix = path.suffix.lower()
+    if suffix == ".md":
+        raw_item_id, view_id = capture_markdown_file(loaded, path)
+        typer.echo(json.dumps({"raw_item_id": raw_item_id, "intel_view_id": view_id}, indent=2))
+        return
+    if suffix in {".png", ".jpg", ".jpeg", ".webp"}:
+        media_id = capture_image_file(loaded, path)
+        typer.echo(json.dumps({"media_id": media_id}, indent=2))
+        return
+    raw_item_id, view_id = capture_text(
+        loaded,
+        path.read_text(encoding="utf-8"),
+        source_id="manual_file",
+        platform="other",
+        title=path.name,
+    )
+    typer.echo(json.dumps({"raw_item_id": raw_item_id, "intel_view_id": view_id}, indent=2))
+
+
+@intel_capture_app.command("list")
+def intel_capture_list(config: Path = typer.Option(Path("config.yaml"), "--config")) -> None:
+    """List captured raw intel rows."""
+    loaded = _load(config)
+    ensure_intel_tables(loaded)
+    from sectorscout.db import connect_database
+
+    with connect_database(loaded.database.path) as connection:
+        rows = connection.execute(
+            """
+            SELECT raw_item_id, source_id, source_type, title, platform, url, collected_at
+            FROM intel_raw_items
+            ORDER BY collected_at DESC
+            LIMIT 100
+            """
+        ).fetchall()
+    typer.echo(
+        json.dumps(
+            [
+                {
+                    "raw_item_id": row[0],
+                    "source_id": row[1],
+                    "source_type": row[2],
+                    "title": row[3],
+                    "platform": row[4],
+                    "url": row[5],
+                    "collected_at": str(row[6]),
+                }
+                for row in rows
+            ],
+            indent=2,
+        )
+    )
+
+
+@intel_capture_app.command("add-url")
+def intel_capture_add_url(
+    url: str = typer.Argument(...),
+    source_id: str | None = typer.Option(None, "--source-id"),
+    config: Path = typer.Option(Path("config.yaml"), "--config"),
+) -> None:
+    """Capture one public URL into the intel overlay."""
+    loaded = _load(config)
+    ensure_intel_tables(loaded)
+    result = collect_public_url(loaded, url, source_id=source_id)
+    typer.echo(json.dumps(result.__dict__, indent=2))
+
+
+@intel_sources_app.command("list")
+def intel_sources_list(
+    sources_file: Path = typer.Option(DEFAULT_PUBLIC_SOURCES_PATH, "--sources-file"),
+) -> None:
+    """List configured public intel sources."""
+    typer.echo(
+        json.dumps(
+            [source.to_dict() for source in load_public_sources(sources_file)],
+            indent=2,
+            sort_keys=True,
+        )
+    )
+
+
+@intel_sources_app.command("collect")
+def intel_sources_collect(
+    source_id: str = typer.Option("all", "--source"),
+    sources_file: Path = typer.Option(DEFAULT_PUBLIC_SOURCES_PATH, "--sources-file"),
+    config: Path = typer.Option(Path("config.yaml"), "--config"),
+) -> None:
+    """Collect configured public sources without login or private browsing."""
+    loaded = _load(config)
+    ensure_intel_tables(loaded)
+    results = collect_public_sources(loaded, sources_path=sources_file, source_id=source_id)
+    typer.echo(json.dumps([result.__dict__ for result in results], indent=2))
+
+
+@app.command("intel-extract")
+def intel_extract(
+    date_: str = typer.Option(..., "--date"),
+    config: Path = typer.Option(Path("config.yaml"), "--config"),
+) -> None:
+    """Seed and extract MVP external intel for a date."""
+    loaded = _load(config)
+    parsed_date = _parse_iso_date(date_)
+    assert parsed_date is not None
+    raw_item_id = seed_chandler_fixture(loaded, asof_date=parsed_date)
+    typer.echo(json.dumps({"seeded_raw_item_id": raw_item_id}, indent=2))
+
+
+@intel_report_app.command("daily")
+def intel_report_daily(
+    date_: str = typer.Option(..., "--date"),
+    config: Path = typer.Option(Path("config.yaml"), "--config"),
+) -> None:
+    """Generate the daily external intel markdown report."""
+    loaded = _load(config)
+    parsed_date = _parse_iso_date(date_)
+    assert parsed_date is not None
+    path = generate_intel_daily_report(loaded, parsed_date)
+    typer.echo(str(path))
 
 
 @app.command("data-quality")

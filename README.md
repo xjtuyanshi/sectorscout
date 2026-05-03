@@ -127,6 +127,31 @@ Run the current research commands:
 .venv/bin/sectorscout report --date 2024-11-29 --config config.yaml
 ```
 
+Launch the local Intel Capture dashboard:
+
+```bash
+.venv/bin/sectorscout ui --config config.yaml
+```
+
+The same dashboard can also be opened with:
+
+```bash
+.venv/bin/sectorscout dashboard --config config.yaml
+.venv/bin/sectorscout intel-ui --config config.yaml
+```
+
+External intel MVP commands:
+
+```bash
+.venv/bin/sectorscout intel-extract --date 2026-04-26 --config config.yaml
+.venv/bin/sectorscout intel-capture add-file data/intel/fixtures/chandler_2026_04_26.md --config config.yaml
+.venv/bin/sectorscout intel-capture add-url https://example.com/public-post --config config.yaml
+.venv/bin/sectorscout intel-capture list --config config.yaml
+.venv/bin/sectorscout intel-sources list
+.venv/bin/sectorscout intel-sources collect --source all --config config.yaml
+.venv/bin/sectorscout intel-report daily --date 2026-04-26 --config config.yaml
+```
+
 The sample fixture price data is intentionally tiny, so the fixture report is
 expected to be sparse. The setup detector is tested with synthetic 260-session
 data in `tests/test_phase4_setups_report.py`.

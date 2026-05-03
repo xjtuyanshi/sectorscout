@@ -1,0 +1,9 @@
+sources:
+  - id: chandler_weekend_prep
+    type: public_web
+    name: Chandler Weekend Prep
+    url: https://chandlertrades.com/2026/04/26/weekend-prep-april-26-2/
+    enabled: true
+    tags: [weekly_prep, es, nq, supply_demand]
+    rights_scope: public
+    notes: Public page only; Chandler seed fixture is used when network access is unavailable.
