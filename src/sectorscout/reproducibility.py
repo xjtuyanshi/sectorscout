@@ -16,9 +16,11 @@ class ReproducibilityCheckResult:
     validation_warnings: list[str]
     lifecycle_run_id: str | None
     execution_run_id: str | None
+    source_signal_snapshot_id: str | None
     price_snapshot_id: str | None
     lifecycle_input_snapshot_id: str | None
     execution_decision_rows_hash: str | None
+    source_signal_rows_hash: str | None
     price_snapshot_rows_hash: str | None
     lifecycle_input_snapshot_rows_hash: str | None
     audit_report_hash: str | None
@@ -110,12 +112,18 @@ def run_reproducibility_check(
         ],
         lifecycle_run_id=audit_report["run_ids"].get("lifecycle_run_id"),
         execution_run_id=audit_report["run_ids"].get("execution_run_id"),
+        source_signal_snapshot_id=audit_report["source_signal_snapshot"].get(
+            "source_signal_snapshot_id"
+        ),
         price_snapshot_id=audit_report["price_snapshot"].get("price_snapshot_id"),
         lifecycle_input_snapshot_id=audit_report["lifecycle_input_snapshot"].get(
             "lifecycle_input_snapshot_id"
         ),
         execution_decision_rows_hash=audit_report["execution_decision_rowset"].get(
             "rowset_hash"
+        ),
+        source_signal_rows_hash=audit_report["source_signal_snapshot"].get(
+            "validated_rows_hash"
         ),
         price_snapshot_rows_hash=audit_report["price_snapshot"].get("validated_rows_hash"),
         lifecycle_input_snapshot_rows_hash=audit_report["lifecycle_input_snapshot"].get(
@@ -135,7 +143,7 @@ def run_reproducibility_check(
             audit_validation["validation_errors"] if audit_validation else []
         ),
         warning=(
-            "Phase 5B11 only: reproducibility checks orchestrate existing "
+            "Phase 5B12 only: reproducibility checks orchestrate existing "
             "manifest, audit-completeness, and audit-artifact validation; they "
             "are not result reports or strategy conclusions."
         ),

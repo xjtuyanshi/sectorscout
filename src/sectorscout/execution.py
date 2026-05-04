@@ -15,6 +15,10 @@ from sectorscout.prices import (
     load_price_snapshot,
     validate_price_snapshot_usage,
 )
+from sectorscout.source_signals import (
+    source_signal_snapshot_candidates,
+    validate_source_signal_snapshot_usage,
+)
 
 
 EXECUTION_MODEL = "next_open"
@@ -307,6 +311,7 @@ def persist_execution_decisions(
     execution_run_id: str,
     rows: list[ExecutionDecision],
     price_snapshot_id: str | None,
+    source_signal_snapshot_id: str | None,
 ) -> None:
     with connect_database(config.database.path) as connection:
         connection.execute(
@@ -337,7 +342,7 @@ def persist_execution_decisions(
                 metadata.config_hash,
                 metadata.git_commit,
                 metadata.data_snapshot_id,
-                _source_snapshot_id(rows),
+                source_signal_snapshot_id or _source_snapshot_id(rows),
                 _source_field_summary(rows, "source_signal_config_hash"),
                 _source_field_summary(rows, "source_signal_git_commit"),
                 _source_field_summary(rows, "source_universe_version"),
@@ -443,11 +448,22 @@ def generate_execution_decisions(
     *,
     persist: bool = True,
     price_snapshot_id: str | None = None,
+    source_signal_snapshot_id: str | None = None,
 ) -> ExecutionRunResult:
     metadata = build_run_metadata(config, "execution-decisions", asof_date=asof_date)
     execution_run_id = str(uuid4())
     next_session = next_market_session(asof_date, config)
-    candidates = _load_frozen_signal_candidates(config, asof_date)
+    if source_signal_snapshot_id is not None:
+        validate_source_signal_snapshot_usage(
+            config,
+            source_signal_snapshot_id,
+            asof_date=asof_date,
+            execution_model=EXECUTION_MODEL,
+            require_rows=False,
+        )
+        candidates = source_signal_snapshot_candidates(config, source_signal_snapshot_id)
+    else:
+        candidates = _load_frozen_signal_candidates(config, asof_date)
     if price_snapshot_id is not None:
         validate_price_snapshot_usage(
             config,
@@ -479,6 +495,7 @@ def generate_execution_decisions(
             execution_run_id,
             decisions,
             price_snapshot_id,
+            source_signal_snapshot_id,
         )
     return ExecutionRunResult(
         execution_run_id=execution_run_id,

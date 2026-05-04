@@ -301,6 +301,56 @@ CREATE TABLE IF NOT EXISTS signals (
     PRIMARY KEY (asof_date, symbol, theme_id, setup_type)
 );
 
+CREATE TABLE IF NOT EXISTS source_signal_snapshot_runs (
+    source_signal_snapshot_id VARCHAR PRIMARY KEY,
+    asof_date DATE NOT NULL,
+    execution_model VARCHAR NOT NULL,
+    source_signal_rows INTEGER NOT NULL,
+    snapshot_rows_hash VARCHAR NOT NULL,
+    source_signal_config_hashes_json VARCHAR NOT NULL DEFAULT '[]',
+    source_signal_git_commits_json VARCHAR NOT NULL DEFAULT '[]',
+    source_signal_data_snapshot_ids_json VARCHAR NOT NULL DEFAULT '[]',
+    source_universe_versions_json VARCHAR NOT NULL DEFAULT '[]',
+    source_theme_versions_json VARCHAR NOT NULL DEFAULT '[]',
+    config_hash VARCHAR NOT NULL,
+    git_commit VARCHAR NOT NULL,
+    data_snapshot_id VARCHAR NOT NULL,
+    created_at_utc TIMESTAMPTZ NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS source_signal_snapshot_rows (
+    source_signal_snapshot_id VARCHAR NOT NULL,
+    asof_date DATE NOT NULL,
+    symbol VARCHAR NOT NULL,
+    theme_id VARCHAR NOT NULL,
+    setup_type VARCHAR NOT NULL,
+    state VARCHAR NOT NULL,
+    action_category VARCHAR NOT NULL,
+    actionable BOOLEAN NOT NULL,
+    reason VARCHAR NOT NULL,
+    execution_model VARCHAR NOT NULL,
+    entry_trigger DOUBLE,
+    stop_loss DOUBLE,
+    reward_risk DOUBLE,
+    setup_data_present BOOLEAN NOT NULL,
+    execution_data_quality_pass BOOLEAN NOT NULL,
+    price_snapshot_quality_pass BOOLEAN NOT NULL,
+    data_quality_pass BOOLEAN NOT NULL,
+    data_quality_reason VARCHAR NOT NULL,
+    market_gate_pass BOOLEAN NOT NULL,
+    market_gate_reason VARCHAR NOT NULL,
+    market_regime_risk_state VARCHAR NOT NULL,
+    portfolio_risk_pass BOOLEAN NOT NULL,
+    portfolio_risk_reason VARCHAR NOT NULL,
+    signal_generated_at_utc TIMESTAMPTZ NOT NULL,
+    config_hash VARCHAR NOT NULL,
+    git_commit VARCHAR NOT NULL,
+    data_snapshot_id VARCHAR NOT NULL,
+    universe_version VARCHAR NOT NULL,
+    theme_version VARCHAR NOT NULL,
+    PRIMARY KEY (source_signal_snapshot_id, asof_date, symbol, theme_id, setup_type)
+);
+
 CREATE TABLE IF NOT EXISTS execution_runs (
     execution_run_id VARCHAR PRIMARY KEY,
     asof_date DATE NOT NULL,
@@ -669,6 +719,7 @@ CREATE TABLE IF NOT EXISTS run_manifests (
     lifecycle_run_id VARCHAR NOT NULL,
     execution_run_id VARCHAR NOT NULL,
     source_signal_snapshot_id VARCHAR,
+    source_signal_rows_hash VARCHAR,
     source_signal_config_hash VARCHAR,
     source_signal_git_commit VARCHAR,
     source_universe_version VARCHAR,

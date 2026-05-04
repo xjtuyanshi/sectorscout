@@ -4,15 +4,16 @@ SectorScout is a staged, point-in-time research system for finding strong market
 themes, ranking strong stocks inside those themes, and waiting for technical
 setups before labeling anything actionable.
 
-Current status: Phase 5B11 reproducibility scaffolding is implemented. It creates
+Current status: Phase 5B12 reproducibility scaffolding is implemented. It creates
 next-open execution-decision records from frozen Phase 4 triggered setup
 candidates, then builds simulated position lifecycle, exit-decision,
 trade-ledger QA, and baseline coverage QA records, with stronger run provenance,
 persisted frozen price snapshot validation, non-price lifecycle input metadata
 guardrails, frozen non-price lifecycle input snapshots, and run-manifest
 rowset-hash validation, manifest-gated persisted provenance audit exports, and
-a strict reproducibility-check orchestration command. It does not calculate
-strategy performance.
+a strict reproducibility-check orchestration command. Source signal rows can now
+be frozen and validated as their own rowset before execution. It does not
+calculate strategy performance.
 
 Implemented so far:
 
@@ -78,6 +79,12 @@ Implemented so far:
   `reproducibility-check`, which chains manifest validation, strict audit export,
   and audit artifact validation into one status object containing only ids,
   hashes, validation statuses, completeness warnings, and failure reasons.
+- Phase 5B12: frozen source-signal snapshot scaffolding, including
+  `source_signal_snapshot_runs` / `source_signal_snapshot_rows`,
+  `source-signal-snapshot`, optional execution wiring via
+  `--source-signal-snapshot-id`, source rowset hash validation in manifests,
+  source snapshot component status in audit reports, and reproducibility output
+  fields for source-signal snapshot ids/hashes.
 
 Not implemented yet:
 
@@ -115,6 +122,10 @@ Current limitations:
   current next-open filters; it is not a broker fill.
 - Execution records store source signal metadata separately from execution-run
   metadata so changed configs do not overwrite the provenance of frozen signals.
+- Phase 5B12 source signal snapshots freeze the exact Phase 4 signal rows that
+  feed execution decisions. Run manifests require the snapshot id to resolve,
+  hash cleanly, match the execution as-of date/model, and contain exactly the
+  source signal keys used by `execution_decisions`.
 - The default next-open policy allows opens below the trigger/pivot if other
   execution and risk filters pass. `require_next_open_above_trigger` can tighten
   that behavior for later research variants.
@@ -173,8 +184,9 @@ Run the current research commands:
 .venv/bin/sectorscout theme-members-asof --asof 2024-11-29 --config config.yaml
 .venv/bin/sectorscout score --asof 2024-11-29 --config config.yaml
 .venv/bin/sectorscout detect-setups --asof 2024-11-29 --config config.yaml
+.venv/bin/sectorscout source-signal-snapshot --asof 2024-11-29 --config config.yaml
 .venv/bin/sectorscout price-snapshot --asof 2024-12-31 --config config.yaml
-.venv/bin/sectorscout execution-decisions --asof 2024-11-29 --price-snapshot-id <price_snapshot_id> --config config.yaml
+.venv/bin/sectorscout execution-decisions --asof 2024-11-29 --source-signal-snapshot-id <source_signal_snapshot_id> --price-snapshot-id <price_snapshot_id> --config config.yaml
 .venv/bin/sectorscout lifecycle-input-snapshot --execution-run-id <execution_run_id> --through 2024-12-31 --config config.yaml
 .venv/bin/sectorscout position-lifecycle --execution-run-id <execution_run_id> --through 2024-12-31 --price-snapshot-id <price_snapshot_id> --lifecycle-input-snapshot-id <lifecycle_input_snapshot_id> --config config.yaml
 .venv/bin/sectorscout trade-ledger-qa --lifecycle-run-id <lifecycle_run_id> --config config.yaml
@@ -199,5 +211,5 @@ Important design constraints to review:
   claims.
 - Scores rank candidates; Phase 4 setup triggers create research candidates only.
 - The system must not output direct buy labels or execution instructions.
-- Phase 5A through Phase 5B11 records are not a performance backtest, so no
+- Phase 5A through Phase 5B12 records are not a performance backtest, so no
   performance claims should be inferred from the current repository.

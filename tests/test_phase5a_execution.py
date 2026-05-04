@@ -11,6 +11,7 @@ from sectorscout.cli import app
 from sectorscout.config import SectorScoutConfig, config_hash
 from sectorscout.db import connect_database, initialize_database
 from sectorscout.execution import generate_execution_decisions
+from sectorscout.source_signals import create_frozen_source_signal_snapshot
 import sectorscout.execution as execution_module
 
 
@@ -171,6 +172,83 @@ def test_phase5a_next_open_execution_records_normal_fill(tmp_path: Path) -> None
         "signal_theme",
         False,
     )
+
+
+def test_phase5b12_execution_can_read_frozen_source_signal_snapshot(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    _insert_signal(config, stop_loss=95.0)
+    snapshot = create_frozen_source_signal_snapshot(config, ASOF).to_dict()
+    with connect_database(config.database.path) as connection:
+        connection.execute(
+            """
+            UPDATE signals
+            SET stop_loss = 99
+            WHERE asof_date = ?
+              AND symbol = 'MU'
+            """,
+            [ASOF],
+        )
+    _insert_next_open(config, open_price=101.0)
+
+    result = generate_execution_decisions(
+        config,
+        ASOF,
+        source_signal_snapshot_id=snapshot["source_signal_snapshot_id"],
+    ).to_dict()
+    decision = result["decisions"][0]
+
+    assert decision["signal_stop_loss"] == 95.0
+    assert decision["actual_stop_loss"] == 95.0
+    with connect_database(config.database.path) as connection:
+        run_metadata = connection.execute(
+            """
+            SELECT source_signal_snapshot_id
+            FROM execution_runs
+            WHERE execution_run_id = ?
+            """,
+            [result["execution_run_id"]],
+        ).fetchone()
+    assert run_metadata == (snapshot["source_signal_snapshot_id"],)
+
+
+def test_phase5b12_source_signal_snapshot_cli_has_no_formal_metric_terms(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    _insert_signal(config)
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(f"database:\n  path: {config.database.path}\n", encoding="utf-8")
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "source-signal-snapshot",
+            "--asof",
+            ASOF.isoformat(),
+            "--config",
+            str(config_path),
+        ],
+    )
+    output = result.stdout.lower()
+    payload = json.loads(result.stdout)
+
+    assert result.exit_code == 0
+    assert payload["source_signal_rows"] == 1
+    assert payload["source_signal_rows_hash"]
+    for forbidden in (
+        "cagr",
+        "sharpe",
+        "max drawdown",
+        "win_rate",
+        "profit_factor",
+        "annual return",
+        "expectancy",
+        "edge claim",
+        "claim edge",
+    ):
+        assert forbidden not in output
 
 
 def test_phase5a_rejects_gap_too_extended(tmp_path: Path) -> None:

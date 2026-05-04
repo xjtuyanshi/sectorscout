@@ -24,6 +24,7 @@ from sectorscout.prices import (
     snapshot_rows_hash,
     validate_price_snapshot_usage,
 )
+from sectorscout.source_signals import validate_source_signal_snapshot_usage
 
 
 @dataclass(frozen=True)
@@ -32,6 +33,7 @@ class RunManifestResult:
     lifecycle_run_id: str
     execution_run_id: str
     source_signal_snapshot_id: str | None
+    source_signal_rows_hash: str | None
     source_signal_config_hash: str | None
     source_signal_git_commit: str | None
     source_universe_version: str | None
@@ -65,6 +67,7 @@ class RunManifestValidationResult:
     validation_errors: list[str]
     validation_warnings: list[str]
     execution_decision_rows_hash: str
+    source_signal_rows_hash: str | None
     price_snapshot_rows_hash: str | None
     lifecycle_input_snapshot_rows_hash: str | None
     warning: str
@@ -340,6 +343,23 @@ def _build_manifest_payload(
     )
     if decision_count == 0:
         errors.append("MISSING_EXECUTION_DECISIONS")
+
+    source_signal_snapshot_id = context.get("source_signal_snapshot_id")
+    source_signal_rows_hash: str | None = None
+    if source_signal_snapshot_id is None:
+        errors.append("MISSING_SOURCE_SIGNAL_SNAPSHOT_ID")
+    else:
+        try:
+            source_usage = validate_source_signal_snapshot_usage(
+                config,
+                str(source_signal_snapshot_id),
+                execution_run_id=context["execution_run_id"],
+                require_rows=bool(decision_count),
+            )
+            source_signal_rows_hash = source_usage.source_signal_rows_hash
+        except ValueError as exc:
+            errors.append(str(exc))
+
     price_snapshot_id, price_errors = _effective_price_snapshot_id(context)
     errors.extend(price_errors)
     price_rows_hash: str | None = None
@@ -400,7 +420,8 @@ def _build_manifest_payload(
     payload = {
         "lifecycle_run_id": context["lifecycle_run_id"],
         "execution_run_id": context["execution_run_id"],
-        "source_signal_snapshot_id": context.get("source_signal_snapshot_id"),
+        "source_signal_snapshot_id": source_signal_snapshot_id,
+        "source_signal_rows_hash": source_signal_rows_hash,
         "source_signal_config_hash": context.get("source_signal_config_hash"),
         "source_signal_git_commit": context.get("source_signal_git_commit"),
         "source_universe_version": context.get("source_universe_version"),
@@ -431,7 +452,8 @@ def persist_run_manifest(config: SectorScoutConfig, result: RunManifestResult) -
             """
             INSERT INTO run_manifests (
                 run_manifest_id, lifecycle_run_id, execution_run_id,
-                source_signal_snapshot_id, source_signal_config_hash,
+                source_signal_snapshot_id, source_signal_rows_hash,
+                source_signal_config_hash,
                 source_signal_git_commit, source_universe_version,
                 source_theme_version, execution_model, execution_decision_rows,
                 execution_decision_rows_hash, price_snapshot_id,
@@ -439,13 +461,14 @@ def persist_run_manifest(config: SectorScoutConfig, result: RunManifestResult) -
                 lifecycle_input_snapshot_rows_hash, schema_version, config_hash,
                 git_commit, data_snapshot_id, validation_status,
                 validation_errors_json, validation_warnings_json, created_at_utc
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 result.run_manifest_id,
                 result.lifecycle_run_id,
                 result.execution_run_id,
                 result.source_signal_snapshot_id,
+                result.source_signal_rows_hash,
                 result.source_signal_config_hash,
                 result.source_signal_git_commit,
                 result.source_universe_version,
@@ -498,6 +521,8 @@ def _load_manifest(config: SectorScoutConfig, run_manifest_id: str) -> dict:
                 lifecycle_run_id,
                 execution_run_id,
                 execution_decision_rows_hash,
+                source_signal_snapshot_id,
+                source_signal_rows_hash,
                 price_snapshot_id,
                 price_snapshot_rows_hash,
                 lifecycle_input_snapshot_id,
@@ -519,6 +544,8 @@ def _load_manifest(config: SectorScoutConfig, run_manifest_id: str) -> dict:
         "lifecycle_run_id",
         "execution_run_id",
         "execution_decision_rows_hash",
+        "source_signal_snapshot_id",
+        "source_signal_rows_hash",
         "price_snapshot_id",
         "price_snapshot_rows_hash",
         "lifecycle_input_snapshot_id",
@@ -549,6 +576,10 @@ def validate_run_manifest(
     warnings.extend(current_warnings)
     if current_payload["execution_run_id"] != manifest["execution_run_id"]:
         errors.append(f"EXECUTION_RUN_ID_CHANGED: {run_manifest_id}")
+    if current_payload["source_signal_snapshot_id"] != manifest["source_signal_snapshot_id"]:
+        errors.append(f"SOURCE_SIGNAL_SNAPSHOT_ID_CHANGED: {run_manifest_id}")
+    if current_payload["source_signal_rows_hash"] != manifest["source_signal_rows_hash"]:
+        errors.append(f"SOURCE_SIGNAL_SNAPSHOT_MANIFEST_HASH_MISMATCH: {run_manifest_id}")
     if current_payload["price_snapshot_id"] != manifest["price_snapshot_id"]:
         errors.append(f"PRICE_SNAPSHOT_ID_CHANGED: {run_manifest_id}")
     if (
@@ -614,6 +645,7 @@ def validate_run_manifest(
         validation_errors=_dedupe(errors),
         validation_warnings=_dedupe(warnings),
         execution_decision_rows_hash=current_execution_hash,
+        source_signal_rows_hash=current_payload["source_signal_rows_hash"],
         price_snapshot_rows_hash=current_price_hash,
         lifecycle_input_snapshot_rows_hash=current_input_hash,
         warning=_manifest_warning(),

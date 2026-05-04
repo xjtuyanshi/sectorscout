@@ -26,6 +26,7 @@ from sectorscout.prices import (
     load_price_snapshot,
     validate_price_snapshot_usage,
 )
+from sectorscout.source_signals import source_signal_snapshot_source_metadata
 
 
 ACCEPTED_DECISION = "SIMULATED_NEXT_OPEN_ACCEPTED"
@@ -272,7 +273,22 @@ def _load_execution_context(config: SectorScoutConfig, execution_run_id: str) ->
         "source_theme_version",
         "mixed_source_signal_metadata",
     ]
-    return dict(zip(columns, row, strict=True))
+    context = dict(zip(columns, row, strict=True))
+    snapshot_metadata = source_signal_snapshot_source_metadata(
+        config,
+        context.get("source_signal_snapshot_id"),
+    )
+    context.update(
+        {
+            key: value
+            for key, value in snapshot_metadata.items()
+            if key != "mixed_source_signal_metadata" and value is not None
+        }
+    )
+    context["mixed_source_signal_metadata"] = bool(
+        context.get("mixed_source_signal_metadata")
+    ) or bool(snapshot_metadata.get("mixed_source_signal_metadata"))
+    return context
 
 
 def _distinct_metadata_values(rows: list[dict], key: str) -> list[str]:
@@ -371,7 +387,8 @@ def _non_price_input_qa(
         or execution_context.get("execution_git_commit")
     )
     expected_data_snapshot_id = (
-        execution_context.get("source_signal_snapshot_id")
+        execution_context.get("source_signal_data_snapshot_id")
+        or execution_context.get("source_signal_snapshot_id")
         or execution_context.get("execution_data_snapshot_id")
     )
     expected_universe_version = execution_context.get("source_universe_version")

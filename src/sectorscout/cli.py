@@ -38,6 +38,7 @@ from sectorscout.reproducibility import run_reproducibility_check
 from sectorscout.run_manifest import generate_run_manifest, validate_run_manifest
 from sectorscout.scoring import run_scoring
 from sectorscout.setups import detect_setups
+from sectorscout.source_signals import create_frozen_source_signal_snapshot
 
 app = typer.Typer(help="SectorScout research system CLI.")
 
@@ -289,6 +290,7 @@ def backtest() -> None:
 def execution_decisions(
     asof: str = typer.Option(..., "--asof"),
     price_snapshot_id: str | None = typer.Option(None, "--price-snapshot-id"),
+    source_signal_snapshot_id: str | None = typer.Option(None, "--source-signal-snapshot-id"),
     persist: bool = typer.Option(True, "--persist/--no-persist"),
     config: Path = typer.Option(Path("config.yaml"), "--config"),
 ) -> None:
@@ -300,6 +302,7 @@ def execution_decisions(
         parsed_asof,
         persist=persist,
         price_snapshot_id=price_snapshot_id,
+        source_signal_snapshot_id=source_signal_snapshot_id,
     )
     typer.echo(json.dumps(result.to_dict(), indent=2, sort_keys=True))
 
@@ -355,6 +358,19 @@ def price_snapshot(
     parsed_asof = _parse_iso_date(asof)
     assert parsed_asof is not None
     result = create_frozen_price_snapshot(loaded, parsed_asof, persist=persist)
+    typer.echo(json.dumps(result.to_dict(), indent=2, sort_keys=True))
+
+
+@app.command("source-signal-snapshot")
+def source_signal_snapshot(
+    asof: str = typer.Option(..., "--asof"),
+    persist: bool = typer.Option(True, "--persist/--no-persist"),
+    config: Path = typer.Option(Path("config.yaml"), "--config"),
+) -> None:
+    loaded = _load(config)
+    parsed_asof = _parse_iso_date(asof)
+    assert parsed_asof is not None
+    result = create_frozen_source_signal_snapshot(loaded, parsed_asof, persist=persist)
     typer.echo(json.dumps(result.to_dict(), indent=2, sort_keys=True))
 
 

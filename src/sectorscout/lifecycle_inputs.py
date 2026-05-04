@@ -10,6 +10,7 @@ from sectorscout.config import SectorScoutConfig
 from sectorscout.db import connect_database
 from sectorscout.market_calendar import get_exchange_calendar
 from sectorscout.metadata import build_run_metadata
+from sectorscout.source_signals import source_signal_snapshot_source_metadata
 
 
 ACCEPTED_DECISION = "SIMULATED_NEXT_OPEN_ACCEPTED"
@@ -305,7 +306,22 @@ def _load_execution_context(config: SectorScoutConfig, execution_run_id: str) ->
         "source_theme_version",
         "mixed_source_signal_metadata",
     ]
-    return dict(zip(columns, row, strict=True))
+    context = dict(zip(columns, row, strict=True))
+    snapshot_metadata = source_signal_snapshot_source_metadata(
+        config,
+        context.get("source_signal_snapshot_id"),
+    )
+    context.update(
+        {
+            key: value
+            for key, value in snapshot_metadata.items()
+            if key != "mixed_source_signal_metadata" and value is not None
+        }
+    )
+    context["mixed_source_signal_metadata"] = bool(
+        context.get("mixed_source_signal_metadata")
+    ) or bool(snapshot_metadata.get("mixed_source_signal_metadata"))
+    return context
 
 
 def _source_metadata_sets(market_rows: list[dict], theme_rows: list[dict]) -> dict[str, list[str]]:
@@ -329,7 +345,8 @@ def _expected_metadata(context: dict) -> dict[str, str | None]:
         or context.get("execution_config_hash"),
         "git_commit": context.get("source_signal_git_commit")
         or context.get("execution_git_commit"),
-        "data_snapshot_id": context.get("source_signal_snapshot_id")
+        "data_snapshot_id": context.get("source_signal_data_snapshot_id")
+        or context.get("source_signal_snapshot_id")
         or context.get("execution_data_snapshot_id"),
         "universe_version": context.get("source_universe_version"),
         "theme_version": context.get("source_theme_version"),

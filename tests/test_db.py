@@ -138,6 +138,18 @@ def test_initialize_database_adds_missing_phase5b3_columns(tmp_path: Path) -> No
         run_manifest_columns = {
             row[1] for row in connection.execute("PRAGMA table_info('run_manifests')").fetchall()
         }
+        source_signal_snapshot_run_columns = {
+            row[1]
+            for row in connection.execute(
+                "PRAGMA table_info('source_signal_snapshot_runs')"
+            ).fetchall()
+        }
+        source_signal_snapshot_row_columns = {
+            row[1]
+            for row in connection.execute(
+                "PRAGMA table_info('source_signal_snapshot_rows')"
+            ).fetchall()
+        }
         audit_report_columns = {
             row[1] for row in connection.execute("PRAGMA table_info('audit_reports')").fetchall()
         }
@@ -205,6 +217,8 @@ def test_initialize_database_adds_missing_phase5b3_columns(tmp_path: Path) -> No
         "run_manifest_id",
         "lifecycle_run_id",
         "execution_run_id",
+        "source_signal_snapshot_id",
+        "source_signal_rows_hash",
         "execution_decision_rows_hash",
         "price_snapshot_id",
         "price_snapshot_rows_hash",
@@ -212,6 +226,18 @@ def test_initialize_database_adds_missing_phase5b3_columns(tmp_path: Path) -> No
         "lifecycle_input_snapshot_rows_hash",
         "validation_status",
     }.issubset(run_manifest_columns)
+    assert {
+        "source_signal_snapshot_id",
+        "asof_date",
+        "execution_model",
+        "snapshot_rows_hash",
+    }.issubset(source_signal_snapshot_run_columns)
+    assert {
+        "source_signal_snapshot_id",
+        "symbol",
+        "entry_trigger",
+        "config_hash",
+    }.issubset(source_signal_snapshot_row_columns)
     assert {
         "audit_report_id",
         "run_manifest_id",

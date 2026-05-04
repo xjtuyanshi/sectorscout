@@ -27,6 +27,7 @@ class ProvenanceAuditReport:
     run_ids: dict
     manifest_metadata: dict
     source_signal_provenance: dict
+    source_signal_snapshot: dict
     execution_decision_rowset: dict
     price_snapshot: dict
     lifecycle_input_snapshot: dict
@@ -116,6 +117,7 @@ def _load_manifest_payload(config: SectorScoutConfig, run_manifest_id: str) -> d
                 lifecycle_run_id,
                 execution_run_id,
                 source_signal_snapshot_id,
+                source_signal_rows_hash,
                 source_signal_config_hash,
                 source_signal_git_commit,
                 source_universe_version,
@@ -147,6 +149,7 @@ def _load_manifest_payload(config: SectorScoutConfig, run_manifest_id: str) -> d
         "lifecycle_run_id",
         "execution_run_id",
         "source_signal_snapshot_id",
+        "source_signal_rows_hash",
         "source_signal_config_hash",
         "source_signal_git_commit",
         "source_universe_version",
@@ -369,6 +372,7 @@ def _blocked_report(
         },
         manifest_metadata={},
         source_signal_provenance={},
+        source_signal_snapshot={},
         execution_decision_rowset={},
         price_snapshot={},
         lifecycle_input_snapshot={},
@@ -486,6 +490,22 @@ def generate_provenance_audit_report(
             "source_signal_git_commit": manifest["source_signal_git_commit"],
             "source_universe_version": manifest["source_universe_version"],
             "source_theme_version": manifest["source_theme_version"],
+        },
+        source_signal_snapshot={
+            "source_signal_snapshot_id": manifest["source_signal_snapshot_id"],
+            "manifest_rows_hash": manifest["source_signal_rows_hash"],
+            "validated_rows_hash": validation["source_signal_rows_hash"],
+            "validation_status": _component_status(
+                component_id=manifest["source_signal_snapshot_id"],
+                validated_hash=validation["source_signal_rows_hash"],
+                validation_errors=validation["validation_errors"],
+                error_token="SOURCE_SIGNAL_SNAPSHOT",
+            ),
+            "validation_errors": [
+                error
+                for error in validation["validation_errors"]
+                if "SOURCE_SIGNAL_SNAPSHOT" in error
+            ],
         },
         execution_decision_rowset={
             "row_count": manifest["execution_decision_rows"],

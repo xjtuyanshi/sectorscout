@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 import pandas as pd
@@ -19,12 +19,14 @@ from sectorscout.lifecycle_inputs import (
 from sectorscout.prices import PRICE_SNAPSHOT_COLUMNS, snapshot_rows_hash
 from sectorscout.reproducibility import run_reproducibility_check
 from sectorscout.run_manifest import generate_run_manifest, validate_run_manifest
+from sectorscout.source_signals import SOURCE_SIGNAL_COLUMNS, source_signal_snapshot_rows_hash
 
 
 EXECUTION_RUN_ID = "execution-run"
 LIFECYCLE_RUN_ID = "lifecycle-run"
 PRICE_SNAPSHOT_ID = "price-snapshot"
 INPUT_SNAPSHOT_ID = "input-snapshot"
+SOURCE_SIGNAL_SNAPSHOT_ID = "signal_snapshot"
 
 
 def _config(tmp_path: Path) -> SectorScoutConfig:
@@ -168,6 +170,76 @@ def _insert_price_snapshot(config: SectorScoutConfig) -> str:
                     bool(row["adjustment_warning"]),
                 ],
             )
+    return rows_hash
+
+
+def _source_signal_row() -> dict:
+    return {
+        "asof_date": date(2024, 11, 29),
+        "symbol": "MU",
+        "theme_id": "ai-memory",
+        "setup_type": "VCP",
+        "state": "TRIGGERED",
+        "action_category": "Triggered setup candidate",
+        "actionable": False,
+        "reason": "Phase 4 candidate",
+        "execution_model": "next_open",
+        "entry_trigger": 100.0,
+        "stop_loss": 95.0,
+        "reward_risk": 2.0,
+        "setup_data_present": True,
+        "execution_data_quality_pass": False,
+        "price_snapshot_quality_pass": True,
+        "data_quality_pass": False,
+        "data_quality_reason": "Phase 5 execution validation required.",
+        "market_gate_pass": True,
+        "market_gate_reason": "Market gate pass.",
+        "market_regime_risk_state": "RISK_ON",
+        "portfolio_risk_pass": True,
+        "portfolio_risk_reason": "Portfolio gate pass.",
+        "signal_generated_at_utc": datetime.fromisoformat("2024-11-29T21:00:00+00:00"),
+        "config_hash": "signal_hash",
+        "git_commit": "signal_commit",
+        "data_snapshot_id": "signal_snapshot",
+        "universe_version": "signal_universe",
+        "theme_version": "signal_theme",
+    }
+
+
+def _insert_source_signal_snapshot(config: SectorScoutConfig) -> str:
+    rows = pd.DataFrame([_source_signal_row()], columns=SOURCE_SIGNAL_COLUMNS)
+    rows_hash = source_signal_snapshot_rows_hash(rows)
+    with connect_database(config.database.path) as connection:
+        connection.execute(
+            """
+            INSERT INTO source_signal_snapshot_runs (
+                source_signal_snapshot_id, asof_date, execution_model,
+                source_signal_rows, snapshot_rows_hash,
+                source_signal_config_hashes_json,
+                source_signal_git_commits_json,
+                source_signal_data_snapshot_ids_json,
+                source_universe_versions_json,
+                source_theme_versions_json,
+                config_hash, git_commit, data_snapshot_id, created_at_utc
+            ) VALUES (
+                ?, DATE '2024-11-29', 'next_open', 1, ?,
+                '["signal_hash"]', '["signal_commit"]', '["signal_snapshot"]',
+                '["signal_universe"]', '["signal_theme"]',
+                'snapshot_hash', 'snapshot_commit', 'snapshot_data',
+                '2024-11-29T21:00:00+00:00'
+            )
+            """,
+            [SOURCE_SIGNAL_SNAPSHOT_ID, rows_hash],
+        )
+        row = _source_signal_row()
+        connection.execute(
+            f"""
+            INSERT INTO source_signal_snapshot_rows (
+                source_signal_snapshot_id, {", ".join(SOURCE_SIGNAL_COLUMNS)}
+            ) VALUES ({", ".join(["?"] * (len(SOURCE_SIGNAL_COLUMNS) + 1))})
+            """,
+            [SOURCE_SIGNAL_SNAPSHOT_ID] + [row[column] for column in SOURCE_SIGNAL_COLUMNS],
+        )
     return rows_hash
 
 
@@ -388,12 +460,13 @@ def _insert_lifecycle_qa_rows(config: SectorScoutConfig, input_hash: str) -> Non
         )
 
 
-def _complete_manifest_fixture(config: SectorScoutConfig) -> tuple[str, str]:
+def _complete_manifest_fixture(config: SectorScoutConfig) -> tuple[str, str, str]:
+    source_hash = _insert_source_signal_snapshot(config)
     price_hash = _insert_price_snapshot(config)
     input_hash = _insert_lifecycle_input_snapshot(config)
     _insert_execution_and_lifecycle(config)
     _insert_lifecycle_qa_rows(config, input_hash)
-    return price_hash, input_hash
+    return source_hash, price_hash, input_hash
 
 
 def _clone_run_manifest(
@@ -406,7 +479,8 @@ def _clone_run_manifest(
             """
             INSERT INTO run_manifests (
                 run_manifest_id, lifecycle_run_id, execution_run_id,
-                source_signal_snapshot_id, source_signal_config_hash,
+                source_signal_snapshot_id, source_signal_rows_hash,
+                source_signal_config_hash,
                 source_signal_git_commit, source_universe_version,
                 source_theme_version, execution_model, execution_decision_rows,
                 execution_decision_rows_hash, price_snapshot_id,
@@ -417,7 +491,8 @@ def _clone_run_manifest(
             )
             SELECT
                 ?, lifecycle_run_id, execution_run_id,
-                source_signal_snapshot_id, source_signal_config_hash,
+                source_signal_snapshot_id, source_signal_rows_hash,
+                source_signal_config_hash,
                 source_signal_git_commit, source_universe_version,
                 source_theme_version, execution_model, execution_decision_rows,
                 execution_decision_rows_hash, price_snapshot_id,
@@ -434,13 +509,14 @@ def _clone_run_manifest(
 
 def test_phase5b8_run_manifest_persists_complete_provenance(tmp_path: Path) -> None:
     config = _config(tmp_path)
-    price_hash, input_hash = _complete_manifest_fixture(config)
+    source_hash, price_hash, input_hash = _complete_manifest_fixture(config)
 
     result = generate_run_manifest(config, LIFECYCLE_RUN_ID).to_dict()
 
     assert result["validation_status"] == "PASS"
     assert result["source_signal_config_hash"] == "signal_hash"
     assert result["source_signal_snapshot_id"] == "signal_snapshot"
+    assert result["source_signal_rows_hash"] == source_hash
     assert result["price_snapshot_id"] == PRICE_SNAPSHOT_ID
     assert result["price_snapshot_rows_hash"] == price_hash
     assert result["lifecycle_input_snapshot_id"] == INPUT_SNAPSHOT_ID
@@ -450,11 +526,12 @@ def test_phase5b8_run_manifest_persists_complete_provenance(tmp_path: Path) -> N
         persisted = connection.execute(
             """
             SELECT validation_status, source_signal_config_hash,
-                   price_snapshot_rows_hash, lifecycle_input_snapshot_rows_hash
+                   source_signal_rows_hash, price_snapshot_rows_hash,
+                   lifecycle_input_snapshot_rows_hash
             FROM run_manifests
             """
         ).fetchone()
-    assert persisted == ("PASS", "signal_hash", price_hash, input_hash)
+    assert persisted == ("PASS", "signal_hash", source_hash, price_hash, input_hash)
 
 
 def test_phase5b8_manifest_fails_without_price_snapshot(tmp_path: Path) -> None:
@@ -477,6 +554,114 @@ def test_phase5b8_manifest_fails_without_lifecycle_input_snapshot(tmp_path: Path
 
     assert result["validation_status"] == "FAIL"
     assert "MISSING_LIFECYCLE_INPUT_SNAPSHOT_ID" in result["validation_errors"]
+
+
+def test_phase5b12_manifest_fails_unknown_source_signal_snapshot(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    _insert_price_snapshot(config)
+    _insert_lifecycle_input_snapshot(config)
+    _insert_execution_and_lifecycle(config)
+
+    result = generate_run_manifest(config, LIFECYCLE_RUN_ID, persist=False).to_dict()
+
+    assert result["validation_status"] == "FAIL"
+    assert any(
+        "UNKNOWN_SOURCE_SIGNAL_SNAPSHOT_ID" in error
+        for error in result["validation_errors"]
+    )
+
+
+def test_phase5b12_validate_manifest_catches_source_signal_snapshot_tamper(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    _complete_manifest_fixture(config)
+    manifest = generate_run_manifest(config, LIFECYCLE_RUN_ID).to_dict()
+    with connect_database(config.database.path) as connection:
+        connection.execute(
+            """
+            UPDATE source_signal_snapshot_rows
+            SET stop_loss = 94
+            WHERE source_signal_snapshot_id = ?
+            """,
+            [SOURCE_SIGNAL_SNAPSHOT_ID],
+        )
+
+    result = validate_run_manifest(config, manifest["run_manifest_id"]).to_dict()
+
+    assert result["validation_status"] == "FAIL"
+    assert any(
+        "SOURCE_SIGNAL_SNAPSHOT_HASH_MISMATCH" in error
+        or "SOURCE_SIGNAL_SNAPSHOT_MANIFEST_HASH_MISMATCH" in error
+        for error in result["validation_errors"]
+    )
+
+
+def test_phase5b12_manifest_fails_missing_source_signal_key(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    _complete_manifest_fixture(config)
+    replacement = _source_signal_row()
+    replacement["symbol"] = "AMD"
+    rows_hash = source_signal_snapshot_rows_hash(
+        pd.DataFrame([replacement], columns=SOURCE_SIGNAL_COLUMNS)
+    )
+    with connect_database(config.database.path) as connection:
+        connection.execute(
+            "DELETE FROM source_signal_snapshot_rows WHERE source_signal_snapshot_id = ?",
+            [SOURCE_SIGNAL_SNAPSHOT_ID],
+        )
+        connection.execute(
+            f"""
+            INSERT INTO source_signal_snapshot_rows (
+                source_signal_snapshot_id, {", ".join(SOURCE_SIGNAL_COLUMNS)}
+            ) VALUES ({", ".join(["?"] * (len(SOURCE_SIGNAL_COLUMNS) + 1))})
+            """,
+            [SOURCE_SIGNAL_SNAPSHOT_ID] + [replacement[column] for column in SOURCE_SIGNAL_COLUMNS],
+        )
+        connection.execute(
+            """
+            UPDATE source_signal_snapshot_runs
+            SET snapshot_rows_hash = ?
+            WHERE source_signal_snapshot_id = ?
+            """,
+            [rows_hash, SOURCE_SIGNAL_SNAPSHOT_ID],
+        )
+
+    result = generate_run_manifest(config, LIFECYCLE_RUN_ID, persist=False).to_dict()
+
+    assert result["validation_status"] == "FAIL"
+    assert any(
+        "SOURCE_SIGNAL_SNAPSHOT_MISSING_KEYS" in error
+        for error in result["validation_errors"]
+    )
+
+
+def test_phase5b12_manifest_fails_source_signal_snapshot_asof_mismatch(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    _complete_manifest_fixture(config)
+    with connect_database(config.database.path) as connection:
+        connection.execute(
+            """
+            UPDATE source_signal_snapshot_runs
+            SET asof_date = DATE '2024-11-28'
+            WHERE source_signal_snapshot_id = ?
+            """,
+            [SOURCE_SIGNAL_SNAPSHOT_ID],
+        )
+
+    result = generate_run_manifest(config, LIFECYCLE_RUN_ID, persist=False).to_dict()
+
+    assert result["validation_status"] == "FAIL"
+    assert any(
+        "SOURCE_SIGNAL_SNAPSHOT_ASOF_MISMATCH" in error
+        for error in result["validation_errors"]
+    )
 
 
 def test_phase5b8_validate_manifest_catches_execution_rowset_tamper(
@@ -807,7 +992,7 @@ def test_phase5b9_provenance_report_exports_manifest_audit_bundle(
     tmp_path: Path,
 ) -> None:
     config = _config(tmp_path)
-    price_hash, input_hash = _complete_manifest_fixture(config)
+    source_hash, price_hash, input_hash = _complete_manifest_fixture(config)
     manifest = generate_run_manifest(config, LIFECYCLE_RUN_ID).to_dict()
 
     result = generate_provenance_audit_report(
@@ -821,6 +1006,7 @@ def test_phase5b9_provenance_report_exports_manifest_audit_bundle(
     assert result["audit_completeness_status"] == "PASS"
     assert result["run_ids"]["execution_run_id"] == EXECUTION_RUN_ID
     assert result["source_signal_provenance"]["source_signal_config_hash"] == "signal_hash"
+    assert result["source_signal_snapshot"]["validated_rows_hash"] == source_hash
     assert result["price_snapshot"]["validated_rows_hash"] == price_hash
     assert result["lifecycle_input_snapshot"]["validated_rows_hash"] == input_hash
     assert result["execution_decision_rowset"]["row_count"] == 1
@@ -944,7 +1130,7 @@ def test_phase5b9_provenance_report_uses_frozen_snapshot_provenance_after_live_m
     tmp_path: Path,
 ) -> None:
     config = _config(tmp_path)
-    price_hash, input_hash = _complete_manifest_fixture(config)
+    source_hash, price_hash, input_hash = _complete_manifest_fixture(config)
     manifest = generate_run_manifest(config, LIFECYCLE_RUN_ID).to_dict()
     with connect_database(config.database.path) as connection:
         connection.execute(
@@ -1165,7 +1351,7 @@ def test_phase5b11_reproducibility_check_passes_complete_chain(
     tmp_path: Path,
 ) -> None:
     config = _config(tmp_path)
-    price_hash, input_hash = _complete_manifest_fixture(config)
+    source_hash, price_hash, input_hash = _complete_manifest_fixture(config)
     manifest = generate_run_manifest(config, LIFECYCLE_RUN_ID).to_dict()
 
     result = run_reproducibility_check(config, manifest["run_manifest_id"]).to_dict()
