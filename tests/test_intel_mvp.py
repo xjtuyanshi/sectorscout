@@ -27,6 +27,7 @@ from sectorscout.intel.storage import (
 from sectorscout.intel.symbol_normalize import normalize_symbols, related_symbols
 from sectorscout.intel.text_extract import extract_trade_view
 from sectorscout.intel.vision_extract import extract_image_observation
+from sectorscout.intel.workflow import build_research_queue, workflow_summary
 from sectorscout.ui.data import latest_asof_date
 
 
@@ -376,6 +377,7 @@ def test_daily_report_does_not_auto_seed_chandler_fixture(tmp_path: Path) -> Non
     assert raw_count == 0
     assert view_count == 0
     assert "No external views available." in report
+    assert "Research Workflow Queue" in report
 
 
 def test_public_source_registry_loads_only_public_web_sources(tmp_path: Path) -> None:
@@ -579,6 +581,40 @@ def test_review_marks_do_not_aggregate_status(tmp_path: Path) -> None:
             [review_id],
         ).fetchone()
     assert row == ("not_triggered", "Condition never occurred.")
+
+
+def test_research_queue_prioritizes_review_items_and_follow_ups(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    media_id = save_media_bytes(
+        config,
+        b"\x89PNG\r\n\x1a\nqueue",
+        filename="queue.png",
+        raw_item_id=None,
+        source_id="manual_image",
+        media_root=tmp_path / "media",
+    )
+    extract_image_observation(config, media_id)
+    insert_trade_view(
+        config,
+        raw_item_id=None,
+        draft=_draft(symbols=["QQQ"], direction="unknown", requires_review=True, user_confirmed=False),
+    )
+    insert_review_mark(
+        config,
+        object_type="ticker",
+        object_id="QQQ",
+        review_status="needs_more_data",
+        follow_up_date="2026-04-27",
+    )
+    queue = build_research_queue(config, asof_date=date(2026, 4, 28))
+    buckets = [item["bucket"] for item in queue]
+    summary = workflow_summary(config, asof_date=date(2026, 4, 28))
+    assert buckets[0] == "due_follow_up"
+    assert "image_review" in buckets
+    assert "external_view_review" in buckets
+    assert "overlap_needs_review" in buckets
+    assert summary["urgent"] >= 2
+    assert summary["follow_ups_due"] == 1
 
 
 def test_notes_are_saved_without_scoring(tmp_path: Path) -> None:

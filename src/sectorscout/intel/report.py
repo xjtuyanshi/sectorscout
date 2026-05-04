@@ -7,6 +7,7 @@ from sectorscout.config import SectorScoutConfig, config_hash
 from sectorscout.db import connect_database
 from sectorscout.intel.overlap import compute_overlap
 from sectorscout.intel.storage import ensure_intel_tables
+from sectorscout.intel.workflow import build_research_queue, workflow_summary
 from sectorscout.metadata import get_git_commit
 
 
@@ -59,6 +60,8 @@ def generate_intel_daily_report(
 ) -> Path:
     ensure_intel_tables(config)
     overlap = compute_overlap(config)
+    queue = build_research_queue(config, asof_date=asof_date)
+    queue_summary = workflow_summary(config, asof_date=asof_date)
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
     path = output / f"intel_daily_{asof_date.isoformat()}.md"
@@ -117,6 +120,8 @@ def generate_intel_daily_report(
         BOUNDARY_NOTE,
         "",
         "## Internal SectorScout Summary",
+        f"- Research workflow queue: {queue_summary['total']} items",
+        f"- Urgent review items: {queue_summary['urgent']}",
         f"- Themes: {_count(config, 'themes')}",
         f"- Theme score rows: {_count(config, 'theme_scores')}",
         f"- Stock score rows: {_count(config, 'stock_scores')}",
@@ -168,6 +173,22 @@ def generate_intel_daily_report(
             for row in overlap[:20]
         ]
         or ["- No overlap rows available."]
+    )
+    lines.extend(
+        [
+            "",
+            "## Research Workflow Queue",
+            f"- Total queue items: {queue_summary['total']}",
+            f"- Conflicts: {queue_summary['conflicts']}",
+            f"- Follow-ups due: {queue_summary['follow_ups_due']}",
+        ]
+    )
+    lines.extend(
+        [
+            f"- P{row['priority']} {row['bucket']} {row.get('symbol') or ''} page={row['page']}: {row['reason']}"
+            for row in queue[:20]
+        ]
+        or ["- No open workflow items."]
     )
     lines.extend(
         [

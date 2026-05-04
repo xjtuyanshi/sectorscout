@@ -5,6 +5,7 @@ from datetime import date
 import streamlit as st
 
 from sectorscout.intel.capture_inbox import capture_markdown_text, capture_text
+from sectorscout.intel.chandler_seed import seed_chandler_fixture
 from sectorscout.intel.public_web import collect_public_url
 from sectorscout.intel.storage import save_media_bytes
 from sectorscout.intel.vision_extract import extract_image_observation
@@ -14,6 +15,14 @@ from sectorscout.ui.data import UIContext
 def render(ctx: UIContext) -> None:
     st.title("Capture Inbox")
     st.caption("Manual capture is the safe MVP path for private/community screenshots and pasted notes.")
+
+    with st.container(border=True):
+        st.subheader("Seed Fixture")
+        st.write("Load the local Chandler 2026-04-26 fixture when you want a known public external context sample.")
+        if st.button("Load Chandler fixture"):
+            raw_item_id = seed_chandler_fixture(ctx.config, asof_date=ctx.asof_date)
+            st.success(f"Loaded Chandler fixture raw item {raw_item_id}.")
+
     platform = st.selectbox("Platform", ["discord", "x", "website", "newsletter", "youtube", "other"])
     rights_scope = st.selectbox("Rights scope", ["manual_private", "public", "authorized_channel"])
     author = st.text_input("Author / source name")

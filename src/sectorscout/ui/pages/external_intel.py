@@ -21,9 +21,28 @@ def render(ctx: UIContext) -> None:
     if views.empty:
         st.warning("No external views are stored yet. Use Capture Inbox or reload the Chandler seed.")
         return
-    source_filter = st.multiselect("Source", sorted(views["source_id"].dropna().unique().tolist()))
+    col1, col2, col3 = st.columns(3)
+    source_filter = col1.multiselect("Source", sorted(views["source_id"].dropna().unique().tolist()))
+    direction_filter = col2.multiselect("Direction/context", sorted(views["direction"].dropna().unique().tolist()))
+    review_filter = col3.selectbox("Review status", ["all", "needs_review", "confirmed", "not_confirmed"])
+    symbol_query = st.text_input("Symbol filter", placeholder="NQ, QQQ, NVDA...")
     if source_filter:
         views = views[views["source_id"].isin(source_filter)]
+    if direction_filter:
+        views = views[views["direction"].isin(direction_filter)]
+    if review_filter == "needs_review":
+        views = views[views["requires_review"] == True]  # noqa: E712
+    elif review_filter == "confirmed":
+        views = views[views["user_confirmed"] == True]  # noqa: E712
+    elif review_filter == "not_confirmed":
+        views = views[views["user_confirmed"] == False]  # noqa: E712
+    if symbol_query.strip():
+        wanted = symbol_query.strip().upper()
+        views = views[
+            views["canonical_symbols_json"].apply(
+                lambda value: wanted in [str(item).upper() for item in parse_json_list(value)]
+            )
+        ]
     for _, row in views.sort_values("created_at", ascending=False).iterrows():
         title = row.get("source_title") or row.get("source_id")
         with st.container(border=True):
@@ -32,6 +51,7 @@ def render(ctx: UIContext) -> None:
                 f"{row.get('platform') or 'unknown'} | {row.get('author') or 'unknown author'} | "
                 f"rights={row.get('rights_scope')} | clarity={row.get('extraction_confidence')}"
             )
+            st.code(str(row.get("intel_view_id")), language=None)
             st.write(row.get("summary"))
             cols = st.columns(3)
             cols[0].write(f"Tickers: {_display_symbols(row.get('canonical_symbols_json')) or 'none'}")

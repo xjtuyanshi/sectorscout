@@ -15,11 +15,13 @@ from sectorscout.ui.pages import (
     settings,
     ticker_detail,
     vision_review,
+    workflow,
 )
 
 
 PAGES = {
     "Overview": overview.render,
+    "Research Workflow": workflow.render,
     "External Intel": external_intel.render,
     "Capture Inbox": capture_inbox.render,
     "Vision Review": vision_review.render,
@@ -44,7 +46,12 @@ def main() -> None:
         """
         <style>
         .block-container { padding-top: 1.6rem; }
-        section[data-testid="stSidebarNav"] { display: none; }
+        [data-testid="stSidebarNav"],
+        [data-testid="stSidebarNavItems"] {
+            display: none !important;
+            height: 0 !important;
+            overflow: hidden !important;
+        }
         div[data-testid="stMetric"] {
             border: 1px solid rgba(49, 51, 63, .14);
             padding: .75rem .85rem;
