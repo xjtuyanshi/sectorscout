@@ -396,6 +396,42 @@ def _complete_manifest_fixture(config: SectorScoutConfig) -> tuple[str, str]:
     return price_hash, input_hash
 
 
+def _clone_run_manifest(
+    config: SectorScoutConfig,
+    source_manifest_id: str,
+    cloned_manifest_id: str,
+) -> None:
+    with connect_database(config.database.path) as connection:
+        connection.execute(
+            """
+            INSERT INTO run_manifests (
+                run_manifest_id, lifecycle_run_id, execution_run_id,
+                source_signal_snapshot_id, source_signal_config_hash,
+                source_signal_git_commit, source_universe_version,
+                source_theme_version, execution_model, execution_decision_rows,
+                execution_decision_rows_hash, price_snapshot_id,
+                price_snapshot_rows_hash, lifecycle_input_snapshot_id,
+                lifecycle_input_snapshot_rows_hash, schema_version, config_hash,
+                git_commit, data_snapshot_id, validation_status,
+                validation_errors_json, validation_warnings_json, created_at_utc
+            )
+            SELECT
+                ?, lifecycle_run_id, execution_run_id,
+                source_signal_snapshot_id, source_signal_config_hash,
+                source_signal_git_commit, source_universe_version,
+                source_theme_version, execution_model, execution_decision_rows,
+                execution_decision_rows_hash, price_snapshot_id,
+                price_snapshot_rows_hash, lifecycle_input_snapshot_id,
+                lifecycle_input_snapshot_rows_hash, schema_version, config_hash,
+                git_commit, data_snapshot_id, validation_status,
+                validation_errors_json, validation_warnings_json, created_at_utc
+            FROM run_manifests
+            WHERE run_manifest_id = ?
+            """,
+            [cloned_manifest_id, source_manifest_id],
+        )
+
+
 def test_phase5b8_run_manifest_persists_complete_provenance(tmp_path: Path) -> None:
     config = _config(tmp_path)
     price_hash, input_hash = _complete_manifest_fixture(config)
@@ -1220,6 +1256,61 @@ def test_phase5b11_reproducibility_check_fails_audit_hash_drift(
         "AUDIT_REPORT_PAYLOAD_HASH_MISMATCH" in error
         for error in result["audit_report_validation_errors"]
     )
+
+
+def test_phase5b11_reproducibility_check_rejects_mismatched_audit_report(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    _complete_manifest_fixture(config)
+    manifest_a = generate_run_manifest(config, LIFECYCLE_RUN_ID).to_dict()
+    manifest_b_id = "cloned-manifest-b"
+    _clone_run_manifest(config, manifest_a["run_manifest_id"], manifest_b_id)
+    report_b = generate_provenance_audit_report(config, manifest_b_id).to_dict()
+
+    result = run_reproducibility_check(
+        config,
+        manifest_a["run_manifest_id"],
+        audit_report_id=report_b["audit_report_id"],
+    ).to_dict()
+
+    assert result["validation_status"] == "FAIL"
+    assert "AUDIT_REPORT_MANIFEST_MISMATCH" in result["failure_reasons"]
+    assert (
+        "AUDIT_REPORT_HASH_DOES_NOT_MATCH_CURRENT_MANIFEST_AUDIT"
+        in result["failure_reasons"]
+    )
+
+
+def test_phase5b11_reproducibility_check_cli_rejects_mismatched_audit_report(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    _complete_manifest_fixture(config)
+    manifest_a = generate_run_manifest(config, LIFECYCLE_RUN_ID).to_dict()
+    manifest_b_id = "cloned-manifest-b"
+    _clone_run_manifest(config, manifest_a["run_manifest_id"], manifest_b_id)
+    report_b = generate_provenance_audit_report(config, manifest_b_id).to_dict()
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(f"database:\n  path: {config.database.path}\n", encoding="utf-8")
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "reproducibility-check",
+            "--run-manifest-id",
+            manifest_a["run_manifest_id"],
+            "--audit-report-id",
+            report_b["audit_report_id"],
+            "--config",
+            str(config_path),
+        ],
+    )
+    payload = json.loads(result.stdout)
+
+    assert result.exit_code == 1
+    assert payload["validation_status"] == "FAIL"
+    assert "AUDIT_REPORT_MANIFEST_MISMATCH" in payload["failure_reasons"]
 
 
 def test_phase5b11_reproducibility_check_cli_has_no_formal_metric_terms(

@@ -139,7 +139,9 @@ Current limitations:
   for reproducibility checks, not strategy evaluation.
 - Phase 5B11 reproducibility checks orchestrate existing provenance validations
   only. They do not create new trading/result calculations and do not compare
-  outcomes.
+  outcomes. When `--audit-report-id` is supplied, it must belong to the same
+  `run_manifest_id` and match the freshly generated strict audit hash for that
+  manifest.
 
 ## Quick Start
 

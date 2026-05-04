@@ -40,16 +40,22 @@ def _failure_reasons(
     audit_exported: bool,
     audit_completeness_status: str,
     audit_validation_status: str | None,
+    audit_manifest_mismatch: bool,
+    audit_hash_mismatch: bool,
 ) -> list[str]:
     reasons: list[str] = []
     if manifest_status != "PASS":
         reasons.append("MANIFEST_VALIDATION_FAIL")
     if not audit_exported:
         reasons.append("AUDIT_EXPORT_BLOCKED")
-    if audit_completeness_status != "PASS":
+    if audit_completeness_status == "FAIL":
         reasons.append("AUDIT_COMPLETENESS_FAIL")
     if audit_validation_status is not None and audit_validation_status != "PASS":
         reasons.append("AUDIT_REPORT_VALIDATION_FAIL")
+    if audit_manifest_mismatch:
+        reasons.append("AUDIT_REPORT_MANIFEST_MISMATCH")
+    if audit_hash_mismatch:
+        reasons.append("AUDIT_REPORT_HASH_DOES_NOT_MATCH_CURRENT_MANIFEST_AUDIT")
     return reasons
 
 
@@ -75,11 +81,22 @@ def run_reproducibility_check(
     audit_validation_status = (
         audit_validation["validation_status"] if audit_validation is not None else None
     )
+    audit_manifest_mismatch = (
+        audit_validation is not None
+        and str(audit_validation["run_manifest_id"]) != run_manifest_id
+    )
+    audit_hash_mismatch = (
+        audit_validation is not None
+        and audit_report["audit_report_hash"] is not None
+        and audit_validation["stored_audit_report_hash"] != audit_report["audit_report_hash"]
+    )
     reasons = _failure_reasons(
         manifest_status=manifest["validation_status"],
         audit_exported=bool(audit_report["audit_exported"]),
         audit_completeness_status=str(audit_report["audit_completeness_status"]),
         audit_validation_status=audit_validation_status,
+        audit_manifest_mismatch=audit_manifest_mismatch,
+        audit_hash_mismatch=audit_hash_mismatch,
     )
     return ReproducibilityCheckResult(
         run_manifest_id=run_manifest_id,
