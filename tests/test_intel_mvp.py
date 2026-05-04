@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ipaddress
 from datetime import date
 from pathlib import Path
 
@@ -15,7 +16,7 @@ from sectorscout.intel.models import TradeViewDraft
 from sectorscout.intel.overlap import classify_overlap, compute_overlap
 from sectorscout.intel.public_sources import collect_public_sources, load_public_sources
 from sectorscout.intel.public_web import _HttpFetchResult, collect_public_url
-from sectorscout.intel.report import generate_intel_daily_report
+from sectorscout.intel.report import build_report_inclusion_summary, generate_intel_daily_report
 from sectorscout.intel.storage import (
     ensure_intel_tables,
     insert_note,
@@ -30,6 +31,7 @@ from sectorscout.intel.text_extract import extract_trade_view
 from sectorscout.intel.vision_extract import extract_image_observation
 from sectorscout.intel.workflow import build_research_queue, workflow_summary
 from sectorscout.ui.data import latest_asof_date
+from sectorscout.ui.pages.capture_inbox import _validate_upload_file
 from sectorscout.ui.pages.notes_review import _valid_follow_up as notes_valid_follow_up
 from sectorscout.ui.pages.workflow import _valid_follow_up as workflow_valid_follow_up
 
@@ -372,6 +374,22 @@ def test_seed_chandler_fixture_deduplicates_trade_view(tmp_path: Path) -> None:
     assert view_count == 1
 
 
+def test_seed_chandler_fixture_allows_separate_asof_views(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    seed_chandler_fixture(config, asof_date=date(2026, 4, 26))
+    seed_chandler_fixture(config, asof_date=date(2024, 11, 29))
+    with connect_database(config.database.path) as connection:
+        raw_count = connection.execute("SELECT COUNT(*) FROM intel_raw_items").fetchone()[0]
+        asof_dates = [
+            str(row[0])
+            for row in connection.execute(
+                "SELECT asof_date FROM intel_trade_views ORDER BY asof_date"
+            ).fetchall()
+        ]
+    assert raw_count == 1
+    assert asof_dates == ["2024-11-29", "2026-04-26"]
+
+
 def test_latest_asof_date_ignores_intel_overlay_dates(tmp_path: Path) -> None:
     config = _config(tmp_path)
     insert_trade_view(
@@ -412,6 +430,11 @@ def test_daily_report_filters_external_views_by_asof_date(tmp_path: Path) -> Non
     assert "Included same-date external context." in report
     assert "Excluded next-date external context." not in report
     assert "- Extracted views: 1" in report
+    assert "## Report Inclusion Summary" in report
+    assert "- Other-date external views excluded: 1" in report
+    summary = build_report_inclusion_summary(config, date(2026, 4, 27))
+    assert summary["included"]["external_views"] == 1
+    assert summary["excluded"]["future_external_views"] == 1
 
 
 def test_demo_init_creates_nonblank_local_state(tmp_path: Path) -> None:
@@ -423,6 +446,14 @@ def test_demo_init_creates_nonblank_local_state(tmp_path: Path) -> None:
     assert result.row_counts["intel_trade_views"] > 0
     readiness = demo_readiness(config, reports_dir=tmp_path / "reports")
     assert all(item["ok"] for item in readiness)
+
+
+def test_demo_init_refuses_to_reset_non_demo_database(tmp_path: Path) -> None:
+    db_path = tmp_path / "sectorscout.duckdb"
+    db_path.write_bytes(b"existing")
+    config = SectorScoutConfig.model_validate({"database": {"path": db_path}})
+    with pytest.raises(ValueError, match="Refusing to reset non-demo database path"):
+        run_demo_init(config, reports_dir=tmp_path / "reports", reset=True)
 
 
 def test_public_source_registry_loads_only_public_web_sources(tmp_path: Path) -> None:
@@ -470,6 +501,10 @@ def test_public_url_collection_skips_private_and_credentialed_urls(tmp_path: Pat
 
 def test_public_url_collection_skips_private_redirect(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     config = _config(tmp_path)
+    monkeypatch.setattr(
+        "sectorscout.intel.public_web._resolve_host_ips",
+        lambda _host: [ipaddress.ip_address("93.184.216.34")],
+    )
 
     def fake_fetch(_url: str) -> tuple[str, str, str]:
         return (
@@ -490,6 +525,10 @@ def test_public_url_collection_checks_redirect_before_requesting_private_url(
 ) -> None:
     config = _config(tmp_path)
     requested_urls: list[str] = []
+    monkeypatch.setattr(
+        "sectorscout.intel.public_web._resolve_host_ips",
+        lambda _host: [ipaddress.ip_address("93.184.216.34")],
+    )
 
     def fake_open(url: str) -> _HttpFetchResult:
         requested_urls.append(url)
@@ -510,9 +549,35 @@ def test_public_url_collection_checks_redirect_before_requesting_private_url(
     assert requested_urls == ["https://example.com/redirect"]
 
 
+def test_public_url_collection_checks_dns_resolution_before_request(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _config(tmp_path)
+    requested_urls: list[str] = []
+    monkeypatch.setattr(
+        "sectorscout.intel.public_web._resolve_host_ips",
+        lambda _host: [ipaddress.ip_address("127.0.0.1")],
+    )
+
+    def fake_open(url: str) -> _HttpFetchResult:
+        requested_urls.append(url)
+        raise AssertionError("resolved private host must not be requested")
+
+    monkeypatch.setattr("sectorscout.intel.public_web._open_url_once", fake_open)
+    result = collect_public_url(config, "https://safe-looking.example/post")
+    assert result.status == "SKIPPED"
+    assert "non-public IP" in str(result.reason)
+    assert requested_urls == []
+
+
 def test_public_url_collection_follows_safe_redirect(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     config = _config(tmp_path)
     requested_urls: list[str] = []
+    monkeypatch.setattr(
+        "sectorscout.intel.public_web._resolve_host_ips",
+        lambda _host: [ipaddress.ip_address("93.184.216.34")],
+    )
 
     def fake_open(url: str) -> _HttpFetchResult:
         requested_urls.append(url)
@@ -539,6 +604,10 @@ def test_public_url_collection_follows_safe_redirect(tmp_path: Path, monkeypatch
 
 def test_public_source_collection_extracts_rule_view(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     config = _config(tmp_path)
+    monkeypatch.setattr(
+        "sectorscout.intel.public_web._resolve_host_ips",
+        lambda _host: [ipaddress.ip_address("93.184.216.34")],
+    )
     sources_file = tmp_path / "public_sources.yaml"
     sources_file.write_text(
         """
@@ -587,6 +656,57 @@ def test_overlap_labels() -> None:
     assert classify_overlap(has_internal=True, external_direction="neutral") == "NEEDS_REVIEW"
     assert classify_overlap(has_internal=False, external_direction="conditional") == "EXTERNAL_ONLY"
     assert classify_overlap(has_internal=True, external_direction=None, requires_review=True) == "NEEDS_REVIEW"
+
+
+def test_overlap_and_workflow_respect_asof_internal_and_external(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    config = _config(tmp_path)
+    with connect_database(config.database.path) as connection:
+        connection.execute(
+            """
+            INSERT INTO stock_scores (
+                asof_date, symbol, theme_id, stock_opportunity_score, theme_score,
+                rs_percentile, fundamental_acceleration, setup_quality,
+                volume_accumulation, risk_reward, liquidity, component_coverage_pct,
+                state, signal_generated_at_utc, config_hash, git_commit,
+                data_snapshot_id, universe_version, theme_version
+            ) VALUES
+                ('2026-04-27', 'QQQ', 'indexes', 80, 75, 90, 0, 0, 0, 0, 1, 1,
+                 'watch', current_timestamp, 'cfg', 'git', 'snap', 'u', 't'),
+                ('2026-04-28', 'NVDA', 'ai', 95, 90, 95, 0, 0, 0, 0, 1, 1,
+                 'future_watch', current_timestamp, 'cfg', 'git', 'snap', 'u', 't')
+            """
+        )
+    insert_trade_view(
+        config,
+        raw_item_id=None,
+        draft=_draft(
+            symbols=["QQQ"],
+            direction="bullish",
+            asof_date="2026-04-27",
+            requires_review=False,
+            user_confirmed=True,
+        ),
+    )
+    insert_trade_view(
+        config,
+        raw_item_id=None,
+        draft=_draft(
+            symbols=["NVDA"],
+            direction="bullish",
+            asof_date="2026-04-28",
+            requires_review=True,
+            user_confirmed=False,
+        ),
+    )
+    rows = {row["symbol"]: row for row in compute_overlap(config, asof_date=date(2026, 4, 27))}
+    assert rows["QQQ"]["overlap_label"] == "CONFIRMED"
+    assert "NVDA" not in rows
+    queue = build_research_queue(config, asof_date=date(2026, 4, 27))
+    assert not any(item.get("symbol") and "NVDA" in str(item["symbol"]) for item in queue)
 
 
 def test_unreviewed_image_view_keeps_overlap_needs_review_with_confirmed_peer(tmp_path: Path) -> None:
@@ -695,7 +815,13 @@ def test_research_queue_prioritizes_review_items_and_follow_ups(tmp_path: Path) 
     insert_trade_view(
         config,
         raw_item_id=None,
-        draft=_draft(symbols=["QQQ"], direction="unknown", requires_review=True, user_confirmed=False),
+        draft=_draft(
+            symbols=["QQQ"],
+            direction="unknown",
+            asof_date="2026-04-28",
+            requires_review=True,
+            user_confirmed=False,
+        ),
     )
     insert_review_mark(
         config,
@@ -780,6 +906,15 @@ def test_follow_up_date_validation_helpers() -> None:
     assert workflow_valid_follow_up("05/05/2026") == (False, None)
     assert notes_valid_follow_up("2026-05-05") == (True, "2026-05-05")
     assert notes_valid_follow_up("not-a-date") == (False, None)
+
+
+def test_capture_upload_validation_helper() -> None:
+    assert _validate_upload_file("note.md", b"# NQ\n") is None
+    assert _validate_upload_file("note.md", b"\xff\xfe") == "Markdown uploads must be UTF-8 encoded."
+    assert "Unsupported upload type" in str(_validate_upload_file("chart.gif", b"GIF89a"))
+    assert _validate_upload_file("chart.png", b"\x89PNG\r\n\x1a\npayload") is None
+    assert "does not match" in str(_validate_upload_file("chart.jpg", b"\x89PNG\r\n\x1a\npayload"))
+    assert "readable PNG" in str(_validate_upload_file("chart.webp", b"not-webp"))
 
 
 def test_forbidden_automation_modes_are_not_configured() -> None:

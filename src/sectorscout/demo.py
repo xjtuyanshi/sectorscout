@@ -65,6 +65,11 @@ def _row_count(config: SectorScoutConfig, table: str) -> int:
         return int(connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
 
 
+def _is_demo_database_path(path: Path) -> bool:
+    lowered = path.name.lower()
+    return "demo" in lowered or "fixture" in lowered
+
+
 def demo_readiness(
     config: SectorScoutConfig,
     *,
@@ -102,8 +107,14 @@ def run_demo_init(
     fixtures_dir: str | Path | None = None,
     reports_dir: str | Path = "data/intel/reports",
     reset: bool = False,
+    force_reset: bool = False,
 ) -> DemoInitResult:
     db_path = Path(config.database.path)
+    if reset and db_path.exists() and not force_reset and not _is_demo_database_path(db_path):
+        raise ValueError(
+            f"Refusing to reset non-demo database path {db_path}. "
+            "Use --force-reset only when you intentionally want to delete this configured DuckDB file."
+        )
     if reset:
         for path in [db_path, db_path.with_suffix(db_path.suffix + ".wal")]:
             if path.exists():

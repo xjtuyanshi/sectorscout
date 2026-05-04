@@ -5,10 +5,10 @@ from datetime import date
 import pandas as pd
 import streamlit as st
 
-from sectorscout.intel.report import generate_intel_daily_report
 from sectorscout.intel.storage import insert_review_mark
 from sectorscout.intel.workflow import build_research_queue, workflow_summary
 from sectorscout.ui.data import UIContext
+from sectorscout.ui.report_panel import render_daily_report_panel
 
 
 def _valid_follow_up(value: str) -> tuple[bool, str | None]:
@@ -91,11 +91,7 @@ def render(ctx: UIContext) -> None:
                 st.success("Saved review mark. Future follow-up dates defer this item until due.")
                 st.rerun()
 
-    st.subheader("Daily Report")
-    report_date = ctx.asof_date or date.today()
-    if st.button(f"Generate daily report for {report_date.isoformat()}"):
-        path = generate_intel_daily_report(ctx.config, report_date)
-        st.success(f"Generated {path}")
+    render_daily_report_panel(ctx, key_prefix="workflow")
 
     st.subheader("Workflow Notes")
     st.write(

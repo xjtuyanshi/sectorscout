@@ -39,7 +39,8 @@ def seed_chandler_fixture(config: SectorScoutConfig, *, asof_date: date | None =
         collection_method="fixture_seed",
         metadata={"fixture": str(CHANDLER_FIXTURE_PATH)},
     )
-    if not trade_view_exists(config, raw_item_id, "rule_text_v1"):
+    seed_asof_date = asof_date or date(2026, 4, 26)
+    if not trade_view_exists(config, raw_item_id, "rule_text_v1", asof_date=seed_asof_date):
         draft = extract_trade_view(
             raw,
             source_id="chandler_2026_04_26",
@@ -48,7 +49,7 @@ def seed_chandler_fixture(config: SectorScoutConfig, *, asof_date: date | None =
             author="Chandler Trades",
             platform="website",
             url=CHANDLER_URL,
-            asof_date=asof_date or date(2026, 4, 26),
+            asof_date=seed_asof_date,
             published_at="2026-04-26T00:00:00+00:00",
             rights_scope="public",
             requires_review=False,

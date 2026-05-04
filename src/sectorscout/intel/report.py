@@ -48,6 +48,13 @@ def _count(config: SectorScoutConfig, table: str, *, asof_date: date | None = No
         return int(connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
 
 
+def _count_where(config: SectorScoutConfig, table: str, where_clause: str, params: list | None = None) -> int:
+    if not _table_exists(config, table):
+        return 0
+    with connect_database(config.database.path) as connection:
+        return int(connection.execute(f"SELECT COUNT(*) FROM {table} WHERE {where_clause}", params or []).fetchone()[0])
+
+
 def _top_rows(
     config: SectorScoutConfig,
     table: str,
@@ -76,6 +83,82 @@ def _query_rows(config: SectorScoutConfig, sql: str, limit: int = 10, params: li
         return connection.execute(f"{sql} LIMIT {limit}", params or []).fetchall()
 
 
+def build_report_inclusion_summary(config: SectorScoutConfig, asof_date: date) -> dict[str, object]:
+    ensure_intel_tables(config)
+    queue_summary = workflow_summary(config, asof_date=asof_date)
+    included = {
+        "theme_score_rows": _count(config, "theme_scores", asof_date=asof_date),
+        "stock_score_rows": _count(config, "stock_scores", asof_date=asof_date),
+        "setup_candidate_rows": _count(config, "signals", asof_date=asof_date),
+        "execution_qa_rows": _count(config, "execution_decisions", asof_date=asof_date),
+        "lifecycle_qa_rows": _count(config, "lifecycle_qa", asof_date=asof_date),
+        "raw_captured_items": _count(config, "intel_raw_items", asof_date=asof_date),
+        "external_views": _count(config, "intel_trade_views", asof_date=asof_date),
+        "image_observations": _count(config, "intel_image_observations"),
+        "manual_notes": _count(config, "intel_notes", asof_date=asof_date),
+        "overlap_rows": len(compute_overlap(config, asof_date=asof_date)),
+        "workflow_queue_items": queue_summary["total"],
+    }
+    needs_review = {
+        "urgent_review_items": queue_summary["urgent"],
+        "conflicts": queue_summary["conflicts"],
+        "follow_ups_due": queue_summary["follow_ups_due"],
+        "unreviewed_image_drafts": _count_where(
+            config,
+            "intel_trade_views",
+            """
+            media_id IS NOT NULL
+            AND requires_review = true
+            AND user_confirmed = false
+            AND superseded_by_view_id IS NULL
+            """,
+        ),
+        "pending_image_observations": _count_where(
+            config,
+            "intel_image_observations",
+            "requires_review = true",
+        ),
+    }
+    excluded = {
+        "other_date_external_views": _count_where(
+            config,
+            "intel_trade_views",
+            "(asof_date IS NULL OR asof_date <> ?) AND superseded_by_view_id IS NULL",
+            [asof_date],
+        ),
+        "future_external_views": _count_where(
+            config,
+            "intel_trade_views",
+            "asof_date > ? AND superseded_by_view_id IS NULL",
+            [asof_date],
+        ),
+        "superseded_external_views": _count_where(
+            config,
+            "intel_trade_views",
+            "superseded_by_view_id IS NOT NULL",
+        ),
+        "expired_review_marks": _count_where(
+            config,
+            "intel_review_marks",
+            "review_status = 'expired'",
+        ),
+    }
+    warnings: list[str] = []
+    if included["external_views"] == 0:
+        warnings.append("No same-date external views are included.")
+    if needs_review["unreviewed_image_drafts"] > 0:
+        warnings.append("Unreviewed image-derived drafts are present and should be confirmed before high-confidence overlap review.")
+    if excluded["future_external_views"] > 0:
+        warnings.append("Future-dated external views were excluded from this report.")
+    return {
+        "asof_date": asof_date.isoformat(),
+        "included": included,
+        "needs_review": needs_review,
+        "excluded": excluded,
+        "warnings": warnings,
+    }
+
+
 def generate_intel_daily_report(
     config: SectorScoutConfig,
     asof_date: date,
@@ -83,6 +166,7 @@ def generate_intel_daily_report(
     output_dir: str | Path = "data/intel/reports",
 ) -> Path:
     ensure_intel_tables(config)
+    inclusion_summary = build_report_inclusion_summary(config, asof_date)
     overlap = compute_overlap(config, asof_date=asof_date)
     queue = build_research_queue(config, asof_date=asof_date)
     queue_summary = workflow_summary(config, asof_date=asof_date)
@@ -154,6 +238,16 @@ def generate_intel_daily_report(
         "",
         "## System Boundary",
         BOUNDARY_NOTE,
+        "",
+        "## Report Inclusion Summary",
+        f"- As-of date: {inclusion_summary['asof_date']}",
+        f"- Included external views: {inclusion_summary['included']['external_views']}",
+        f"- Included workflow queue items: {inclusion_summary['included']['workflow_queue_items']}",
+        f"- Needs-review image drafts: {inclusion_summary['needs_review']['unreviewed_image_drafts']}",
+        "- Image observations are shown as a global review backlog unless linked to same-date text capture.",
+        f"- Other-date external views excluded: {inclusion_summary['excluded']['other_date_external_views']}",
+        f"- Superseded external views excluded: {inclusion_summary['excluded']['superseded_external_views']}",
+        "- Warnings: " + ("; ".join(inclusion_summary["warnings"]) if inclusion_summary["warnings"] else "none"),
         "",
         "## Internal SectorScout Summary",
         f"- Research workflow queue: {queue_summary['total']} items",

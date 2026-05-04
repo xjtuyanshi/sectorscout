@@ -116,17 +116,21 @@ def _external_view_items(
     latest_marks: dict[tuple[str, str], dict[str, Any]],
     asof_date: date | None,
 ) -> list[ResearchQueueItem]:
+    asof_filter = "AND (asof_date IS NULL OR asof_date <= ?)" if asof_date is not None else ""
+    params = [asof_date] if asof_date is not None else []
     rows = _safe_df(
         config,
-        """
+        f"""
         SELECT intel_view_id, source_id, source_title, canonical_symbols_json,
                direction, timeframe, summary
         FROM intel_trade_views
         WHERE requires_review = true
           AND user_confirmed = false
           AND superseded_by_view_id IS NULL
+          {asof_filter}
         ORDER BY created_at DESC
         """,
+        params,
     )
     items: list[ResearchQueueItem] = []
     for _, row in rows.iterrows():
@@ -210,7 +214,7 @@ def _overlap_items(
     asof_date: date | None,
 ) -> list[ResearchQueueItem]:
     items: list[ResearchQueueItem] = []
-    for row in compute_overlap(config):
+    for row in compute_overlap(config, asof_date=asof_date):
         object_id = str(row.get("symbol") or "")
         if _is_deferred_or_dismissed(
             latest_marks,

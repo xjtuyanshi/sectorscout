@@ -30,6 +30,7 @@ def render(ctx: UIContext) -> None:
         media_row = media[media["media_id"] == obs["media_id"]] if not media.empty else pd.DataFrame()
         with st.container(border=True):
             st.subheader(f"Observation {obs['observation_id']}")
+            st.caption("Unreviewed extraction draft. Confirm or edit before using it as overlap context.")
             if not media_row.empty:
                 path = Path(str(media_row.iloc[0]["local_path"]))
                 if path.exists():

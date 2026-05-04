@@ -332,17 +332,29 @@ def insert_trade_view(
     return intel_view_id
 
 
-def trade_view_exists(config: SectorScoutConfig, raw_item_id: str, extraction_method: str) -> bool:
+def trade_view_exists(
+    config: SectorScoutConfig,
+    raw_item_id: str,
+    extraction_method: str,
+    *,
+    asof_date: str | date | None = None,
+) -> bool:
     ensure_intel_tables(config)
+    params: list[object] = [raw_item_id, extraction_method]
+    asof_filter = ""
+    if asof_date is not None:
+        asof_filter = "AND asof_date = ?"
+        params.append(_parse_date(asof_date))
     with connect_database(config.database.path) as connection:
         row = connection.execute(
-            """
+            f"""
             SELECT intel_view_id
             FROM intel_trade_views
             WHERE raw_item_id = ? AND extraction_method = ?
+              {asof_filter}
             LIMIT 1
             """,
-            [raw_item_id, extraction_method],
+            params,
         ).fetchone()
     return row is not None
 

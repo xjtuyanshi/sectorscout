@@ -71,13 +71,18 @@ def _demo_init_command(
     date_: str,
     config: Path,
     reset: bool,
+    force_reset: bool,
     launch_ui: bool,
     port: int,
 ) -> None:
     loaded = _load(config)
     parsed_date = _parse_iso_date(date_)
     assert parsed_date is not None
-    result = run_demo_init(loaded, asof_date=parsed_date, reset=reset)
+    try:
+        result = run_demo_init(loaded, asof_date=parsed_date, reset=reset, force_reset=force_reset)
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from None
     typer.echo(json.dumps(result.to_dict(), indent=2, sort_keys=True))
     if launch_ui:
         _launch_streamlit(config, port)
@@ -134,24 +139,26 @@ def init_db(config: Path = typer.Option(Path("config.yaml"), "--config")) -> Non
 def demo_init(
     date_: str = typer.Option(DEMO_ASOF_DATE.isoformat(), "--date"),
     reset: bool = typer.Option(False, "--reset/--no-reset"),
+    force_reset: bool = typer.Option(False, "--force-reset/--no-force-reset"),
     launch_ui: bool = typer.Option(False, "--launch-ui/--no-launch-ui"),
     port: int = typer.Option(8501, "--port"),
     config: Path = typer.Option(Path("config.yaml"), "--config"),
 ) -> None:
     """Initialize fixture data, seed sample intel, and generate the demo report."""
-    _demo_init_command(date_=date_, config=config, reset=reset, launch_ui=launch_ui, port=port)
+    _demo_init_command(date_=date_, config=config, reset=reset, force_reset=force_reset, launch_ui=launch_ui, port=port)
 
 
 @app.command("quickstart")
 def quickstart(
     date_: str = typer.Option(DEMO_ASOF_DATE.isoformat(), "--date"),
     reset: bool = typer.Option(False, "--reset/--no-reset"),
+    force_reset: bool = typer.Option(False, "--force-reset/--no-force-reset"),
     launch_ui: bool = typer.Option(False, "--launch-ui/--no-launch-ui"),
     port: int = typer.Option(8501, "--port"),
     config: Path = typer.Option(Path("config.yaml"), "--config"),
 ) -> None:
     """One-command local demo setup for a non-blank dashboard."""
-    _demo_init_command(date_=date_, config=config, reset=reset, launch_ui=launch_ui, port=port)
+    _demo_init_command(date_=date_, config=config, reset=reset, force_reset=force_reset, launch_ui=launch_ui, port=port)
 
 
 @app.command("demo-status")

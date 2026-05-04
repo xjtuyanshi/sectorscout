@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ipaddress
 import re
+import socket
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -103,10 +104,35 @@ def _is_public_http_url(url: str) -> tuple[bool, str | None]:
     try:
         address = ipaddress.ip_address(lowered)
     except ValueError:
+        resolved_ips = _resolve_host_ips(lowered)
+        if not resolved_ips:
+            return False, f"Could not resolve host: {host}"
+        blocked = [str(address) for address in resolved_ips if not address.is_global]
+        if blocked:
+            return False, f"Resolved host to non-public IP: {blocked[0]}"
         return True, None
     if not address.is_global:
         return False, "Local/private IP addresses are not supported."
     return True, None
+
+
+def _resolve_host_ips(hostname: str) -> list[ipaddress._BaseAddress]:
+    try:
+        results = socket.getaddrinfo(hostname, None, type=socket.SOCK_STREAM)
+    except socket.gaierror:
+        return []
+    addresses: list[ipaddress._BaseAddress] = []
+    seen: set[str] = set()
+    for result in results:
+        raw_address = result[4][0]
+        if raw_address in seen:
+            continue
+        try:
+            addresses.append(ipaddress.ip_address(raw_address))
+        except ValueError:
+            continue
+        seen.add(raw_address)
+    return addresses
 
 
 def _open_url_once(url: str) -> _HttpFetchResult:
@@ -219,7 +245,7 @@ def collect_public_url(
             **(metadata or {}),
         },
     )
-    if not trade_view_exists(config, raw_item_id, "rule_text_v1"):
+    if not trade_view_exists(config, raw_item_id, "rule_text_v1", asof_date=asof_date):
         draft = extract_trade_view(
             raw_text,
             source_id=source_id or parsed.netloc.replace(".", "_"),

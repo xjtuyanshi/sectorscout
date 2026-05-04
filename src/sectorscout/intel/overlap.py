@@ -67,55 +67,74 @@ def _safe_df(config: SectorScoutConfig, sql: str, params: list | None = None) ->
         return connection.execute(sql, params or []).fetchdf()
 
 
-def load_internal_symbols(config: SectorScoutConfig) -> pd.DataFrame:
+def load_internal_symbols(config: SectorScoutConfig, *, asof_date: Any | None = None) -> pd.DataFrame:
     frames: list[pd.DataFrame] = []
     if _table_exists(config, "stock_scores"):
+        where = "WHERE asof_date <= ?" if asof_date is not None else ""
+        params = [asof_date] if asof_date is not None else []
         frames.append(
             _safe_df(
                 config,
-                """
+                f"""
                 SELECT symbol, 'stock_score' AS source, state AS internal_status,
                        stock_opportunity_score AS internal_score, theme_id AS theme,
                        NULL AS setup_status
                 FROM stock_scores
+                {where}
                 QUALIFY row_number() OVER (PARTITION BY symbol ORDER BY asof_date DESC, stock_opportunity_score DESC) = 1
                 """,
+                params,
             )
         )
     if _table_exists(config, "signals"):
+        where = "WHERE asof_date <= ?" if asof_date is not None else ""
+        params = [asof_date] if asof_date is not None else []
         frames.append(
             _safe_df(
                 config,
-                """
+                f"""
                 SELECT symbol, 'setup_candidate' AS source, action_category AS internal_status,
                        NULL AS internal_score, theme_id AS theme, state AS setup_status
                 FROM signals
+                {where}
                 QUALIFY row_number() OVER (PARTITION BY symbol, setup_type ORDER BY asof_date DESC) = 1
                 """,
+                params,
             )
         )
     if _table_exists(config, "theme_members"):
+        where = ""
+        params = []
+        if asof_date is not None:
+            where = "WHERE valid_from <= ? AND (valid_to IS NULL OR valid_to >= ?)"
+            params = [asof_date, asof_date]
         frames.append(
             _safe_df(
                 config,
-                """
+                f"""
                 SELECT symbol, 'theme_member' AS source, 'theme_member' AS internal_status,
                        NULL AS internal_score, theme_id AS theme, NULL AS setup_status
                 FROM theme_members
+                {where}
                 QUALIFY row_number() OVER (PARTITION BY symbol, theme_id ORDER BY valid_from DESC) = 1
                 """,
+                params,
             )
         )
     if _table_exists(config, "trade_ledger"):
+        where = "WHERE asof_date <= ?" if asof_date is not None else ""
+        params = [asof_date] if asof_date is not None else []
         frames.append(
             _safe_df(
                 config,
-                """
+                f"""
                 SELECT symbol, 'trade_ledger_qa' AS source, qa_status AS internal_status,
                        NULL AS internal_score, theme_id AS theme, setup_type AS setup_status
                 FROM trade_ledger
+                {where}
                 QUALIFY row_number() OVER (PARTITION BY symbol, theme_id, setup_type ORDER BY entry_date DESC) = 1
                 """,
+                params,
             )
         )
     seed = Path("data/intel/sectorscout_watchlist_seed.csv")
@@ -204,7 +223,7 @@ def classify_overlap(
 
 
 def compute_overlap(config: SectorScoutConfig, *, asof_date: Any | None = None) -> list[dict[str, Any]]:
-    internal = load_internal_symbols(config)
+    internal = load_internal_symbols(config, asof_date=asof_date)
     external_rows = _external_symbol_rows(load_external_views(config, asof_date=asof_date))
     internal_by_symbol: dict[str, dict] = {}
     for _, row in internal.iterrows():

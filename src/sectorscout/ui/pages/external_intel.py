@@ -14,6 +14,16 @@ def _display_symbols(value: object) -> str:
     return ", ".join(str(item) for item in parse_json_list(value))
 
 
+def _review_label(row: pd.Series) -> str:
+    if bool(row.get("requires_review")) and row.get("media_id") and pd.notna(row.get("media_id")):
+        return "Unreviewed extraction draft"
+    if bool(row.get("requires_review")):
+        return "Needs manual review"
+    if bool(row.get("user_confirmed")):
+        return "User-confirmed overlay context"
+    return "Stored overlay context"
+
+
 def render(ctx: UIContext) -> None:
     st.title("External Intel")
     st.caption("External context is an overlay only. It does not change SectorScout base scores.")
@@ -49,7 +59,8 @@ def render(ctx: UIContext) -> None:
             st.subheader(str(title))
             st.caption(
                 f"{row.get('platform') or 'unknown'} | {row.get('author') or 'unknown author'} | "
-                f"rights={row.get('rights_scope')} | clarity={row.get('extraction_confidence')}"
+                f"rights={row.get('rights_scope')} | clarity={row.get('extraction_confidence')} | "
+                f"status={_review_label(row)}"
             )
             st.code(str(row.get("intel_view_id")), language=None)
             st.write(row.get("summary"))
@@ -70,7 +81,7 @@ def render(ctx: UIContext) -> None:
                 st.write(row.get("source_excerpt"))
             confirmed = bool(row.get("user_confirmed"))
             new_value = st.checkbox(
-                "User confirmed for overlay review",
+                "Confirm for overlay review",
                 value=confirmed,
                 key=f"confirm_{row.get('intel_view_id')}",
             )

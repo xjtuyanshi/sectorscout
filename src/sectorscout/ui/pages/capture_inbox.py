@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from pathlib import Path
 
 import streamlit as st
 
@@ -13,6 +13,38 @@ from sectorscout.ui.data import UIContext
 
 
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+ALLOWED_UPLOAD_SUFFIXES = {".md", ".png", ".jpg", ".jpeg", ".webp"}
+
+
+def _detect_image_mime(payload: bytes) -> str | None:
+    if payload.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if payload.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if len(payload) >= 12 and payload[:4] == b"RIFF" and payload[8:12] == b"WEBP":
+        return "image/webp"
+    return None
+
+
+def _validate_upload_file(filename: str, payload: bytes) -> str | None:
+    suffix = Path(filename).suffix.lower()
+    if len(payload) > MAX_UPLOAD_BYTES:
+        return "File is too large for MVP capture. Keep uploads under 10 MB."
+    if suffix not in ALLOWED_UPLOAD_SUFFIXES:
+        return "Unsupported upload type. Use Markdown, PNG, JPEG, or WEBP."
+    if suffix == ".md":
+        try:
+            payload.decode("utf-8")
+        except UnicodeDecodeError:
+            return "Markdown uploads must be UTF-8 encoded."
+        return None
+    detected_mime = _detect_image_mime(payload)
+    expected_mime = "image/jpeg" if suffix in {".jpg", ".jpeg"} else f"image/{suffix.removeprefix('.')}"
+    if detected_mime is None:
+        return "Image upload must be a readable PNG, JPEG, or WEBP file."
+    if detected_mime != expected_mime:
+        return f"Image extension does not match detected content type: {detected_mime}."
+    return None
 
 
 def render(ctx: UIContext) -> None:
@@ -57,16 +89,13 @@ def render(ctx: UIContext) -> None:
     )
     if uploaded is not None and st.button("Save uploaded file"):
         payload = uploaded.getvalue()
-        if len(payload) > MAX_UPLOAD_BYTES:
-            st.error("File is too large for MVP capture. Keep uploads under 10 MB.")
+        upload_error = _validate_upload_file(uploaded.name, payload)
+        if upload_error:
+            st.error(upload_error)
         elif uploaded.name.lower().endswith(".md"):
-            try:
-                text = payload.decode("utf-8")
-            except UnicodeDecodeError:
-                st.error("Markdown uploads must be UTF-8 encoded.")
-            else:
-                raw_item_id, view_id = capture_markdown_text(ctx.config, text, asof_date=ctx.asof_date)
-                st.success(f"Saved markdown item {raw_item_id}. Draft view: {view_id or 'already existed'}.")
+            text = payload.decode("utf-8")
+            raw_item_id, view_id = capture_markdown_text(ctx.config, text, asof_date=ctx.asof_date)
+            st.success(f"Saved markdown item {raw_item_id}. Draft view: {view_id or 'already existed'}.")
         else:
             media_id = save_media_bytes(
                 ctx.config,

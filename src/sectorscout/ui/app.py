@@ -41,7 +41,7 @@ def _parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = _parse_args()
-    st.set_page_config(page_title="SectorScout Intel", layout="wide")
+    st.set_page_config(page_title="SectorScout Intel", layout="wide", initial_sidebar_state="collapsed")
     st.markdown(
         """
         <style>
