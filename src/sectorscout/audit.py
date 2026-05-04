@@ -379,7 +379,7 @@ def _blocked_report(
         lifecycle_qa={},
         lifecycle_input_qa={},
         warning=(
-            "Phase 5B10 only: audit export was blocked because manifest "
+            "Phase 5B+ only: audit export was blocked because manifest "
             "validation or audit-completeness validation failed. This is not a "
             "result report or strategy conclusion."
         ),
@@ -546,7 +546,7 @@ def generate_provenance_audit_report(
         lifecycle_qa=lifecycle_qa,
         lifecycle_input_qa=lifecycle_input_qa,
         warning=(
-            "Phase 5B10 only: provenance audit reports expose reproducibility, "
+            "Phase 5B+ only: provenance audit reports expose reproducibility, "
             "coverage, and warning diagnostics only; they are not result reports "
             "or strategy conclusions."
         ),
@@ -646,7 +646,7 @@ def validate_audit_report(
         stored_payload_hash=stored_payload_hash,
         recomputed_audit_report_hash=recomputed_hash,
         warning=(
-            "Phase 5B10 only: audit report validation checks persisted audit "
+            "Phase 5B+ only: audit report validation checks persisted audit "
             "artifact integrity and source drift; it is not a result report or "
             "strategy conclusion."
         ),

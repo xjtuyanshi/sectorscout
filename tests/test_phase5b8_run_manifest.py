@@ -17,6 +17,7 @@ from sectorscout.lifecycle_inputs import (
     lifecycle_input_snapshot_rows_hash,
 )
 from sectorscout.prices import PRICE_SNAPSHOT_COLUMNS, snapshot_rows_hash
+from sectorscout.replay import run_frozen_replay_validation
 from sectorscout.reproducibility import run_reproducibility_check
 from sectorscout.run_manifest import generate_run_manifest, validate_run_manifest
 from sectorscout.source_signals import SOURCE_SIGNAL_COLUMNS, source_signal_snapshot_rows_hash
@@ -1512,6 +1513,162 @@ def test_phase5b11_reproducibility_check_cli_has_no_formal_metric_terms(
         app,
         [
             "reproducibility-check",
+            "--run-manifest-id",
+            manifest["run_manifest_id"],
+            "--config",
+            str(config_path),
+        ],
+    )
+    output = result.stdout.lower()
+    payload = json.loads(result.stdout)
+
+    assert result.exit_code == 0
+    assert payload["validation_status"] == "PASS"
+    for forbidden in (
+        "cagr",
+        "sharpe",
+        "max drawdown",
+        "annual return",
+        "annual returns",
+        "win_rate",
+        "win rate",
+        "profit_factor",
+        "profit factor",
+        "expectancy",
+        "edge claim",
+        "claim edge",
+    ):
+        assert forbidden not in output
+
+
+def test_phase5b13_frozen_replay_passes_complete_manifest(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    _complete_manifest_fixture(config)
+    manifest = generate_run_manifest(config, LIFECYCLE_RUN_ID).to_dict()
+
+    result = run_frozen_replay_validation(config, manifest["run_manifest_id"]).to_dict()
+
+    assert result["validation_status"] == "PASS"
+    assert result["failure_reasons"] == []
+    assert result["execution_run_id"] == EXECUTION_RUN_ID
+    assert result["source_signal_snapshot_id"] == SOURCE_SIGNAL_SNAPSHOT_ID
+    assert result["price_snapshot_id"] == PRICE_SNAPSHOT_ID
+    assert result["persisted_execution_decision_rows"] == 1
+    assert result["replayed_execution_decision_rows"] == 1
+    assert (
+        result["replayed_execution_decision_rows_hash"]
+        == result["persisted_execution_decision_rows_hash"]
+    )
+
+
+def test_phase5b13_frozen_replay_ignores_live_signal_mutation_after_snapshot(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    _complete_manifest_fixture(config)
+    manifest = generate_run_manifest(config, LIFECYCLE_RUN_ID).to_dict()
+    mutated = _source_signal_row()
+    mutated["stop_loss"] = 99.0
+    with connect_database(config.database.path) as connection:
+        connection.execute(
+            f"""
+            INSERT INTO signals ({", ".join(SOURCE_SIGNAL_COLUMNS)})
+            VALUES ({", ".join(["?"] * len(SOURCE_SIGNAL_COLUMNS))})
+            """,
+            [mutated[column] for column in SOURCE_SIGNAL_COLUMNS],
+        )
+
+    result = run_frozen_replay_validation(config, manifest["run_manifest_id"]).to_dict()
+
+    assert result["validation_status"] == "PASS"
+    assert result["failure_reasons"] == []
+
+
+def test_phase5b13_frozen_replay_fails_price_snapshot_tamper(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    _complete_manifest_fixture(config)
+    manifest = generate_run_manifest(config, LIFECYCLE_RUN_ID).to_dict()
+    with connect_database(config.database.path) as connection:
+        connection.execute(
+            """
+            UPDATE price_snapshot_rows
+            SET adj_open = 111
+            WHERE price_snapshot_id = ?
+              AND symbol = 'MU'
+              AND price_date = DATE '2024-12-02'
+            """,
+            [PRICE_SNAPSHOT_ID],
+        )
+
+    result = run_frozen_replay_validation(config, manifest["run_manifest_id"]).to_dict()
+
+    assert result["validation_status"] == "FAIL"
+    assert "MANIFEST_VALIDATION_FAIL" in result["failure_reasons"]
+    assert any(
+        "PRICE_SNAPSHOT_HASH_MISMATCH" in error
+        or "PRICE_SNAPSHOT_MANIFEST_HASH_MISMATCH" in error
+        for error in result["manifest_validation_errors"]
+    )
+
+
+def test_phase5b13_source_snapshot_validator_rechecks_candidate_predicate(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    _complete_manifest_fixture(config)
+    manifest = generate_run_manifest(config, LIFECYCLE_RUN_ID).to_dict()
+    with connect_database(config.database.path) as connection:
+        connection.execute(
+            """
+            UPDATE source_signal_snapshot_rows
+            SET state = 'SETUP'
+            WHERE source_signal_snapshot_id = ?
+            """,
+            [SOURCE_SIGNAL_SNAPSHOT_ID],
+        )
+        rows = connection.execute(
+            f"""
+            SELECT {", ".join(SOURCE_SIGNAL_COLUMNS)}
+            FROM source_signal_snapshot_rows
+            WHERE source_signal_snapshot_id = ?
+            """,
+            [SOURCE_SIGNAL_SNAPSHOT_ID],
+        ).fetchdf()
+        rows_hash = source_signal_snapshot_rows_hash(rows)
+        connection.execute(
+            """
+            UPDATE source_signal_snapshot_runs
+            SET snapshot_rows_hash = ?
+            WHERE source_signal_snapshot_id = ?
+            """,
+            [rows_hash, SOURCE_SIGNAL_SNAPSHOT_ID],
+        )
+
+    result = run_frozen_replay_validation(config, manifest["run_manifest_id"]).to_dict()
+
+    assert result["validation_status"] == "FAIL"
+    assert "MANIFEST_VALIDATION_FAIL" in result["failure_reasons"]
+    assert any(
+        "SOURCE_SIGNAL_SNAPSHOT_INELIGIBLE_ROW" in error
+        for error in result["manifest_validation_errors"]
+    )
+
+
+def test_phase5b13_frozen_replay_cli_has_no_formal_metric_terms(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    _complete_manifest_fixture(config)
+    manifest = generate_run_manifest(config, LIFECYCLE_RUN_ID).to_dict()
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(f"database:\n  path: {config.database.path}\n", encoding="utf-8")
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "frozen-replay-validate",
             "--run-manifest-id",
             manifest["run_manifest_id"],
             "--config",

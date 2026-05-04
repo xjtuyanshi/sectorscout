@@ -318,7 +318,7 @@ def _effective_price_snapshot_id(context: dict) -> tuple[str | None, list[str]]:
 
 def _manifest_warning() -> str:
     return (
-        "Phase 5B8 only: run manifests validate reproducibility inputs and "
+        "Phase 5B+ only: run manifests validate reproducibility inputs and "
         "rowset hashes; they are not result reports or strategy conclusions."
     )
 

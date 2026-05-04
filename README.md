@@ -4,7 +4,7 @@ SectorScout is a staged, point-in-time research system for finding strong market
 themes, ranking strong stocks inside those themes, and waiting for technical
 setups before labeling anything actionable.
 
-Current status: Phase 5B12 reproducibility scaffolding is implemented. It creates
+Current status: Phase 5B13 reproducibility scaffolding is implemented. It creates
 next-open execution-decision records from frozen Phase 4 triggered setup
 candidates, then builds simulated position lifecycle, exit-decision,
 trade-ledger QA, and baseline coverage QA records, with stronger run provenance,
@@ -12,8 +12,9 @@ persisted frozen price snapshot validation, non-price lifecycle input metadata
 guardrails, frozen non-price lifecycle input snapshots, and run-manifest
 rowset-hash validation, manifest-gated persisted provenance audit exports, and
 a strict reproducibility-check orchestration command. Source signal rows can now
-be frozen and validated as their own rowset before execution. It does not
-calculate strategy performance.
+be frozen and validated as their own rowset before execution, and execution
+decisions can be replayed from frozen snapshots to compare deterministic rowset
+hashes. It does not calculate strategy performance.
 
 Implemented so far:
 
@@ -85,6 +86,11 @@ Implemented so far:
   `--source-signal-snapshot-id`, source rowset hash validation in manifests,
   source snapshot component status in audit reports, and reproducibility output
   fields for source-signal snapshot ids/hashes.
+- Phase 5B13: deterministic frozen replay validation with
+  `frozen-replay-validate`, which reloads the run manifest, validates frozen
+  source-signal and price snapshots, regenerates execution-decision rows from
+  those frozen inputs without persistence, and compares row counts and rowset
+  hashes against persisted `execution_decisions`.
 
 Not implemented yet:
 
@@ -126,6 +132,9 @@ Current limitations:
   feed execution decisions. Run manifests require the snapshot id to resolve,
   hash cleanly, match the execution as-of date/model, and contain exactly the
   source signal keys used by `execution_decisions`.
+- Phase 5B13 frozen replay validation is deterministic hash comparison only. It
+  outputs ids, row counts, hashes, validation statuses, and failure reasons; it
+  does not create returns, benchmark comparisons, or strategy conclusions.
 - The default next-open policy allows opens below the trigger/pivot if other
   execution and risk filters pass. `require_next_open_above_trigger` can tighten
   that behavior for later research variants.
@@ -211,5 +220,5 @@ Important design constraints to review:
   claims.
 - Scores rank candidates; Phase 4 setup triggers create research candidates only.
 - The system must not output direct buy labels or execution instructions.
-- Phase 5A through Phase 5B12 records are not a performance backtest, so no
+- Phase 5A through Phase 5B13 records are not a performance backtest, so no
   performance claims should be inferred from the current repository.

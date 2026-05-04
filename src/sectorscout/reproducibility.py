@@ -143,7 +143,7 @@ def run_reproducibility_check(
             audit_validation["validation_errors"] if audit_validation else []
         ),
         warning=(
-            "Phase 5B12 only: reproducibility checks orchestrate existing "
+            "Phase 5B+ only: reproducibility checks orchestrate existing "
             "manifest, audit-completeness, and audit-artifact validation; they "
             "are not result reports or strategy conclusions."
         ),

@@ -201,6 +201,7 @@ def test_phase5b12_execution_can_read_frozen_source_signal_snapshot(
 
     assert decision["signal_stop_loss"] == 95.0
     assert decision["actual_stop_loss"] == 95.0
+    assert result["source_signal_snapshot_id"] == snapshot["source_signal_snapshot_id"]
     with connect_database(config.database.path) as connection:
         run_metadata = connection.execute(
             """
@@ -211,6 +212,25 @@ def test_phase5b12_execution_can_read_frozen_source_signal_snapshot(
             [result["execution_run_id"]],
         ).fetchone()
     assert run_metadata == (snapshot["source_signal_snapshot_id"],)
+
+
+def test_phase5b13_frozen_source_snapshot_missing_trigger_rejects_not_nan_accepts(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    _insert_signal(config, entry_trigger=None, stop_loss=95.0)
+    snapshot = create_frozen_source_signal_snapshot(config, ASOF).to_dict()
+    _insert_next_open(config, open_price=101.0)
+
+    decision = generate_execution_decisions(
+        config,
+        ASOF,
+        source_signal_snapshot_id=snapshot["source_signal_snapshot_id"],
+    ).to_dict()["decisions"][0]
+
+    assert decision["decision"] == "SIMULATED_NEXT_OPEN_REJECTED"
+    assert decision["reject_reason"] == "MISSING_ENTRY_TRIGGER"
+    assert decision["signal_entry_trigger"] is None
 
 
 def test_phase5b12_source_signal_snapshot_cli_has_no_formal_metric_terms(

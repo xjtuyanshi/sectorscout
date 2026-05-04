@@ -127,6 +127,25 @@ def _summary(values: list[str]) -> str | None:
     return "mixed:" + ",".join(values)
 
 
+def _optional_float(value: object) -> float | None:
+    if value is None or pd.isna(value):
+        return None
+    return float(value)
+
+
+def _bool_value(value: object) -> bool | None:
+    if value is None or pd.isna(value):
+        return None
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if text == "true":
+        return True
+    if text == "false":
+        return False
+    return None
+
+
 def _key(row: dict) -> str:
     return (
         f"{_date_value(row['asof_date']).isoformat()}:"
@@ -153,6 +172,41 @@ def source_signal_snapshot_rows_hash(rows: pd.DataFrame | list[dict]) -> str:
             )
     payload = json.dumps(records, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _validate_candidate_predicates(
+    rows: pd.DataFrame,
+    source_signal_snapshot_id: str,
+) -> None:
+    text_expectations = {
+        "state": "TRIGGERED",
+        "action_category": "Triggered setup candidate",
+        "execution_model": DEFAULT_EXECUTION_MODEL,
+    }
+    bool_expectations = {
+        "actionable": False,
+        "setup_data_present": True,
+        "price_snapshot_quality_pass": True,
+        "execution_data_quality_pass": False,
+        "data_quality_pass": False,
+        "market_gate_pass": True,
+        "portfolio_risk_pass": True,
+    }
+    for _, row in rows.iterrows():
+        payload = row.to_dict()
+        row_key = _key(payload)
+        for field_name, expected in text_expectations.items():
+            if str(payload[field_name]) != expected:
+                raise SourceSignalSnapshotValidationError(
+                    f"SOURCE_SIGNAL_SNAPSHOT_INELIGIBLE_ROW: "
+                    f"{source_signal_snapshot_id} key={row_key} field={field_name}"
+                )
+        for field_name, expected in bool_expectations.items():
+            if _bool_value(payload[field_name]) is not expected:
+                raise SourceSignalSnapshotValidationError(
+                    f"SOURCE_SIGNAL_SNAPSHOT_INELIGIBLE_ROW: "
+                    f"{source_signal_snapshot_id} key={row_key} field={field_name}"
+                )
 
 
 def load_live_source_signal_candidates(
@@ -355,7 +409,7 @@ def create_frozen_source_signal_snapshot(
         git_commit=metadata.git_commit,
         data_snapshot_id=metadata.data_snapshot_id,
         warning=(
-            "Phase 5B12 only: frozen source-signal snapshots are input "
+            "Phase 5B+ only: frozen source-signal snapshots are input "
             "provenance scaffolding and are not result reports or strategy conclusions."
         ),
     )
@@ -373,8 +427,8 @@ def source_signal_snapshot_candidates(
                 "symbol": row["symbol"],
                 "theme_id": row["theme_id"],
                 "setup_type": row["setup_type"],
-                "entry_trigger": row["entry_trigger"],
-                "stop_loss": row["stop_loss"],
+                "entry_trigger": _optional_float(row["entry_trigger"]),
+                "stop_loss": _optional_float(row["stop_loss"]),
                 "source_signal_generated_at": row["signal_generated_at_utc"],
                 "source_signal_config_hash": row["config_hash"],
                 "source_signal_git_commit": row["git_commit"],
@@ -473,6 +527,8 @@ def validate_source_signal_snapshot_usage(
         raise SourceSignalSnapshotValidationError(
             f"EMPTY_SOURCE_SIGNAL_SNAPSHOT: {source_signal_snapshot_id}"
         )
+    if not rows.empty:
+        _validate_candidate_predicates(rows, source_signal_snapshot_id)
 
     effective_asof = asof_date
     effective_model = execution_model

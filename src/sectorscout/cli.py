@@ -33,6 +33,7 @@ from sectorscout.market_calendar import asof_market_close, to_market_time
 from sectorscout.metadata import build_run_metadata
 from sectorscout.pit import available_fundamental_facts, theme_members_asof, universe_asof
 from sectorscout.prices import create_frozen_price_snapshot
+from sectorscout.replay import run_frozen_replay_validation
 from sectorscout.reports import generate_daily_report
 from sectorscout.reproducibility import run_reproducibility_check
 from sectorscout.run_manifest import generate_run_manifest, validate_run_manifest
@@ -473,6 +474,19 @@ def reproducibility_check(
         run_manifest_id,
         audit_report_id=audit_report_id,
     )
+    typer.echo(json.dumps(result.to_dict(), indent=2, sort_keys=True))
+    if strict and result.validation_status != "PASS":
+        raise typer.Exit(1)
+
+
+@app.command("frozen-replay-validate")
+def frozen_replay_validate(
+    run_manifest_id: str = typer.Option(..., "--run-manifest-id"),
+    strict: bool = typer.Option(True, "--strict/--no-strict"),
+    config: Path = typer.Option(Path("config.yaml"), "--config"),
+) -> None:
+    loaded = _load(config)
+    result = run_frozen_replay_validation(loaded, run_manifest_id)
     typer.echo(json.dumps(result.to_dict(), indent=2, sort_keys=True))
     if strict and result.validation_status != "PASS":
         raise typer.Exit(1)

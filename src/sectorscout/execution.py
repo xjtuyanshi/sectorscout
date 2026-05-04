@@ -76,6 +76,7 @@ class ExecutionRunResult:
     decisions: list[dict]
     performance_metrics: dict
     price_snapshot_id: str | None
+    source_signal_snapshot_id: str | None
     warning: str
 
     def to_dict(self) -> dict:
@@ -96,6 +97,12 @@ def _iso_timestamp(value: object) -> str:
     if isinstance(value, datetime):
         return value.isoformat()
     return str(value)
+
+
+def _optional_float(value: object) -> float | None:
+    if value is None or pd.isna(value):
+        return None
+    return float(value)
 
 
 def _load_frozen_signal_candidates(config: SectorScoutConfig, asof_date: date) -> list[dict]:
@@ -143,7 +150,11 @@ def _load_frozen_signal_candidates(config: SectorScoutConfig, asof_date: date) -
         "source_universe_version",
         "source_theme_version",
     ]
-    return [dict(zip(columns, row, strict=True)) for row in rows]
+    candidates = [dict(zip(columns, row, strict=True)) for row in rows]
+    for candidate in candidates:
+        candidate["entry_trigger"] = _optional_float(candidate["entry_trigger"])
+        candidate["stop_loss"] = _optional_float(candidate["stop_loss"])
+    return candidates
 
 
 def _next_open_row(
@@ -185,8 +196,8 @@ def _decision_for_candidate(
     execution_run_id: str,
     price_snapshot_id: str | None,
 ) -> ExecutionDecision:
-    entry_trigger = candidate["entry_trigger"]
-    stop_loss = candidate["stop_loss"]
+    entry_trigger = _optional_float(candidate["entry_trigger"])
+    stop_loss = _optional_float(candidate["stop_loss"])
     next_open = _next_open_row(
         config,
         candidate["symbol"],
@@ -504,6 +515,7 @@ def generate_execution_decisions(
         decisions=[row.to_dict() for row in decisions],
         performance_metrics={},
         price_snapshot_id=price_snapshot_id,
+        source_signal_snapshot_id=source_signal_snapshot_id,
         warning=(
             "Phase 5A only: next-open execution decisions are research simulation records, "
             "not broker fills, trade logs, performance results, or strategy conclusions."
