@@ -228,6 +228,10 @@ def _load_lifecycle_input_qa(config: SectorScoutConfig, lifecycle_run_id: str) -
             SELECT
                 market_regime_rows,
                 theme_score_rows,
+                expected_market_regime_sessions_json,
+                missing_market_regime_sessions_json,
+                expected_theme_score_keys_json,
+                missing_theme_score_keys_json,
                 market_regime_config_hashes_json,
                 market_regime_git_commits_json,
                 market_regime_data_snapshot_ids_json,
@@ -240,6 +244,9 @@ def _load_lifecycle_input_qa(config: SectorScoutConfig, lifecycle_run_id: str) -
                 theme_score_theme_versions_json,
                 market_regime_source_mismatch_warning,
                 theme_score_source_mismatch_warning,
+                missing_market_regime_coverage_warning,
+                missing_theme_score_coverage_warning,
+                mixed_source_signal_metadata_warning,
                 non_price_input_snapshot_warning,
                 non_price_input_mode
             FROM lifecycle_input_qa
@@ -251,6 +258,10 @@ def _load_lifecycle_input_qa(config: SectorScoutConfig, lifecycle_run_id: str) -
         return {
             "market_regime_rows": 0,
             "theme_score_rows": 0,
+            "expected_market_regime_sessions": [],
+            "missing_market_regime_sessions": [],
+            "expected_theme_score_keys": [],
+            "missing_theme_score_keys": [],
             "market_regime_config_hashes": [],
             "market_regime_git_commits": [],
             "market_regime_data_snapshot_ids": [],
@@ -263,12 +274,20 @@ def _load_lifecycle_input_qa(config: SectorScoutConfig, lifecycle_run_id: str) -
             "theme_score_theme_versions": [],
             "market_regime_source_mismatch_warning": False,
             "theme_score_source_mismatch_warning": False,
-            "non_price_input_snapshot_warning": False,
-            "non_price_input_mode": "live_table_version_guardrail",
+            "missing_market_regime_coverage_warning": False,
+            "missing_theme_score_coverage_warning": False,
+            "missing_lifecycle_input_qa_warning": True,
+            "mixed_source_signal_metadata_warning": False,
+            "non_price_input_snapshot_warning": True,
+            "non_price_input_mode": "missing_lifecycle_input_qa",
         }
     columns = [
         "market_regime_rows",
         "theme_score_rows",
+        "expected_market_regime_sessions",
+        "missing_market_regime_sessions",
+        "expected_theme_score_keys",
+        "missing_theme_score_keys",
         "market_regime_config_hashes",
         "market_regime_git_commits",
         "market_regime_data_snapshot_ids",
@@ -281,6 +300,9 @@ def _load_lifecycle_input_qa(config: SectorScoutConfig, lifecycle_run_id: str) -
         "theme_score_theme_versions",
         "market_regime_source_mismatch_warning",
         "theme_score_source_mismatch_warning",
+        "missing_market_regime_coverage_warning",
+        "missing_theme_score_coverage_warning",
+        "mixed_source_signal_metadata_warning",
         "non_price_input_snapshot_warning",
         "non_price_input_mode",
     ]
@@ -291,6 +313,10 @@ def _load_lifecycle_input_qa(config: SectorScoutConfig, lifecycle_run_id: str) -
         "market_regime_data_snapshot_ids",
         "market_regime_universe_versions",
         "market_regime_theme_versions",
+        "expected_market_regime_sessions",
+        "missing_market_regime_sessions",
+        "expected_theme_score_keys",
+        "missing_theme_score_keys",
         "theme_score_config_hashes",
         "theme_score_git_commits",
         "theme_score_data_snapshot_ids",
@@ -298,6 +324,7 @@ def _load_lifecycle_input_qa(config: SectorScoutConfig, lifecycle_run_id: str) -
         "theme_score_theme_versions",
     ):
         payload[key] = _json_list(payload[key])
+    payload["missing_lifecycle_input_qa_warning"] = False
     return payload
 
 
@@ -451,6 +478,18 @@ def _warning_flags(
         "theme_score_source_mismatch_warning": bool(
             input_qa.get("theme_score_source_mismatch_warning")
         ),
+        "missing_market_regime_coverage_warning": bool(
+            input_qa.get("missing_market_regime_coverage_warning")
+        ),
+        "missing_theme_score_coverage_warning": bool(
+            input_qa.get("missing_theme_score_coverage_warning")
+        ),
+        "missing_lifecycle_input_qa_warning": bool(
+            input_qa.get("missing_lifecycle_input_qa_warning")
+        ),
+        "mixed_source_signal_metadata_warning": bool(
+            input_qa.get("mixed_source_signal_metadata_warning")
+        ),
     }
 
 
@@ -485,6 +524,16 @@ def _provenance(context: dict, input_qa: dict) -> dict:
         ),
         "market_regime_rows": input_qa.get("market_regime_rows", 0),
         "theme_score_rows": input_qa.get("theme_score_rows", 0),
+        "expected_market_regime_sessions": input_qa.get(
+            "expected_market_regime_sessions",
+            [],
+        ),
+        "missing_market_regime_sessions": input_qa.get(
+            "missing_market_regime_sessions",
+            [],
+        ),
+        "expected_theme_score_keys": input_qa.get("expected_theme_score_keys", []),
+        "missing_theme_score_keys": input_qa.get("missing_theme_score_keys", []),
         "market_regime_data_snapshot_ids": input_qa.get(
             "market_regime_data_snapshot_ids",
             [],
@@ -572,11 +621,15 @@ def persist_trade_ledger_qa(
                 non_price_input_snapshot_warning,
                 market_regime_source_mismatch_warning,
                 theme_score_source_mismatch_warning,
+                missing_market_regime_coverage_warning,
+                missing_theme_score_coverage_warning,
+                missing_lifecycle_input_qa_warning,
+                mixed_source_signal_metadata_warning,
                 non_price_input_mode, non_price_input_qa_json,
                 price_snapshot_mode,
                 lifecycle_generated_at_utc, lifecycle_config_hash,
                 lifecycle_git_commit, lifecycle_data_snapshot_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 lifecycle_run_id,
@@ -604,6 +657,10 @@ def persist_trade_ledger_qa(
                 warnings["non_price_input_snapshot_warning"],
                 warnings["market_regime_source_mismatch_warning"],
                 warnings["theme_score_source_mismatch_warning"],
+                warnings["missing_market_regime_coverage_warning"],
+                warnings["missing_theme_score_coverage_warning"],
+                warnings["missing_lifecycle_input_qa_warning"],
+                warnings["mixed_source_signal_metadata_warning"],
                 input_qa.get("non_price_input_mode", "live_table_version_guardrail"),
                 json.dumps(input_qa, sort_keys=True),
                 _price_snapshot_mode(context),

@@ -8,7 +8,7 @@ Current status: Phase 5B6 reproducibility scaffolding is implemented. It creates
 next-open execution-decision records from frozen Phase 4 triggered setup
 candidates, then builds simulated position lifecycle, exit-decision,
 trade-ledger QA, and baseline coverage QA records, with stronger run provenance
-persisted frozen price snapshot validation, and non-price lifecycle input
+, persisted frozen price snapshot validation, and non-price lifecycle input
 metadata guardrails. It does not calculate strategy performance.
 
 Implemented so far:
@@ -49,7 +49,9 @@ Implemented so far:
   snapshot mismatch warnings, and rowset hash validation.
 - Phase 5B6: non-price lifecycle input guardrails for `market_regime` and
   `theme_scores`, with metadata-set audit rows and ledger warnings when those
-  live-table inputs do not match the source signal/execution provenance.
+  live-table inputs do not match the source signal/execution provenance, when
+  expected rows are missing, when lifecycle input QA is absent, or when source
+  signal metadata is mixed.
 
 Not implemented yet:
 
@@ -98,8 +100,9 @@ Current limitations:
 - Provider-priority price selection can be persisted as frozen
   `price_snapshot_runs` / `price_snapshot_rows`, but those snapshots freeze only
   prices. Market-regime and theme-score lifecycle inputs now emit
-  `live_table_version_guardrail` QA metadata and mismatch warnings, but they
-  still need a full frozen snapshot model before formal validation.
+  `live_table_version_guardrail` QA metadata plus mismatch/missing-coverage
+  warnings, but they still need a full frozen snapshot model before formal
+  validation.
 
 ## Quick Start
 

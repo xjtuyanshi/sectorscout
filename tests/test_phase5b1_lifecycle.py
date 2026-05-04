@@ -94,7 +94,12 @@ def _insert_accepted_execution(
         )
 
 
-def _insert_execution_run_context(config: SectorScoutConfig, execution_run_id: str = RUN_ID) -> None:
+def _insert_execution_run_context(
+    config: SectorScoutConfig,
+    execution_run_id: str = RUN_ID,
+    *,
+    mixed_source_signal_metadata: bool = False,
+) -> None:
     with connect_database(config.database.path) as connection:
         connection.execute(
             """
@@ -110,11 +115,11 @@ def _insert_execution_run_context(config: SectorScoutConfig, execution_run_id: s
                 ?, DATE '2024-11-29', 'next_open',
                 '2024-11-29T18:01:00+00:00', 'hash',
                 'commit', 'snapshot', 'snapshot', 'hash',
-                'commit', 'universe', 'theme', false,
+                'commit', 'universe', 'theme', ?,
                 '2024-11-29T18:01:00+00:00'
             )
             """,
-            [execution_run_id],
+            [execution_run_id, mixed_source_signal_metadata],
         )
 
 
@@ -286,13 +291,17 @@ def test_phase5b5_lifecycle_input_qa_records_matching_non_price_metadata(
             (date(2024, 12, 3), 101.0, 102.0, 100.0, 101.0),
         ],
     )
+    _insert_market_regime(config, ENTRY)
     _insert_market_regime(config, date(2024, 12, 3))
+    _insert_theme_score(config, ENTRY)
     _insert_theme_score(config, date(2024, 12, 3))
 
     result = generate_position_lifecycle(config, RUN_ID, date(2024, 12, 3)).to_dict()
 
-    assert result["input_qa"]["market_regime_rows"] == 1
-    assert result["input_qa"]["theme_score_rows"] == 1
+    assert result["input_qa"]["theme_score_rows"] == 2
+    assert result["input_qa"]["market_regime_rows"] == 2
+    assert result["input_qa"]["missing_market_regime_sessions"] == []
+    assert result["input_qa"]["missing_theme_score_keys"] == []
     assert result["input_qa"]["non_price_input_snapshot_warning"] is False
     with connect_database(config.database.path) as connection:
         row = connection.execute(
@@ -334,6 +343,56 @@ def test_phase5b5_lifecycle_input_qa_flags_theme_score_source_mismatch(
 
     assert result["input_qa"]["theme_score_source_mismatch_warning"] is True
     assert result["input_qa"]["theme_score_theme_versions"] == ["other_theme"]
+
+
+def test_phase5b6_lifecycle_input_qa_flags_missing_market_regime_coverage(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    _insert_execution_run_context(config)
+    _insert_accepted_execution(config)
+    _insert_prices(config, "TEST", [(ENTRY, 100.0, 102.0, 99.0, 101.0)])
+    _insert_theme_score(config, ENTRY)
+
+    result = generate_position_lifecycle(config, RUN_ID, ENTRY).to_dict()
+
+    assert result["input_qa"]["market_regime_rows"] == 0
+    assert result["input_qa"]["missing_market_regime_coverage_warning"] is True
+    assert result["input_qa"]["missing_market_regime_sessions"] == ["2024-12-02"]
+    assert result["input_qa"]["non_price_input_snapshot_warning"] is True
+
+
+def test_phase5b6_lifecycle_input_qa_flags_missing_theme_score_coverage(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    _insert_execution_run_context(config)
+    _insert_accepted_execution(config)
+    _insert_prices(config, "TEST", [(ENTRY, 100.0, 102.0, 99.0, 101.0)])
+    _insert_market_regime(config, ENTRY)
+
+    result = generate_position_lifecycle(config, RUN_ID, ENTRY).to_dict()
+
+    assert result["input_qa"]["theme_score_rows"] == 0
+    assert result["input_qa"]["missing_theme_score_coverage_warning"] is True
+    assert result["input_qa"]["missing_theme_score_keys"] == ["ai-memory:2024-12-02"]
+    assert result["input_qa"]["non_price_input_snapshot_warning"] is True
+
+
+def test_phase5b6_lifecycle_input_qa_flags_mixed_source_metadata(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    _insert_execution_run_context(config, mixed_source_signal_metadata=True)
+    _insert_accepted_execution(config)
+    _insert_prices(config, "TEST", [(ENTRY, 100.0, 102.0, 99.0, 101.0)])
+    _insert_market_regime(config, ENTRY)
+    _insert_theme_score(config, ENTRY)
+
+    result = generate_position_lifecycle(config, RUN_ID, ENTRY).to_dict()
+
+    assert result["input_qa"]["mixed_source_signal_metadata_warning"] is True
+    assert result["input_qa"]["non_price_input_snapshot_warning"] is True
 
 
 def test_phase5b1_gap_down_stop_at_open_exit(tmp_path: Path) -> None:

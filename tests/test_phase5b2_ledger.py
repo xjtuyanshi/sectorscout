@@ -187,13 +187,18 @@ def _insert_lifecycle_input_qa(
     *,
     market_warning: bool = False,
     theme_warning: bool = False,
+    missing_market_warning: bool = False,
+    missing_theme_warning: bool = False,
+    mixed_source_warning: bool = False,
 ) -> None:
     with connect_database(config.database.path) as connection:
         connection.execute(
             """
             INSERT INTO lifecycle_input_qa (
                 lifecycle_run_id, execution_run_id, market_regime_rows,
-                theme_score_rows, market_regime_config_hashes_json,
+                theme_score_rows, expected_market_regime_sessions_json,
+                missing_market_regime_sessions_json, expected_theme_score_keys_json,
+                missing_theme_score_keys_json, market_regime_config_hashes_json,
                 market_regime_git_commits_json,
                 market_regime_data_snapshot_ids_json,
                 market_regime_universe_versions_json,
@@ -205,14 +210,19 @@ def _insert_lifecycle_input_qa(
                 theme_score_theme_versions_json,
                 market_regime_source_mismatch_warning,
                 theme_score_source_mismatch_warning,
+                missing_market_regime_coverage_warning,
+                missing_theme_score_coverage_warning,
+                mixed_source_signal_metadata_warning,
                 non_price_input_snapshot_warning, non_price_input_mode,
                 lifecycle_generated_at_utc, lifecycle_config_hash,
                 lifecycle_git_commit, lifecycle_data_snapshot_id
             ) VALUES (
-                ?, ?, 1, 1, '[\"hash\"]', '[\"commit\"]',
+                ?, ?, 1, 1, '[\"2024-12-02\"]', '[]',
+                '[\"ai-memory:2024-12-02\"]', '[]',
+                '[\"hash\"]', '[\"commit\"]',
                 '[\"snapshot\"]', '[\"universe\"]', '[\"theme\"]',
                 '[\"hash\"]', '[\"commit\"]', '[\"theme_snapshot\"]',
-                '[\"universe\"]', '[\"theme\"]', ?, ?, ?,
+                '[\"universe\"]', '[\"theme\"]', ?, ?, ?, ?, ?, ?,
                 'live_table_version_guardrail',
                 '2024-12-06T21:00:00+00:00', 'lifecycle_hash',
                 'lifecycle_commit', 'lifecycle_snapshot'
@@ -223,7 +233,16 @@ def _insert_lifecycle_input_qa(
                 EXECUTION_RUN_ID,
                 market_warning,
                 theme_warning,
-                market_warning or theme_warning,
+                missing_market_warning,
+                missing_theme_warning,
+                mixed_source_warning,
+                (
+                    market_warning
+                    or theme_warning
+                    or missing_market_warning
+                    or missing_theme_warning
+                    or mixed_source_warning
+                ),
             ],
         )
 
@@ -403,9 +422,13 @@ def test_phase5b2_provenance_and_warnings_are_persisted(tmp_path: Path) -> None:
         "lifecycle_price_snapshot_id": None,
         "execution_price_snapshot_id": None,
         "price_snapshot_mode": "in_memory_provider_priority",
-        "non_price_input_mode": "live_table_version_guardrail",
+        "non_price_input_mode": "missing_lifecycle_input_qa",
         "market_regime_rows": 0,
         "theme_score_rows": 0,
+        "expected_market_regime_sessions": [],
+        "missing_market_regime_sessions": [],
+        "expected_theme_score_keys": [],
+        "missing_theme_score_keys": [],
         "market_regime_data_snapshot_ids": [],
         "theme_score_data_snapshot_ids": [],
         "market_regime_config_hashes": [],
@@ -416,16 +439,28 @@ def test_phase5b2_provenance_and_warnings_are_persisted(tmp_path: Path) -> None:
     assert result["warnings"]["config_mismatch_warning"] is True
     assert result["warnings"]["snapshot_mismatch_warning"] is True
     assert result["warnings"]["missing_entry_session_price_warning"] is True
+    assert result["warnings"]["missing_lifecycle_input_qa_warning"] is True
+    assert result["warnings"]["non_price_input_snapshot_warning"] is True
     with connect_database(config.database.path) as connection:
         row = connection.execute(
             """
             SELECT config_mismatch_warning, snapshot_mismatch_warning,
                    missing_entry_session_price_warning, price_snapshot_mode,
-                   non_price_input_snapshot_warning
+                   non_price_input_snapshot_warning,
+                   missing_lifecycle_input_qa_warning,
+                   non_price_input_mode
             FROM lifecycle_qa
             """
         ).fetchone()
-    assert row == (True, True, True, "in_memory_provider_priority", False)
+    assert row == (
+        True,
+        True,
+        True,
+        "in_memory_provider_priority",
+        True,
+        True,
+        "missing_lifecycle_input_qa",
+    )
 
 
 def test_phase5b4_price_snapshot_mismatch_warning_is_persisted(tmp_path: Path) -> None:

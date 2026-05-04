@@ -9,7 +9,7 @@ import duckdb
 from sectorscout.config import SectorScoutConfig, config_hash
 from sectorscout.metadata import RunMetadata, get_git_commit
 
-SCHEMA_VERSION = 18
+SCHEMA_VERSION = 19
 SCHEMA_PATH = Path(__file__).with_name("schema.sql")
 
 
@@ -41,12 +41,35 @@ MIGRATION_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("lifecycle_qa", "non_price_input_snapshot_warning", "BOOLEAN DEFAULT false"),
     ("lifecycle_qa", "market_regime_source_mismatch_warning", "BOOLEAN DEFAULT false"),
     ("lifecycle_qa", "theme_score_source_mismatch_warning", "BOOLEAN DEFAULT false"),
+    ("lifecycle_qa", "missing_market_regime_coverage_warning", "BOOLEAN DEFAULT false"),
+    ("lifecycle_qa", "missing_theme_score_coverage_warning", "BOOLEAN DEFAULT false"),
+    ("lifecycle_qa", "missing_lifecycle_input_qa_warning", "BOOLEAN DEFAULT false"),
+    ("lifecycle_qa", "mixed_source_signal_metadata_warning", "BOOLEAN DEFAULT false"),
     (
         "lifecycle_qa",
         "non_price_input_mode",
         "VARCHAR DEFAULT 'live_table_version_guardrail'",
     ),
     ("lifecycle_qa", "non_price_input_qa_json", "VARCHAR DEFAULT '{}'"),
+    ("lifecycle_input_qa", "expected_market_regime_sessions_json", "VARCHAR DEFAULT '[]'"),
+    ("lifecycle_input_qa", "missing_market_regime_sessions_json", "VARCHAR DEFAULT '[]'"),
+    ("lifecycle_input_qa", "expected_theme_score_keys_json", "VARCHAR DEFAULT '[]'"),
+    ("lifecycle_input_qa", "missing_theme_score_keys_json", "VARCHAR DEFAULT '[]'"),
+    (
+        "lifecycle_input_qa",
+        "missing_market_regime_coverage_warning",
+        "BOOLEAN DEFAULT false",
+    ),
+    (
+        "lifecycle_input_qa",
+        "missing_theme_score_coverage_warning",
+        "BOOLEAN DEFAULT false",
+    ),
+    (
+        "lifecycle_input_qa",
+        "mixed_source_signal_metadata_warning",
+        "BOOLEAN DEFAULT false",
+    ),
     ("price_snapshot_runs", "snapshot_rows_hash", "VARCHAR"),
 )
 

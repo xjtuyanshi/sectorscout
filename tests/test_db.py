@@ -140,12 +140,23 @@ def test_initialize_database_adds_missing_phase5b3_columns(tmp_path: Path) -> No
         "non_price_input_snapshot_warning",
         "market_regime_source_mismatch_warning",
         "theme_score_source_mismatch_warning",
+        "missing_market_regime_coverage_warning",
+        "missing_theme_score_coverage_warning",
+        "missing_lifecycle_input_qa_warning",
+        "mixed_source_signal_metadata_warning",
         "non_price_input_mode",
         "non_price_input_qa_json",
     }.issubset(lifecycle_qa_columns)
     assert {
+        "expected_market_regime_sessions_json",
+        "missing_market_regime_sessions_json",
+        "expected_theme_score_keys_json",
+        "missing_theme_score_keys_json",
         "market_regime_data_snapshot_ids_json",
         "theme_score_theme_versions_json",
+        "missing_market_regime_coverage_warning",
+        "missing_theme_score_coverage_warning",
+        "mixed_source_signal_metadata_warning",
         "non_price_input_snapshot_warning",
     }.issubset(lifecycle_input_qa_columns)
     assert "snapshot_rows_hash" in price_snapshot_run_columns

@@ -125,6 +125,10 @@ class LifecycleInputQA:
     execution_run_id: str
     market_regime_rows: int
     theme_score_rows: int
+    expected_market_regime_sessions: list[str]
+    missing_market_regime_sessions: list[str]
+    expected_theme_score_keys: list[str]
+    missing_theme_score_keys: list[str]
     market_regime_config_hashes: list[str]
     market_regime_git_commits: list[str]
     market_regime_data_snapshot_ids: list[str]
@@ -137,6 +141,9 @@ class LifecycleInputQA:
     theme_score_theme_versions: list[str]
     market_regime_source_mismatch_warning: bool
     theme_score_source_mismatch_warning: bool
+    missing_market_regime_coverage_warning: bool
+    missing_theme_score_coverage_warning: bool
+    mixed_source_signal_metadata_warning: bool
     non_price_input_snapshot_warning: bool
     non_price_input_mode: str
     lifecycle_generated_at: str
@@ -282,14 +289,34 @@ def _non_price_input_qa(
     if active_executions:
         start_date = min(_date_value(execution["entry_date"]) for execution in active_executions)
         theme_ids = sorted({execution["theme_id"] for execution in active_executions})
+        expected_market_regime_sessions = _session_dates(config, start_date, through_date)
+        expected_theme_score_pairs = sorted(
+            {
+                (execution["theme_id"], session)
+                for execution in active_executions
+                for session in _session_dates(
+                    config,
+                    _date_value(execution["entry_date"]),
+                    through_date,
+                )
+            }
+        )
     else:
         start_date = through_date
         theme_ids = []
+        expected_market_regime_sessions = []
+        expected_theme_score_pairs = []
 
     with connect_database(config.database.path) as connection:
         market_rows = connection.execute(
             """
-            SELECT config_hash, git_commit, data_snapshot_id, universe_version, theme_version
+            SELECT
+                asof_date,
+                config_hash,
+                git_commit,
+                data_snapshot_id,
+                universe_version,
+                theme_version
             FROM market_regime
             WHERE asof_date >= ?
               AND asof_date <= ?
@@ -300,7 +327,14 @@ def _non_price_input_qa(
         if theme_ids:
             theme_rows = connection.execute(
                 """
-                SELECT config_hash, git_commit, data_snapshot_id, universe_version, theme_version
+                SELECT
+                    theme_id,
+                    asof_date,
+                    config_hash,
+                    git_commit,
+                    data_snapshot_id,
+                    universe_version,
+                    theme_version
                 FROM theme_scores
                 WHERE theme_id IN (SELECT unnest(?))
                   AND asof_date >= ?
@@ -327,17 +361,31 @@ def _non_price_input_qa(
     )
     expected_universe_version = execution_context.get("source_universe_version")
     expected_theme_version = execution_context.get("source_theme_version")
+    mixed_source_warning = bool(execution_context.get("mixed_source_signal_metadata"))
 
-    market_config_hashes = _distinct_metadata_values(market_rows, 0)
-    market_git_commits = _distinct_metadata_values(market_rows, 1)
-    market_snapshots = _distinct_metadata_values(market_rows, 2)
-    market_universe_versions = _distinct_metadata_values(market_rows, 3)
-    market_theme_versions = _distinct_metadata_values(market_rows, 4)
-    theme_config_hashes = _distinct_metadata_values(theme_rows, 0)
-    theme_git_commits = _distinct_metadata_values(theme_rows, 1)
-    theme_snapshots = _distinct_metadata_values(theme_rows, 2)
-    theme_universe_versions = _distinct_metadata_values(theme_rows, 3)
-    theme_theme_versions = _distinct_metadata_values(theme_rows, 4)
+    present_market_sessions = {_date_value(row[0]) for row in market_rows}
+    missing_market_regime_sessions = [
+        session.isoformat()
+        for session in expected_market_regime_sessions
+        if session not in present_market_sessions
+    ]
+    present_theme_score_pairs = {(str(row[0]), _date_value(row[1])) for row in theme_rows}
+    missing_theme_score_keys = [
+        f"{theme_id}:{score_date.isoformat()}"
+        for theme_id, score_date in expected_theme_score_pairs
+        if (theme_id, score_date) not in present_theme_score_pairs
+    ]
+
+    market_config_hashes = _distinct_metadata_values(market_rows, 1)
+    market_git_commits = _distinct_metadata_values(market_rows, 2)
+    market_snapshots = _distinct_metadata_values(market_rows, 3)
+    market_universe_versions = _distinct_metadata_values(market_rows, 4)
+    market_theme_versions = _distinct_metadata_values(market_rows, 5)
+    theme_config_hashes = _distinct_metadata_values(theme_rows, 2)
+    theme_git_commits = _distinct_metadata_values(theme_rows, 3)
+    theme_snapshots = _distinct_metadata_values(theme_rows, 4)
+    theme_universe_versions = _distinct_metadata_values(theme_rows, 5)
+    theme_theme_versions = _distinct_metadata_values(theme_rows, 6)
 
     market_warning = any(
         (
@@ -357,11 +405,22 @@ def _non_price_input_qa(
             _metadata_mismatch(theme_theme_versions, expected_theme_version),
         )
     )
+    missing_market_warning = bool(missing_market_regime_sessions)
+    missing_theme_warning = bool(missing_theme_score_keys)
     return LifecycleInputQA(
         lifecycle_run_id=lifecycle_run_id,
         execution_run_id=execution_run_id,
         market_regime_rows=len(market_rows),
         theme_score_rows=len(theme_rows),
+        expected_market_regime_sessions=[
+            session.isoformat() for session in expected_market_regime_sessions
+        ],
+        missing_market_regime_sessions=missing_market_regime_sessions,
+        expected_theme_score_keys=[
+            f"{theme_id}:{score_date.isoformat()}"
+            for theme_id, score_date in expected_theme_score_pairs
+        ],
+        missing_theme_score_keys=missing_theme_score_keys,
         market_regime_config_hashes=market_config_hashes,
         market_regime_git_commits=market_git_commits,
         market_regime_data_snapshot_ids=market_snapshots,
@@ -374,7 +433,18 @@ def _non_price_input_qa(
         theme_score_theme_versions=theme_theme_versions,
         market_regime_source_mismatch_warning=market_warning,
         theme_score_source_mismatch_warning=theme_warning,
-        non_price_input_snapshot_warning=market_warning or theme_warning,
+        missing_market_regime_coverage_warning=missing_market_warning,
+        missing_theme_score_coverage_warning=missing_theme_warning,
+        mixed_source_signal_metadata_warning=mixed_source_warning,
+        non_price_input_snapshot_warning=any(
+            (
+                market_warning,
+                theme_warning,
+                missing_market_warning,
+                missing_theme_warning,
+                mixed_source_warning,
+            )
+        ),
         non_price_input_mode="live_table_version_guardrail",
         lifecycle_generated_at=metadata.signal_generated_at,
         lifecycle_config_hash=metadata.config_hash,
@@ -800,7 +870,9 @@ def persist_position_lifecycle(
             """
             INSERT INTO lifecycle_input_qa (
                 lifecycle_run_id, execution_run_id, market_regime_rows,
-                theme_score_rows, market_regime_config_hashes_json,
+                theme_score_rows, expected_market_regime_sessions_json,
+                missing_market_regime_sessions_json, expected_theme_score_keys_json,
+                missing_theme_score_keys_json, market_regime_config_hashes_json,
                 market_regime_git_commits_json,
                 market_regime_data_snapshot_ids_json,
                 market_regime_universe_versions_json,
@@ -812,16 +884,23 @@ def persist_position_lifecycle(
                 theme_score_theme_versions_json,
                 market_regime_source_mismatch_warning,
                 theme_score_source_mismatch_warning,
+                missing_market_regime_coverage_warning,
+                missing_theme_score_coverage_warning,
+                mixed_source_signal_metadata_warning,
                 non_price_input_snapshot_warning, non_price_input_mode,
                 lifecycle_generated_at_utc, lifecycle_config_hash,
                 lifecycle_git_commit, lifecycle_data_snapshot_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 input_qa.lifecycle_run_id,
                 input_qa.execution_run_id,
                 input_qa.market_regime_rows,
                 input_qa.theme_score_rows,
+                json.dumps(input_qa.expected_market_regime_sessions, sort_keys=True),
+                json.dumps(input_qa.missing_market_regime_sessions, sort_keys=True),
+                json.dumps(input_qa.expected_theme_score_keys, sort_keys=True),
+                json.dumps(input_qa.missing_theme_score_keys, sort_keys=True),
                 json.dumps(input_qa.market_regime_config_hashes, sort_keys=True),
                 json.dumps(input_qa.market_regime_git_commits, sort_keys=True),
                 json.dumps(input_qa.market_regime_data_snapshot_ids, sort_keys=True),
@@ -834,6 +913,9 @@ def persist_position_lifecycle(
                 json.dumps(input_qa.theme_score_theme_versions, sort_keys=True),
                 input_qa.market_regime_source_mismatch_warning,
                 input_qa.theme_score_source_mismatch_warning,
+                input_qa.missing_market_regime_coverage_warning,
+                input_qa.missing_theme_score_coverage_warning,
+                input_qa.mixed_source_signal_metadata_warning,
                 input_qa.non_price_input_snapshot_warning,
                 input_qa.non_price_input_mode,
                 input_qa.lifecycle_generated_at,
