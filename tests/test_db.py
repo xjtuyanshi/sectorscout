@@ -117,6 +117,24 @@ def test_initialize_database_adds_missing_phase5b3_columns(tmp_path: Path) -> No
             row[1]
             for row in connection.execute("PRAGMA table_info('price_snapshot_runs')").fetchall()
         }
+        lifecycle_input_snapshot_run_columns = {
+            row[1]
+            for row in connection.execute(
+                "PRAGMA table_info('lifecycle_input_snapshot_runs')"
+            ).fetchall()
+        }
+        lifecycle_market_snapshot_columns = {
+            row[1]
+            for row in connection.execute(
+                "PRAGMA table_info('lifecycle_market_regime_snapshot_rows')"
+            ).fetchall()
+        }
+        lifecycle_theme_snapshot_columns = {
+            row[1]
+            for row in connection.execute(
+                "PRAGMA table_info('lifecycle_theme_score_snapshot_rows')"
+            ).fetchall()
+        }
     assert {
         "source_signal_config_hash",
         "source_signal_git_commit",
@@ -125,7 +143,7 @@ def test_initialize_database_adds_missing_phase5b3_columns(tmp_path: Path) -> No
         "mixed_source_signal_metadata",
         "price_snapshot_id",
     }.issubset(execution_run_columns)
-    assert "price_snapshot_id" in lifecycle_columns
+    assert {"price_snapshot_id", "lifecycle_input_snapshot_id"}.issubset(lifecycle_columns)
     assert {
         "asof_date",
         "execution_model",
@@ -145,6 +163,8 @@ def test_initialize_database_adds_missing_phase5b3_columns(tmp_path: Path) -> No
         "missing_lifecycle_input_qa_warning",
         "mixed_source_signal_metadata_warning",
         "non_price_input_mode",
+        "lifecycle_input_snapshot_id",
+        "lifecycle_input_snapshot_rows_hash",
         "non_price_input_qa_json",
     }.issubset(lifecycle_qa_columns)
     assert {
@@ -158,5 +178,20 @@ def test_initialize_database_adds_missing_phase5b3_columns(tmp_path: Path) -> No
         "missing_theme_score_coverage_warning",
         "mixed_source_signal_metadata_warning",
         "non_price_input_snapshot_warning",
+        "lifecycle_input_snapshot_id",
+        "lifecycle_input_snapshot_rows_hash",
     }.issubset(lifecycle_input_qa_columns)
     assert "snapshot_rows_hash" in price_snapshot_run_columns
+    assert {
+        "lifecycle_input_snapshot_id",
+        "execution_run_id",
+        "snapshot_rows_hash",
+        "market_regime_rows",
+        "theme_score_rows",
+    }.issubset(lifecycle_input_snapshot_run_columns)
+    assert {"lifecycle_input_snapshot_id", "asof_date", "risk_state"}.issubset(
+        lifecycle_market_snapshot_columns
+    )
+    assert {"lifecycle_input_snapshot_id", "asof_date", "theme_id", "theme_score"}.issubset(
+        lifecycle_theme_snapshot_columns
+    )

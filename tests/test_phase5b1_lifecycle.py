@@ -13,6 +13,10 @@ from sectorscout.config import SectorScoutConfig
 from sectorscout.db import connect_database, initialize_database
 from sectorscout.lifecycle import generate_position_lifecycle
 import sectorscout.lifecycle as lifecycle_module
+from sectorscout.lifecycle_inputs import (
+    LifecycleInputSnapshotValidationError,
+    create_frozen_lifecycle_input_snapshot,
+)
 
 
 ENTRY = date(2024, 12, 2)
@@ -393,6 +397,230 @@ def test_phase5b6_lifecycle_input_qa_flags_mixed_source_metadata(
 
     assert result["input_qa"]["mixed_source_signal_metadata_warning"] is True
     assert result["input_qa"]["non_price_input_snapshot_warning"] is True
+
+
+def test_phase5b7_lifecycle_uses_frozen_non_price_snapshot_for_risk_off(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    _insert_execution_run_context(config)
+    _insert_accepted_execution(config)
+    for day in [ENTRY, date(2024, 12, 3), date(2024, 12, 4)]:
+        _insert_theme_score(config, day)
+    _insert_market_regime(config, ENTRY)
+    _insert_market_regime(config, date(2024, 12, 3), risk_state="RISK_OFF")
+    _insert_market_regime(config, date(2024, 12, 4))
+    _insert_prices(
+        config,
+        "TEST",
+        [
+            (ENTRY, 100.0, 102.0, 99.0, 101.0),
+            (date(2024, 12, 3), 101.0, 103.0, 100.0, 102.0),
+            (date(2024, 12, 4), 102.0, 104.0, 101.0, 103.0),
+        ],
+    )
+    snapshot = create_frozen_lifecycle_input_snapshot(
+        config,
+        RUN_ID,
+        date(2024, 12, 4),
+    )
+    with connect_database(config.database.path) as connection:
+        connection.execute(
+            """
+            UPDATE market_regime
+            SET risk_state = 'RISK_ON'
+            WHERE asof_date = DATE '2024-12-03'
+            """
+        )
+
+    result = generate_position_lifecycle(
+        config,
+        RUN_ID,
+        date(2024, 12, 4),
+        lifecycle_input_snapshot_id=snapshot.lifecycle_input_snapshot_id,
+    ).to_dict()
+
+    assert result["positions"][0]["exit_reason"] == "RISK_OFF_POLICY_PLACEHOLDER"
+    assert result["input_qa"]["non_price_input_mode"] == "persisted_lifecycle_input_snapshot"
+    assert result["input_qa"]["lifecycle_input_snapshot_id"] == snapshot.lifecycle_input_snapshot_id
+    assert result["input_qa"]["lifecycle_input_snapshot_rows_hash"] == snapshot.snapshot_rows_hash
+    with connect_database(config.database.path) as connection:
+        persisted = connection.execute(
+            """
+            SELECT lifecycle_input_snapshot_id
+            FROM lifecycle_runs
+            """
+        ).fetchone()
+    assert persisted == (snapshot.lifecycle_input_snapshot_id,)
+
+
+def test_phase5b7_lifecycle_input_snapshot_fails_on_missing_market_session(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    _insert_execution_run_context(config)
+    _insert_accepted_execution(config)
+    _insert_prices(config, "TEST", [(ENTRY, 100.0, 102.0, 99.0, 101.0)])
+    _insert_theme_score(config, ENTRY)
+    snapshot = create_frozen_lifecycle_input_snapshot(config, RUN_ID, ENTRY)
+
+    try:
+        generate_position_lifecycle(
+            config,
+            RUN_ID,
+            ENTRY,
+            lifecycle_input_snapshot_id=snapshot.lifecycle_input_snapshot_id,
+        )
+    except LifecycleInputSnapshotValidationError as exc:
+        assert "LIFECYCLE_INPUT_SNAPSHOT_MISSING_MARKET_REGIME_SESSIONS" in str(exc)
+    else:
+        raise AssertionError("Expected missing market-regime snapshot validation failure")
+
+
+def test_phase5b7_lifecycle_input_snapshot_fails_on_missing_theme_key(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    _insert_execution_run_context(config)
+    _insert_accepted_execution(config)
+    _insert_prices(config, "TEST", [(ENTRY, 100.0, 102.0, 99.0, 101.0)])
+    _insert_market_regime(config, ENTRY)
+    snapshot = create_frozen_lifecycle_input_snapshot(config, RUN_ID, ENTRY)
+
+    try:
+        generate_position_lifecycle(
+            config,
+            RUN_ID,
+            ENTRY,
+            lifecycle_input_snapshot_id=snapshot.lifecycle_input_snapshot_id,
+        )
+    except LifecycleInputSnapshotValidationError as exc:
+        assert "LIFECYCLE_INPUT_SNAPSHOT_MISSING_THEME_SCORE_KEYS" in str(exc)
+    else:
+        raise AssertionError("Expected missing theme-score snapshot validation failure")
+
+
+def test_phase5b7_lifecycle_input_snapshot_unknown_id_fails_fast(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    _insert_execution_run_context(config)
+    _insert_accepted_execution(config)
+
+    try:
+        generate_position_lifecycle(
+            config,
+            RUN_ID,
+            ENTRY,
+            lifecycle_input_snapshot_id="missing-snapshot",
+        )
+    except LifecycleInputSnapshotValidationError as exc:
+        assert "UNKNOWN_LIFECYCLE_INPUT_SNAPSHOT_ID" in str(exc)
+    else:
+        raise AssertionError("Expected unknown lifecycle input snapshot validation failure")
+
+
+def test_phase5b7_lifecycle_input_snapshot_hash_mismatch_fails_fast(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    _insert_execution_run_context(config)
+    _insert_accepted_execution(config)
+    _insert_prices(config, "TEST", [(ENTRY, 100.0, 102.0, 99.0, 101.0)])
+    _insert_market_regime(config, ENTRY)
+    _insert_theme_score(config, ENTRY)
+    snapshot = create_frozen_lifecycle_input_snapshot(config, RUN_ID, ENTRY)
+    with connect_database(config.database.path) as connection:
+        connection.execute(
+            """
+            UPDATE lifecycle_market_regime_snapshot_rows
+            SET risk_state = 'RISK_OFF'
+            WHERE lifecycle_input_snapshot_id = ?
+            """,
+            [snapshot.lifecycle_input_snapshot_id],
+        )
+
+    try:
+        generate_position_lifecycle(
+            config,
+            RUN_ID,
+            ENTRY,
+            lifecycle_input_snapshot_id=snapshot.lifecycle_input_snapshot_id,
+        )
+    except LifecycleInputSnapshotValidationError as exc:
+        assert "LIFECYCLE_INPUT_SNAPSHOT_HASH_MISMATCH" in str(exc)
+    else:
+        raise AssertionError("Expected lifecycle input snapshot hash mismatch")
+
+
+def test_phase5b7_lifecycle_input_snapshot_source_mismatch_fails_fast(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    _insert_execution_run_context(config)
+    _insert_accepted_execution(config)
+    _insert_prices(config, "TEST", [(ENTRY, 100.0, 102.0, 99.0, 101.0)])
+    _insert_market_regime(config, ENTRY, data_snapshot_id="other_snapshot")
+    _insert_theme_score(config, ENTRY)
+    snapshot = create_frozen_lifecycle_input_snapshot(config, RUN_ID, ENTRY)
+
+    try:
+        generate_position_lifecycle(
+            config,
+            RUN_ID,
+            ENTRY,
+            lifecycle_input_snapshot_id=snapshot.lifecycle_input_snapshot_id,
+        )
+    except LifecycleInputSnapshotValidationError as exc:
+        assert "LIFECYCLE_INPUT_SNAPSHOT_SOURCE_MISMATCH" in str(exc)
+    else:
+        raise AssertionError("Expected lifecycle input source mismatch")
+
+
+def test_phase5b7_lifecycle_input_snapshot_cli_output_has_no_formal_metric_terms(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    _insert_execution_run_context(config)
+    _insert_accepted_execution(config)
+    _insert_market_regime(config, ENTRY)
+    _insert_theme_score(config, ENTRY)
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(f"database:\n  path: {config.database.path}\n", encoding="utf-8")
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "lifecycle-input-snapshot",
+            "--execution-run-id",
+            RUN_ID,
+            "--through",
+            ENTRY.isoformat(),
+            "--no-persist",
+            "--config",
+            str(config_path),
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert "lifecycle_input_snapshot_id" in payload
+    output = result.stdout.lower()
+    for forbidden in (
+        "cagr",
+        "sharpe",
+        "max drawdown",
+        "annual return",
+        "annual returns",
+        "win_rate",
+        "win rate",
+        "profit_factor",
+        "profit factor",
+        "expectancy",
+        "edge claim",
+        "claim edge",
+    ):
+        assert forbidden not in output
 
 
 def test_phase5b1_gap_down_stop_at_open_exit(tmp_path: Path) -> None:

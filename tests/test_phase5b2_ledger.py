@@ -37,6 +37,7 @@ def _insert_lifecycle_context(
     source_theme_version: str = "signal_theme",
     execution_price_snapshot_id: str | None = None,
     lifecycle_price_snapshot_id: str | None = None,
+    lifecycle_input_snapshot_id: str | None = None,
 ) -> None:
     with connect_database(config.database.path) as connection:
         connection.execute(
@@ -75,11 +76,11 @@ def _insert_lifecycle_context(
                 lifecycle_run_id, execution_run_id, through_date,
                 lifecycle_generated_at_utc, lifecycle_config_hash,
                 lifecycle_git_commit, lifecycle_data_snapshot_id,
-                price_snapshot_id, created_at_utc
+                price_snapshot_id, lifecycle_input_snapshot_id, created_at_utc
             ) VALUES (
                 ?, ?, DATE '2024-12-06',
                 '2024-12-06T21:00:00+00:00', ?, 'lifecycle_commit',
-                ?, ?, '2024-12-06T21:00:00+00:00'
+                ?, ?, ?, '2024-12-06T21:00:00+00:00'
             )
             """,
             [
@@ -88,6 +89,7 @@ def _insert_lifecycle_context(
                 lifecycle_config_hash,
                 lifecycle_snapshot,
                 lifecycle_price_snapshot_id,
+                lifecycle_input_snapshot_id,
             ],
         )
 
@@ -190,6 +192,9 @@ def _insert_lifecycle_input_qa(
     missing_market_warning: bool = False,
     missing_theme_warning: bool = False,
     mixed_source_warning: bool = False,
+    aggregate_warning: bool | None = None,
+    lifecycle_input_snapshot_id: str | None = None,
+    snapshot_rows_hash: str | None = None,
 ) -> None:
     with connect_database(config.database.path) as connection:
         connection.execute(
@@ -214,6 +219,8 @@ def _insert_lifecycle_input_qa(
                 missing_theme_score_coverage_warning,
                 mixed_source_signal_metadata_warning,
                 non_price_input_snapshot_warning, non_price_input_mode,
+                lifecycle_input_snapshot_id,
+                lifecycle_input_snapshot_rows_hash,
                 lifecycle_generated_at_utc, lifecycle_config_hash,
                 lifecycle_git_commit, lifecycle_data_snapshot_id
             ) VALUES (
@@ -223,7 +230,7 @@ def _insert_lifecycle_input_qa(
                 '[\"snapshot\"]', '[\"universe\"]', '[\"theme\"]',
                 '[\"hash\"]', '[\"commit\"]', '[\"theme_snapshot\"]',
                 '[\"universe\"]', '[\"theme\"]', ?, ?, ?, ?, ?, ?,
-                'live_table_version_guardrail',
+                'live_table_version_guardrail', ?, ?,
                 '2024-12-06T21:00:00+00:00', 'lifecycle_hash',
                 'lifecycle_commit', 'lifecycle_snapshot'
             )
@@ -236,13 +243,17 @@ def _insert_lifecycle_input_qa(
                 missing_market_warning,
                 missing_theme_warning,
                 mixed_source_warning,
-                (
+                aggregate_warning
+                if aggregate_warning is not None
+                else (
                     market_warning
                     or theme_warning
                     or missing_market_warning
                     or missing_theme_warning
                     or mixed_source_warning
                 ),
+                lifecycle_input_snapshot_id,
+                snapshot_rows_hash,
             ],
         )
 
@@ -423,6 +434,8 @@ def test_phase5b2_provenance_and_warnings_are_persisted(tmp_path: Path) -> None:
         "execution_price_snapshot_id": None,
         "price_snapshot_mode": "in_memory_provider_priority",
         "non_price_input_mode": "missing_lifecycle_input_qa",
+        "lifecycle_input_snapshot_id": None,
+        "lifecycle_input_snapshot_rows_hash": None,
         "market_regime_rows": 0,
         "theme_score_rows": 0,
         "expected_market_regime_sessions": [],
@@ -512,6 +525,58 @@ def test_phase5b5_ledger_surfaces_non_price_input_snapshot_warning(tmp_path: Pat
         ).fetchone()
     assert row[:4] == (True, True, False, "live_table_version_guardrail")
     assert json.loads(row[4])["market_regime_source_mismatch_warning"] is True
+
+
+def test_phase5b7_ledger_derives_non_price_aggregate_from_components(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    _insert_lifecycle_context(config)
+    _insert_position(config)
+    _insert_lifecycle_input_qa(
+        config,
+        missing_theme_warning=True,
+        aggregate_warning=False,
+    )
+
+    result = generate_trade_ledger_qa(config, LIFECYCLE_RUN_ID).to_dict()
+
+    assert result["warnings"]["missing_theme_score_coverage_warning"] is True
+    assert result["warnings"]["non_price_input_snapshot_warning"] is True
+    with connect_database(config.database.path) as connection:
+        persisted = connection.execute(
+            "SELECT non_price_input_snapshot_warning FROM lifecycle_qa"
+        ).fetchone()
+    assert persisted == (True,)
+
+
+def test_phase5b7_ledger_provenance_includes_lifecycle_input_snapshot(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    _insert_lifecycle_context(
+        config,
+        lifecycle_input_snapshot_id="input-snapshot",
+    )
+    _insert_position(config)
+    _insert_lifecycle_input_qa(
+        config,
+        lifecycle_input_snapshot_id="input-snapshot",
+        snapshot_rows_hash="abc123",
+    )
+
+    result = generate_trade_ledger_qa(config, LIFECYCLE_RUN_ID).to_dict()
+
+    assert result["provenance"]["lifecycle_input_snapshot_id"] == "input-snapshot"
+    assert result["provenance"]["lifecycle_input_snapshot_rows_hash"] == "abc123"
+    with connect_database(config.database.path) as connection:
+        row = connection.execute(
+            """
+            SELECT lifecycle_input_snapshot_id, lifecycle_input_snapshot_rows_hash
+            FROM lifecycle_qa
+            """
+        ).fetchone()
+    assert row == ("input-snapshot", "abc123")
 
 
 def test_phase5b2_cli_output_has_no_formal_metric_terms(tmp_path: Path) -> None:

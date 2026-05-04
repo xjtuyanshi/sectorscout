@@ -9,6 +9,15 @@ import pandas as pd
 
 from sectorscout.config import SectorScoutConfig
 from sectorscout.db import connect_database
+from sectorscout.lifecycle_inputs import (
+    MARKET_REGIME_COLUMNS,
+    THEME_SCORE_COLUMNS,
+    expected_lifecycle_input_keys,
+    lifecycle_input_snapshot_rows_hash,
+    load_lifecycle_input_snapshot_market_rows,
+    load_lifecycle_input_snapshot_theme_rows,
+    validate_lifecycle_input_snapshot_usage,
+)
 from sectorscout.market_calendar import get_exchange_calendar
 from sectorscout.metadata import build_run_metadata
 from sectorscout.pit import BENCHMARK_SYMBOLS
@@ -107,6 +116,7 @@ class PositionLifecycleRunResult:
     execution_run_id: str
     through_date: str
     price_snapshot_id: str | None
+    lifecycle_input_snapshot_id: str | None
     positions: list[dict]
     exit_decisions: list[dict]
     skipped_executions: list[dict]
@@ -123,6 +133,8 @@ class PositionLifecycleRunResult:
 class LifecycleInputQA:
     lifecycle_run_id: str
     execution_run_id: str
+    lifecycle_input_snapshot_id: str | None
+    lifecycle_input_snapshot_rows_hash: str | None
     market_regime_rows: int
     theme_score_rows: int
     expected_market_regime_sessions: list[str]
@@ -263,8 +275,8 @@ def _load_execution_context(config: SectorScoutConfig, execution_run_id: str) ->
     return dict(zip(columns, row, strict=True))
 
 
-def _distinct_metadata_values(rows: list[tuple], index: int) -> list[str]:
-    return sorted({str(row[index]) for row in rows if row[index] is not None})
+def _distinct_metadata_values(rows: list[dict], key: str) -> list[str]:
+    return sorted({str(row[key]) for row in rows if row.get(key) is not None})
 
 
 def _metadata_mismatch(values: list[str], expected: str | None) -> bool:
@@ -280,71 +292,74 @@ def _non_price_input_qa(
     executions: list[dict],
     through_date: date,
     metadata,
+    *,
+    lifecycle_input_snapshot_id: str | None = None,
+    lifecycle_input_snapshot_rows_hash_value: str | None = None,
 ) -> LifecycleInputQA:
-    active_executions = [
-        execution
-        for execution in executions
-        if _date_value(execution["entry_date"]) <= through_date
-    ]
-    if active_executions:
-        start_date = min(_date_value(execution["entry_date"]) for execution in active_executions)
-        theme_ids = sorted({execution["theme_id"] for execution in active_executions})
-        expected_market_regime_sessions = _session_dates(config, start_date, through_date)
-        expected_theme_score_pairs = sorted(
-            {
-                (execution["theme_id"], session)
-                for execution in active_executions
-                for session in _session_dates(
-                    config,
-                    _date_value(execution["entry_date"]),
-                    through_date,
-                )
-            }
+    expected_market_regime_sessions, expected_theme_score_pairs = expected_lifecycle_input_keys(
+        config,
+        executions,
+        through_date,
+    )
+    start_date = (
+        min(expected_market_regime_sessions)
+        if expected_market_regime_sessions
+        else through_date
+    )
+    theme_ids = sorted({theme_id for theme_id, _score_date in expected_theme_score_pairs})
+    if lifecycle_input_snapshot_id is not None:
+        market_rows = load_lifecycle_input_snapshot_market_rows(
+            config,
+            lifecycle_input_snapshot_id,
+            start_date,
+            through_date,
+        )
+        theme_rows = load_lifecycle_input_snapshot_theme_rows(
+            config,
+            lifecycle_input_snapshot_id,
+            theme_ids,
+            start_date,
+            through_date,
+        )
+        non_price_mode = "persisted_lifecycle_input_snapshot"
+        snapshot_rows_hash = (
+            lifecycle_input_snapshot_rows_hash_value
+            or lifecycle_input_snapshot_rows_hash(market_rows, theme_rows)
         )
     else:
-        start_date = through_date
-        theme_ids = []
-        expected_market_regime_sessions = []
-        expected_theme_score_pairs = []
-
-    with connect_database(config.database.path) as connection:
-        market_rows = connection.execute(
-            """
-            SELECT
-                asof_date,
-                config_hash,
-                git_commit,
-                data_snapshot_id,
-                universe_version,
-                theme_version
-            FROM market_regime
-            WHERE asof_date >= ?
-              AND asof_date <= ?
-            ORDER BY asof_date
-            """,
-            [start_date, through_date],
-        ).fetchall()
-        if theme_ids:
-            theme_rows = connection.execute(
-                """
-                SELECT
-                    theme_id,
-                    asof_date,
-                    config_hash,
-                    git_commit,
-                    data_snapshot_id,
-                    universe_version,
-                    theme_version
-                FROM theme_scores
-                WHERE theme_id IN (SELECT unnest(?))
-                  AND asof_date >= ?
-                  AND asof_date <= ?
-                ORDER BY asof_date, theme_id
-                """,
-                [theme_ids, start_date, through_date],
-            ).fetchall()
-        else:
-            theme_rows = []
+        with connect_database(config.database.path) as connection:
+            market_rows = [
+                dict(zip(MARKET_REGIME_COLUMNS, row, strict=True))
+                for row in connection.execute(
+                    f"""
+                    SELECT {", ".join(MARKET_REGIME_COLUMNS)}
+                    FROM market_regime
+                    WHERE asof_date >= ?
+                      AND asof_date <= ?
+                    ORDER BY asof_date
+                    """,
+                    [start_date, through_date],
+                ).fetchall()
+            ]
+            if theme_ids:
+                theme_rows = [
+                    dict(zip(THEME_SCORE_COLUMNS, row, strict=True))
+                    for row in connection.execute(
+                        f"""
+                        SELECT {", ".join(THEME_SCORE_COLUMNS)}
+                        FROM theme_scores
+                        WHERE theme_id IN (SELECT unnest(?))
+                          AND asof_date >= ?
+                          AND asof_date <= ?
+                        ORDER BY asof_date, theme_id
+                        """,
+                        [theme_ids, start_date, through_date],
+                    ).fetchall()
+                ]
+            else:
+                theme_rows = []
+        non_price_mode = "live_table_version_guardrail"
+        snapshot_rows_hash = None
 
     execution_context = _load_execution_context(config, execution_run_id)
     expected_config_hash = (
@@ -363,29 +378,31 @@ def _non_price_input_qa(
     expected_theme_version = execution_context.get("source_theme_version")
     mixed_source_warning = bool(execution_context.get("mixed_source_signal_metadata"))
 
-    present_market_sessions = {_date_value(row[0]) for row in market_rows}
+    present_market_sessions = {_date_value(row["asof_date"]) for row in market_rows}
     missing_market_regime_sessions = [
         session.isoformat()
         for session in expected_market_regime_sessions
         if session not in present_market_sessions
     ]
-    present_theme_score_pairs = {(str(row[0]), _date_value(row[1])) for row in theme_rows}
+    present_theme_score_pairs = {
+        (str(row["theme_id"]), _date_value(row["asof_date"])) for row in theme_rows
+    }
     missing_theme_score_keys = [
         f"{theme_id}:{score_date.isoformat()}"
         for theme_id, score_date in expected_theme_score_pairs
         if (theme_id, score_date) not in present_theme_score_pairs
     ]
 
-    market_config_hashes = _distinct_metadata_values(market_rows, 1)
-    market_git_commits = _distinct_metadata_values(market_rows, 2)
-    market_snapshots = _distinct_metadata_values(market_rows, 3)
-    market_universe_versions = _distinct_metadata_values(market_rows, 4)
-    market_theme_versions = _distinct_metadata_values(market_rows, 5)
-    theme_config_hashes = _distinct_metadata_values(theme_rows, 2)
-    theme_git_commits = _distinct_metadata_values(theme_rows, 3)
-    theme_snapshots = _distinct_metadata_values(theme_rows, 4)
-    theme_universe_versions = _distinct_metadata_values(theme_rows, 5)
-    theme_theme_versions = _distinct_metadata_values(theme_rows, 6)
+    market_config_hashes = _distinct_metadata_values(market_rows, "config_hash")
+    market_git_commits = _distinct_metadata_values(market_rows, "git_commit")
+    market_snapshots = _distinct_metadata_values(market_rows, "data_snapshot_id")
+    market_universe_versions = _distinct_metadata_values(market_rows, "universe_version")
+    market_theme_versions = _distinct_metadata_values(market_rows, "theme_version")
+    theme_config_hashes = _distinct_metadata_values(theme_rows, "config_hash")
+    theme_git_commits = _distinct_metadata_values(theme_rows, "git_commit")
+    theme_snapshots = _distinct_metadata_values(theme_rows, "data_snapshot_id")
+    theme_universe_versions = _distinct_metadata_values(theme_rows, "universe_version")
+    theme_theme_versions = _distinct_metadata_values(theme_rows, "theme_version")
 
     market_warning = any(
         (
@@ -410,6 +427,8 @@ def _non_price_input_qa(
     return LifecycleInputQA(
         lifecycle_run_id=lifecycle_run_id,
         execution_run_id=execution_run_id,
+        lifecycle_input_snapshot_id=lifecycle_input_snapshot_id,
+        lifecycle_input_snapshot_rows_hash=snapshot_rows_hash,
         market_regime_rows=len(market_rows),
         theme_score_rows=len(theme_rows),
         expected_market_regime_sessions=[
@@ -445,7 +464,7 @@ def _non_price_input_qa(
                 mixed_source_warning,
             )
         ),
-        non_price_input_mode="live_table_version_guardrail",
+        non_price_input_mode=non_price_mode,
         lifecycle_generated_at=metadata.signal_generated_at,
         lifecycle_config_hash=metadata.config_hash,
         lifecycle_git_commit=metadata.git_commit,
@@ -591,23 +610,39 @@ def _risk_off_event(
     prices: pd.DataFrame,
     entry_date: date,
     through_date: date,
+    lifecycle_input_snapshot_id: str | None = None,
 ) -> dict | None:
-    with connect_database(config.database.path) as connection:
-        row = connection.execute(
-            """
-            SELECT asof_date
-            FROM market_regime
-            WHERE asof_date >= ?
-              AND asof_date <= ?
-              AND risk_state = 'RISK_OFF'
-            ORDER BY asof_date
-            LIMIT 1
-            """,
-            [entry_date, through_date],
-        ).fetchone()
-    if row is None:
+    if lifecycle_input_snapshot_id is not None:
+        rows = load_lifecycle_input_snapshot_market_rows(
+            config,
+            lifecycle_input_snapshot_id,
+            entry_date,
+            through_date,
+        )
+        risk_off_dates = [
+            _date_value(row["asof_date"])
+            for row in rows
+            if row["risk_state"] == "RISK_OFF"
+        ]
+    else:
+        with connect_database(config.database.path) as connection:
+            risk_off_dates = [
+                _date_value(row[0])
+                for row in connection.execute(
+                    """
+                    SELECT asof_date
+                    FROM market_regime
+                    WHERE asof_date >= ?
+                      AND asof_date <= ?
+                      AND risk_state = 'RISK_OFF'
+                    ORDER BY asof_date
+                    """,
+                    [entry_date, through_date],
+                ).fetchall()
+            ]
+    if not risk_off_dates:
         return None
-    event_date = _date_value(row[0])
+    event_date = sorted(risk_off_dates)[0]
     next_row = _next_price_row_after(prices, event_date)
     if next_row is None:
         return None
@@ -625,20 +660,35 @@ def _theme_failure_event(
     theme_id: str,
     entry_date: date,
     through_date: date,
+    lifecycle_input_snapshot_id: str | None = None,
 ) -> dict | None:
-    with connect_database(config.database.path) as connection:
-        rows = connection.execute(
-            """
-            SELECT asof_date, theme_score
-            FROM theme_scores
-            WHERE theme_id = ?
-              AND asof_date >= ?
-              AND asof_date <= ?
-            ORDER BY asof_date
-            """,
-            [theme_id, entry_date, through_date],
-        ).fetchall()
-    score_by_date = {_date_value(score_date): float(theme_score) for score_date, theme_score in rows}
+    if lifecycle_input_snapshot_id is not None:
+        rows = load_lifecycle_input_snapshot_theme_rows(
+            config,
+            lifecycle_input_snapshot_id,
+            [theme_id],
+            entry_date,
+            through_date,
+        )
+        score_by_date = {
+            _date_value(row["asof_date"]): float(row["theme_score"]) for row in rows
+        }
+    else:
+        with connect_database(config.database.path) as connection:
+            rows = connection.execute(
+                """
+                SELECT asof_date, theme_score
+                FROM theme_scores
+                WHERE theme_id = ?
+                  AND asof_date >= ?
+                  AND asof_date <= ?
+                ORDER BY asof_date
+                """,
+                [theme_id, entry_date, through_date],
+            ).fetchall()
+        score_by_date = {
+            _date_value(score_date): float(theme_score) for score_date, theme_score in rows
+        }
     streak = 0
     for score_date in _session_dates(config, entry_date, through_date):
         theme_score = score_by_date.get(score_date)
@@ -685,6 +735,7 @@ def _exit_for_execution(
     through_date: date,
     *,
     price_snapshot_id: str | None = None,
+    lifecycle_input_snapshot_id: str | None = None,
 ) -> dict | None:
     entry_date = _date_value(execution["entry_date"])
     prices = _load_prices(
@@ -700,9 +751,22 @@ def _exit_for_execution(
     risk_per_share = float(execution["risk_per_share"])
     events = _stop_events(prices, entry_date, stop_loss)
     for maybe_event in (
-        _risk_off_event(config, prices, entry_date, through_date),
+        _risk_off_event(
+            config,
+            prices,
+            entry_date,
+            through_date,
+            lifecycle_input_snapshot_id,
+        ),
         _trend_failure_event(prices, entry_date),
-        _theme_failure_event(config, prices, execution["theme_id"], entry_date, through_date),
+        _theme_failure_event(
+            config,
+            prices,
+            execution["theme_id"],
+            entry_date,
+            through_date,
+            lifecycle_input_snapshot_id,
+        ),
         _time_stop_event(
             prices,
             entry_date,
@@ -843,6 +907,7 @@ def persist_position_lifecycle(
     input_qa: LifecycleInputQA,
     metadata,
     price_snapshot_id: str | None,
+    lifecycle_input_snapshot_id: str | None,
 ) -> None:
     with connect_database(config.database.path) as connection:
         connection.execute(
@@ -851,8 +916,8 @@ def persist_position_lifecycle(
                 lifecycle_run_id, execution_run_id, through_date,
                 lifecycle_generated_at_utc, lifecycle_config_hash,
                 lifecycle_git_commit, lifecycle_data_snapshot_id,
-                price_snapshot_id, created_at_utc
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                price_snapshot_id, lifecycle_input_snapshot_id, created_at_utc
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 lifecycle_run_id,
@@ -863,6 +928,7 @@ def persist_position_lifecycle(
                 metadata.git_commit,
                 metadata.data_snapshot_id,
                 price_snapshot_id,
+                lifecycle_input_snapshot_id,
                 metadata.created_at,
             ],
         )
@@ -888,9 +954,11 @@ def persist_position_lifecycle(
                 missing_theme_score_coverage_warning,
                 mixed_source_signal_metadata_warning,
                 non_price_input_snapshot_warning, non_price_input_mode,
+                lifecycle_input_snapshot_id,
+                lifecycle_input_snapshot_rows_hash,
                 lifecycle_generated_at_utc, lifecycle_config_hash,
                 lifecycle_git_commit, lifecycle_data_snapshot_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 input_qa.lifecycle_run_id,
@@ -918,6 +986,8 @@ def persist_position_lifecycle(
                 input_qa.mixed_source_signal_metadata_warning,
                 input_qa.non_price_input_snapshot_warning,
                 input_qa.non_price_input_mode,
+                input_qa.lifecycle_input_snapshot_id,
+                input_qa.lifecycle_input_snapshot_rows_hash,
                 input_qa.lifecycle_generated_at,
                 input_qa.lifecycle_config_hash,
                 input_qa.lifecycle_git_commit,
@@ -1053,6 +1123,7 @@ def generate_position_lifecycle(
     *,
     persist: bool = True,
     price_snapshot_id: str | None = None,
+    lifecycle_input_snapshot_id: str | None = None,
 ) -> PositionLifecycleRunResult:
     metadata = build_run_metadata(config, "position-lifecycle", asof_date=through_date)
     lifecycle_run_id = str(uuid4())
@@ -1062,6 +1133,18 @@ def generate_position_lifecycle(
         else _load_execution_price_snapshot_id(config, execution_run_id)
     )
     executions = _load_accepted_executions(config, execution_run_id)
+    lifecycle_input_snapshot_rows_hash_value = None
+    if lifecycle_input_snapshot_id is not None:
+        lifecycle_input_snapshot_usage = validate_lifecycle_input_snapshot_usage(
+            config,
+            lifecycle_input_snapshot_id,
+            execution_run_id=execution_run_id,
+            through_date=through_date,
+            executions=executions,
+        )
+        lifecycle_input_snapshot_rows_hash_value = (
+            lifecycle_input_snapshot_usage.snapshot_rows_hash
+        )
     if effective_price_snapshot_id is not None:
         required_entry_dates: dict[str, set[date]] = {}
         for execution in executions:
@@ -1138,6 +1221,7 @@ def generate_position_lifecycle(
             execution,
             through_date,
             price_snapshot_id=effective_price_snapshot_id,
+            lifecycle_input_snapshot_id=lifecycle_input_snapshot_id,
         )
         positions.append(_build_position(execution, exit_event, lifecycle_run_id, metadata))
         if exit_event is not None:
@@ -1170,6 +1254,8 @@ def generate_position_lifecycle(
         executions,
         through_date,
         metadata,
+        lifecycle_input_snapshot_id=lifecycle_input_snapshot_id,
+        lifecycle_input_snapshot_rows_hash_value=lifecycle_input_snapshot_rows_hash_value,
     )
     if persist:
         persist_position_lifecycle(
@@ -1184,12 +1270,14 @@ def generate_position_lifecycle(
             input_qa,
             metadata,
             effective_price_snapshot_id,
+            lifecycle_input_snapshot_id,
         )
     return PositionLifecycleRunResult(
         lifecycle_run_id=lifecycle_run_id,
         execution_run_id=execution_run_id,
         through_date=through_date.isoformat(),
         price_snapshot_id=effective_price_snapshot_id,
+        lifecycle_input_snapshot_id=lifecycle_input_snapshot_id,
         positions=[row.to_dict() for row in positions],
         exit_decisions=[row.to_dict() for row in exits],
         skipped_executions=[row.to_dict() for row in skips],

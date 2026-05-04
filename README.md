@@ -4,12 +4,13 @@ SectorScout is a staged, point-in-time research system for finding strong market
 themes, ranking strong stocks inside those themes, and waiting for technical
 setups before labeling anything actionable.
 
-Current status: Phase 5B6 reproducibility scaffolding is implemented. It creates
+Current status: Phase 5B7 reproducibility scaffolding is implemented. It creates
 next-open execution-decision records from frozen Phase 4 triggered setup
 candidates, then builds simulated position lifecycle, exit-decision,
-trade-ledger QA, and baseline coverage QA records, with stronger run provenance
-, persisted frozen price snapshot validation, and non-price lifecycle input
-metadata guardrails. It does not calculate strategy performance.
+trade-ledger QA, and baseline coverage QA records, with stronger run provenance,
+persisted frozen price snapshot validation, non-price lifecycle input metadata
+guardrails, and frozen non-price lifecycle input snapshots. It does not
+calculate strategy performance.
 
 Implemented so far:
 
@@ -52,6 +53,10 @@ Implemented so far:
   live-table inputs do not match the source signal/execution provenance, when
   expected rows are missing, when lifecycle input QA is absent, or when source
   signal metadata is mixed.
+- Phase 5B7: frozen non-price lifecycle input snapshot scaffolding for
+  `market_regime` and `theme_scores`, with persisted required key coverage,
+  source metadata sets, rowset hashes, fail-fast validation, lifecycle CLI
+  wiring, and ledger provenance.
 
 Not implemented yet:
 
@@ -98,11 +103,10 @@ Current limitations:
 - Portfolio risk is still a scaffold: it handles per-day count and theme exposure
   sequencing, but not full open-position risk, sector exposure, or NEUTRAL sizing.
 - Provider-priority price selection can be persisted as frozen
-  `price_snapshot_runs` / `price_snapshot_rows`, but those snapshots freeze only
-  prices. Market-regime and theme-score lifecycle inputs now emit
-  `live_table_version_guardrail` QA metadata plus mismatch/missing-coverage
-  warnings, but they still need a full frozen snapshot model before formal
-  validation.
+  `price_snapshot_runs` / `price_snapshot_rows`. Market-regime and theme-score
+  lifecycle inputs can now be persisted as frozen lifecycle input snapshots, but
+  those snapshots are still provenance scaffolding and not formal validation or
+  performance evidence.
 
 ## Quick Start
 
@@ -136,7 +140,8 @@ Run the current research commands:
 .venv/bin/sectorscout detect-setups --asof 2024-11-29 --config config.yaml
 .venv/bin/sectorscout price-snapshot --asof 2024-12-31 --config config.yaml
 .venv/bin/sectorscout execution-decisions --asof 2024-11-29 --price-snapshot-id <price_snapshot_id> --config config.yaml
-.venv/bin/sectorscout position-lifecycle --execution-run-id <execution_run_id> --through 2024-12-31 --price-snapshot-id <price_snapshot_id> --config config.yaml
+.venv/bin/sectorscout lifecycle-input-snapshot --execution-run-id <execution_run_id> --through 2024-12-31 --config config.yaml
+.venv/bin/sectorscout position-lifecycle --execution-run-id <execution_run_id> --through 2024-12-31 --price-snapshot-id <price_snapshot_id> --lifecycle-input-snapshot-id <lifecycle_input_snapshot_id> --config config.yaml
 .venv/bin/sectorscout trade-ledger-qa --lifecycle-run-id <lifecycle_run_id> --config config.yaml
 .venv/bin/sectorscout report --date 2024-11-29 --config config.yaml
 ```
@@ -154,5 +159,5 @@ Important design constraints to review:
   claims.
 - Scores rank candidates; Phase 4 setup triggers create research candidates only.
 - The system must not output direct buy labels or execution instructions.
-- Phase 5A through Phase 5B6 records are not a performance backtest, so no
+- Phase 5A through Phase 5B7 records are not a performance backtest, so no
   performance claims should be inferred from the current repository.

@@ -91,6 +91,7 @@ def _load_lifecycle_context(config: SectorScoutConfig, lifecycle_run_id: str) ->
                 lr.lifecycle_git_commit,
                 lr.lifecycle_data_snapshot_id,
                 lr.price_snapshot_id,
+                lr.lifecycle_input_snapshot_id,
                 er.execution_config_hash,
                 er.execution_git_commit,
                 er.execution_data_snapshot_id,
@@ -119,6 +120,7 @@ def _load_lifecycle_context(config: SectorScoutConfig, lifecycle_run_id: str) ->
         "lifecycle_git_commit",
         "lifecycle_data_snapshot_id",
         "lifecycle_price_snapshot_id",
+        "lifecycle_input_snapshot_id",
         "execution_config_hash",
         "execution_git_commit",
         "execution_data_snapshot_id",
@@ -248,7 +250,9 @@ def _load_lifecycle_input_qa(config: SectorScoutConfig, lifecycle_run_id: str) -
                 missing_theme_score_coverage_warning,
                 mixed_source_signal_metadata_warning,
                 non_price_input_snapshot_warning,
-                non_price_input_mode
+                non_price_input_mode,
+                lifecycle_input_snapshot_id,
+                lifecycle_input_snapshot_rows_hash
             FROM lifecycle_input_qa
             WHERE lifecycle_run_id = ?
             """,
@@ -280,6 +284,8 @@ def _load_lifecycle_input_qa(config: SectorScoutConfig, lifecycle_run_id: str) -
             "mixed_source_signal_metadata_warning": False,
             "non_price_input_snapshot_warning": True,
             "non_price_input_mode": "missing_lifecycle_input_qa",
+            "lifecycle_input_snapshot_id": None,
+            "lifecycle_input_snapshot_rows_hash": None,
         }
     columns = [
         "market_regime_rows",
@@ -305,6 +311,8 @@ def _load_lifecycle_input_qa(config: SectorScoutConfig, lifecycle_run_id: str) -
         "mixed_source_signal_metadata_warning",
         "non_price_input_snapshot_warning",
         "non_price_input_mode",
+        "lifecycle_input_snapshot_id",
+        "lifecycle_input_snapshot_rows_hash",
     ]
     payload = dict(zip(columns, row, strict=True))
     for key in (
@@ -451,6 +459,17 @@ def _warning_flags(
 ) -> dict:
     lifecycle_snapshot_id = context.get("lifecycle_price_snapshot_id")
     execution_snapshot_id = context.get("execution_price_snapshot_id")
+    component_non_price_warning = any(
+        bool(input_qa.get(key))
+        for key in (
+            "market_regime_source_mismatch_warning",
+            "theme_score_source_mismatch_warning",
+            "missing_market_regime_coverage_warning",
+            "missing_theme_score_coverage_warning",
+            "missing_lifecycle_input_qa_warning",
+            "mixed_source_signal_metadata_warning",
+        )
+    )
     return {
         "config_mismatch_warning": (
             context.get("execution_config_hash") is not None
@@ -471,6 +490,7 @@ def _warning_flags(
         ),
         "non_price_input_snapshot_warning": bool(
             input_qa.get("non_price_input_snapshot_warning")
+            or component_non_price_warning
         ),
         "market_regime_source_mismatch_warning": bool(
             input_qa.get("market_regime_source_mismatch_warning")
@@ -521,6 +541,11 @@ def _provenance(context: dict, input_qa: dict) -> dict:
         "non_price_input_mode": input_qa.get(
             "non_price_input_mode",
             "live_table_version_guardrail",
+        ),
+        "lifecycle_input_snapshot_id": input_qa.get("lifecycle_input_snapshot_id")
+        or context.get("lifecycle_input_snapshot_id"),
+        "lifecycle_input_snapshot_rows_hash": input_qa.get(
+            "lifecycle_input_snapshot_rows_hash"
         ),
         "market_regime_rows": input_qa.get("market_regime_rows", 0),
         "theme_score_rows": input_qa.get("theme_score_rows", 0),
@@ -625,11 +650,12 @@ def persist_trade_ledger_qa(
                 missing_theme_score_coverage_warning,
                 missing_lifecycle_input_qa_warning,
                 mixed_source_signal_metadata_warning,
-                non_price_input_mode, non_price_input_qa_json,
+                non_price_input_mode, lifecycle_input_snapshot_id,
+                lifecycle_input_snapshot_rows_hash, non_price_input_qa_json,
                 price_snapshot_mode,
                 lifecycle_generated_at_utc, lifecycle_config_hash,
                 lifecycle_git_commit, lifecycle_data_snapshot_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 lifecycle_run_id,
@@ -662,6 +688,9 @@ def persist_trade_ledger_qa(
                 warnings["missing_lifecycle_input_qa_warning"],
                 warnings["mixed_source_signal_metadata_warning"],
                 input_qa.get("non_price_input_mode", "live_table_version_guardrail"),
+                input_qa.get("lifecycle_input_snapshot_id")
+                or context.get("lifecycle_input_snapshot_id"),
+                input_qa.get("lifecycle_input_snapshot_rows_hash"),
                 json.dumps(input_qa, sort_keys=True),
                 _price_snapshot_mode(context),
                 context["lifecycle_generated_at"],

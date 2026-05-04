@@ -369,6 +369,7 @@ CREATE TABLE IF NOT EXISTS lifecycle_runs (
     lifecycle_git_commit VARCHAR NOT NULL,
     lifecycle_data_snapshot_id VARCHAR NOT NULL,
     price_snapshot_id VARCHAR,
+    lifecycle_input_snapshot_id VARCHAR,
     created_at_utc TIMESTAMPTZ NOT NULL
 );
 
@@ -477,10 +478,88 @@ CREATE TABLE IF NOT EXISTS lifecycle_input_qa (
     mixed_source_signal_metadata_warning BOOLEAN NOT NULL DEFAULT false,
     non_price_input_snapshot_warning BOOLEAN NOT NULL DEFAULT false,
     non_price_input_mode VARCHAR NOT NULL DEFAULT 'live_table_version_guardrail',
+    lifecycle_input_snapshot_id VARCHAR,
+    lifecycle_input_snapshot_rows_hash VARCHAR,
     lifecycle_generated_at_utc TIMESTAMPTZ NOT NULL,
     lifecycle_config_hash VARCHAR NOT NULL,
     lifecycle_git_commit VARCHAR NOT NULL,
     lifecycle_data_snapshot_id VARCHAR NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS lifecycle_input_snapshot_runs (
+    lifecycle_input_snapshot_id VARCHAR PRIMARY KEY,
+    execution_run_id VARCHAR NOT NULL,
+    through_date DATE NOT NULL,
+    expected_market_regime_sessions_json VARCHAR NOT NULL DEFAULT '[]',
+    expected_theme_score_keys_json VARCHAR NOT NULL DEFAULT '[]',
+    market_regime_rows INTEGER NOT NULL,
+    theme_score_rows INTEGER NOT NULL,
+    market_regime_rows_hash VARCHAR NOT NULL,
+    theme_score_rows_hash VARCHAR NOT NULL,
+    snapshot_rows_hash VARCHAR NOT NULL,
+    market_regime_config_hashes_json VARCHAR NOT NULL DEFAULT '[]',
+    market_regime_git_commits_json VARCHAR NOT NULL DEFAULT '[]',
+    market_regime_data_snapshot_ids_json VARCHAR NOT NULL DEFAULT '[]',
+    market_regime_universe_versions_json VARCHAR NOT NULL DEFAULT '[]',
+    market_regime_theme_versions_json VARCHAR NOT NULL DEFAULT '[]',
+    theme_score_config_hashes_json VARCHAR NOT NULL DEFAULT '[]',
+    theme_score_git_commits_json VARCHAR NOT NULL DEFAULT '[]',
+    theme_score_data_snapshot_ids_json VARCHAR NOT NULL DEFAULT '[]',
+    theme_score_universe_versions_json VARCHAR NOT NULL DEFAULT '[]',
+    theme_score_theme_versions_json VARCHAR NOT NULL DEFAULT '[]',
+    config_hash VARCHAR NOT NULL,
+    git_commit VARCHAR NOT NULL,
+    data_snapshot_id VARCHAR NOT NULL,
+    created_at_utc TIMESTAMPTZ NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS lifecycle_market_regime_snapshot_rows (
+    lifecycle_input_snapshot_id VARCHAR NOT NULL,
+    asof_date DATE NOT NULL,
+    spy_stage VARCHAR NOT NULL,
+    qqq_stage VARCHAR NOT NULL,
+    spy_above_50dma BOOLEAN NOT NULL,
+    spy_above_200dma BOOLEAN NOT NULL,
+    qqq_above_50dma BOOLEAN NOT NULL,
+    qqq_above_200dma BOOLEAN NOT NULL,
+    pct_universe_above_50dma DOUBLE NOT NULL,
+    pct_universe_above_200dma DOUBLE NOT NULL,
+    pct_universe_stage2 DOUBLE NOT NULL,
+    risk_state VARCHAR NOT NULL,
+    signal_generated_at_utc TIMESTAMPTZ NOT NULL,
+    config_hash VARCHAR NOT NULL,
+    git_commit VARCHAR NOT NULL,
+    data_snapshot_id VARCHAR NOT NULL,
+    universe_version VARCHAR NOT NULL,
+    theme_version VARCHAR NOT NULL,
+    PRIMARY KEY (lifecycle_input_snapshot_id, asof_date)
+);
+
+CREATE TABLE IF NOT EXISTS lifecycle_theme_score_snapshot_rows (
+    lifecycle_input_snapshot_id VARCHAR NOT NULL,
+    asof_date DATE NOT NULL,
+    theme_id VARCHAR NOT NULL,
+    theme_score DOUBLE NOT NULL,
+    technical_relative_strength DOUBLE NOT NULL,
+    breadth DOUBLE NOT NULL,
+    fundamental_acceleration DOUBLE NOT NULL,
+    catalyst_score DOUBLE NOT NULL,
+    risk_valuation_penalty DOUBLE NOT NULL,
+    component_coverage_pct DOUBLE NOT NULL,
+    members_count INTEGER NOT NULL,
+    raw_members_count INTEGER NOT NULL,
+    eligible_members_count INTEGER NOT NULL,
+    excluded_members_count INTEGER NOT NULL,
+    technical_coverage_pct DOUBLE NOT NULL,
+    theme_fundamental_coverage_pct DOUBLE NOT NULL,
+    members_with_valid_fundamentals INTEGER NOT NULL,
+    signal_generated_at_utc TIMESTAMPTZ NOT NULL,
+    config_hash VARCHAR NOT NULL,
+    git_commit VARCHAR NOT NULL,
+    data_snapshot_id VARCHAR NOT NULL,
+    universe_version VARCHAR NOT NULL,
+    theme_version VARCHAR NOT NULL,
+    PRIMARY KEY (lifecycle_input_snapshot_id, asof_date, theme_id)
 );
 
 CREATE TABLE IF NOT EXISTS trade_ledger (
@@ -545,6 +624,8 @@ CREATE TABLE IF NOT EXISTS lifecycle_qa (
     missing_lifecycle_input_qa_warning BOOLEAN NOT NULL DEFAULT false,
     mixed_source_signal_metadata_warning BOOLEAN NOT NULL DEFAULT false,
     non_price_input_mode VARCHAR NOT NULL DEFAULT 'live_table_version_guardrail',
+    lifecycle_input_snapshot_id VARCHAR,
+    lifecycle_input_snapshot_rows_hash VARCHAR,
     non_price_input_qa_json VARCHAR NOT NULL DEFAULT '{}',
     price_snapshot_mode VARCHAR NOT NULL,
     lifecycle_generated_at_utc TIMESTAMPTZ NOT NULL,

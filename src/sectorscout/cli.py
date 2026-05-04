@@ -26,6 +26,7 @@ from sectorscout.ingest import (
 from sectorscout.indicators import compute_technical_indicators
 from sectorscout.ledger import generate_trade_ledger_qa
 from sectorscout.lifecycle import generate_position_lifecycle
+from sectorscout.lifecycle_inputs import create_frozen_lifecycle_input_snapshot
 from sectorscout.market_regime import compute_market_regime
 from sectorscout.market_calendar import asof_market_close, to_market_time
 from sectorscout.metadata import build_run_metadata
@@ -305,6 +306,10 @@ def position_lifecycle(
     execution_run_id: str = typer.Option(..., "--execution-run-id"),
     through: str = typer.Option(..., "--through"),
     price_snapshot_id: str | None = typer.Option(None, "--price-snapshot-id"),
+    lifecycle_input_snapshot_id: str | None = typer.Option(
+        None,
+        "--lifecycle-input-snapshot-id",
+    ),
     persist: bool = typer.Option(True, "--persist/--no-persist"),
     config: Path = typer.Option(Path("config.yaml"), "--config"),
 ) -> None:
@@ -317,6 +322,7 @@ def position_lifecycle(
         through_date,
         persist=persist,
         price_snapshot_id=price_snapshot_id,
+        lifecycle_input_snapshot_id=lifecycle_input_snapshot_id,
     )
     typer.echo(json.dumps(result.to_dict(), indent=2, sort_keys=True))
 
@@ -346,6 +352,25 @@ def price_snapshot(
     parsed_asof = _parse_iso_date(asof)
     assert parsed_asof is not None
     result = create_frozen_price_snapshot(loaded, parsed_asof, persist=persist)
+    typer.echo(json.dumps(result.to_dict(), indent=2, sort_keys=True))
+
+
+@app.command("lifecycle-input-snapshot")
+def lifecycle_input_snapshot(
+    execution_run_id: str = typer.Option(..., "--execution-run-id"),
+    through: str = typer.Option(..., "--through"),
+    persist: bool = typer.Option(True, "--persist/--no-persist"),
+    config: Path = typer.Option(Path("config.yaml"), "--config"),
+) -> None:
+    loaded = _load(config)
+    through_date = _parse_iso_date(through)
+    assert through_date is not None
+    result = create_frozen_lifecycle_input_snapshot(
+        loaded,
+        execution_run_id,
+        through_date,
+        persist=persist,
+    )
     typer.echo(json.dumps(result.to_dict(), indent=2, sort_keys=True))
 
 
