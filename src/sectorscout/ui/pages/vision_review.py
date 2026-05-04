@@ -7,7 +7,12 @@ import pandas as pd
 import streamlit as st
 
 from sectorscout.intel.models import TradeViewDraft
-from sectorscout.intel.storage import insert_trade_view, mark_image_observation_reviewed, set_trade_view_confirmed
+from sectorscout.intel.storage import (
+    insert_trade_view,
+    mark_image_observation_reviewed,
+    mark_media_trade_views_superseded,
+    set_trade_view_confirmed,
+)
 from sectorscout.intel.symbol_normalize import normalize_symbols
 from sectorscout.ui.data import UIContext, parse_json_list, table_df
 
@@ -82,6 +87,7 @@ def render(ctx: UIContext) -> None:
                 )
                 view_id = insert_trade_view(ctx.config, raw_item_id=obs.get("raw_item_id"), draft=draft)
                 set_trade_view_confirmed(ctx.config, view_id, True)
+                mark_media_trade_views_superseded(ctx.config, str(obs["media_id"]), view_id)
                 mark_image_observation_reviewed(ctx.config, str(obs["observation_id"]))
                 st.success(f"Saved confirmed view {view_id}.")
                 st.rerun()

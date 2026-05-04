@@ -38,7 +38,7 @@ def render(ctx: UIContext) -> None:
             "public_web": "enabled",
             "manual_capture": "enabled",
             "vision_provider": "configured" if status["openai_vision_provider"] else "missing",
-            "x_api": "token present" if status["x_api"] else "skipped - token missing",
+            "x_api": status["x_api_status"],
             "discord_manual_capture": "enabled",
             "discord_official_bot": "not implemented in MVP",
             "compliance": [

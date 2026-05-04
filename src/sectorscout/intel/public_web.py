@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ipaddress
 import re
 import urllib.error
 import urllib.parse
@@ -65,15 +66,37 @@ def _looks_login_required(text: str) -> bool:
     return sum(1 for term in login_terms if term in lowered) >= 2 and len(text) < 2500
 
 
-def _fetch_url(url: str) -> tuple[str, str]:
+def _is_public_http_url(url: str) -> tuple[bool, str | None]:
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in {"http", "https"}:
+        return False, "Only public http/https URLs are supported."
+    if parsed.username or parsed.password:
+        return False, "Credentialed URLs are not supported."
+    host = parsed.hostname
+    if not host:
+        return False, "URL host is missing."
+    lowered = host.lower()
+    if lowered in {"localhost", "0.0.0.0"} or lowered.endswith(".local"):
+        return False, "Local/private hosts are not supported."
+    try:
+        address = ipaddress.ip_address(lowered)
+    except ValueError:
+        return True, None
+    if not address.is_global:
+        return False, "Local/private IP addresses are not supported."
+    return True, None
+
+
+def _fetch_url(url: str) -> tuple[str, str, str]:
     request = urllib.request.Request(
         url,
         headers={"User-Agent": "SectorScoutIntel/0.1 public research fetcher"},
     )
     with urllib.request.urlopen(request, timeout=20) as response:
         content_type = response.headers.get("content-type", "")
+        final_url = response.geturl()
         payload = response.read(2_000_000).decode("utf-8", errors="replace")
-    return content_type, payload
+    return content_type, payload, final_url
 
 
 def collect_public_url(
@@ -85,16 +108,20 @@ def collect_public_url(
     metadata: dict | None = None,
 ) -> PublicWebResult:
     parsed = urllib.parse.urlparse(url)
-    if parsed.scheme not in {"http", "https"}:
-        return PublicWebResult("SKIPPED", None, None, url, "Only public http/https URLs are supported.")
+    allowed, reason = _is_public_http_url(url)
+    if not allowed:
+        return PublicWebResult("SKIPPED", None, None, url, reason)
     try:
-        content_type, payload = _fetch_url(url)
+        content_type, payload, final_url = _fetch_url(url)
     except urllib.error.HTTPError as exc:
         if exc.code in {401, 403}:
             return PublicWebResult("LOGIN_REQUIRED", None, None, url, f"HTTP {exc.code}")
         return PublicWebResult("ERROR", None, None, url, f"HTTP {exc.code}")
     except Exception as exc:
         return PublicWebResult("ERROR", None, None, url, str(exc))
+    allowed, reason = _is_public_http_url(final_url)
+    if not allowed:
+        return PublicWebResult("SKIPPED", None, None, url, f"Redirected to unsupported URL: {reason}")
 
     parser = _ReadableHTMLParser()
     if "html" in content_type.lower() or re.search(r"<html|<article|<body", payload, re.I):

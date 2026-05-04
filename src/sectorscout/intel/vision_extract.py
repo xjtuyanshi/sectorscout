@@ -37,7 +37,8 @@ def _load_media(config: SectorScoutConfig, media_id: str) -> dict:
     with connect_database(config.database.path) as connection:
         row = connection.execute(
             """
-            SELECT media_id, raw_item_id, source_id, source_url, local_path, mime_type, rights_scope
+            SELECT media_id, raw_item_id, source_id, source_url, local_path,
+                   mime_type, rights_scope, metadata_json
             FROM intel_media_items
             WHERE media_id = ?
             """,
@@ -53,6 +54,7 @@ def _load_media(config: SectorScoutConfig, media_id: str) -> dict:
         "local_path": row[4],
         "mime_type": row[5],
         "rights_scope": row[6],
+        "metadata": json.loads(row[7] or "{}"),
     }
 
 
@@ -188,6 +190,25 @@ def extract_image_observation(config: SectorScoutConfig, media_id: str) -> str:
             requires_review=True,
         )
         set_media_status(config, media_id, "pending_vision_provider")
+        return observation_id
+
+    if media["rights_scope"] != "public" and not media["metadata"].get("vision_provider_consent"):
+        observation_id = insert_image_observation(
+            config,
+            media_id=media_id,
+            raw_item_id=media["raw_item_id"],
+            source_id=media["source_id"],
+            extracted_text=None,
+            symbols=[],
+            timeframe="unknown",
+            visible_levels=[],
+            visible_annotations=[],
+            inferred_context="Vision provider processing requires explicit user consent for non-public captures.",
+            extraction_provider="none",
+            extraction_confidence="low",
+            requires_review=True,
+        )
+        set_media_status(config, media_id, "pending_vision_consent")
         return observation_id
 
     try:

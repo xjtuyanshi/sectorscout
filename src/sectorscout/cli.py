@@ -385,9 +385,12 @@ def _launch_streamlit(config: Path, port: int) -> None:
         str(config),
     ]
     try:
-        subprocess.run(command, check=False)
+        completed = subprocess.run(command, check=False)
     except ModuleNotFoundError:
         typer.echo("Streamlit is not installed. Run: uv pip install -e '.[dev]'", err=True)
+        raise typer.Exit(code=1) from None
+    if completed.returncode != 0:
+        raise typer.Exit(code=completed.returncode)
 
 
 @app.command()

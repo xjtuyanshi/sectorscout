@@ -38,6 +38,11 @@ def render(ctx: UIContext) -> None:
 
     st.subheader("Upload Markdown Or Image")
     uploaded = st.file_uploader("Upload .md, .png, .jpg, .jpeg, .webp", type=["md", "png", "jpg", "jpeg", "webp"])
+    allow_vision_provider = st.checkbox(
+        "Allow configured vision provider to process this image",
+        value=False,
+        help="For private or authorized-channel captures, leave this off unless you explicitly want the image sent to the configured vision provider.",
+    )
     if uploaded is not None and st.button("Save uploaded file"):
         payload = uploaded.getvalue()
         if uploaded.name.lower().endswith(".md"):
@@ -51,7 +56,13 @@ def render(ctx: UIContext) -> None:
                 raw_item_id=None,
                 source_id=source_id,
                 rights_scope=rights_scope,
-                metadata={"platform": platform, "author": author, "channel": channel, "tags": tags},
+                metadata={
+                    "platform": platform,
+                    "author": author,
+                    "channel": channel,
+                    "tags": tags,
+                    "vision_provider_consent": allow_vision_provider,
+                },
             )
             observation_id = extract_image_observation(ctx.config, media_id)
             st.success(f"Saved media {media_id}. Observation: {observation_id}.")

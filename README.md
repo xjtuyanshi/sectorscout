@@ -2,13 +2,16 @@
 
 SectorScout is a staged, point-in-time research system for finding strong market
 themes, ranking strong stocks inside those themes, and waiting for technical
-setups before labeling anything actionable.
+setups before labeling downstream research candidates.
 
-Current status: Phase 5B3 reproducibility scaffolding is implemented. It creates next-open
+Current status: Phase 5B3 reproducibility scaffolding and the Intel Capture +
+Vision MVP dashboard are implemented. The Phase 5 flow creates next-open
 execution-decision records from frozen Phase 4 triggered setup candidates, then
 builds simulated position lifecycle, exit-decision, trade-ledger QA, and
 baseline coverage QA records, with stronger run provenance and frozen price
-snapshot scaffolding. It does not calculate strategy performance.
+snapshot scaffolding. The dashboard adds external intel capture, screenshot
+review, overlap visibility, notes, source status, and Markdown intel reports. It
+does not calculate strategy performance.
 
 Implemented so far:
 
@@ -42,13 +45,18 @@ Implemented so far:
   signal metadata on `execution_runs`, richer `trade_ledger` identity fields,
   per-symbol baseline coverage QA, calendar-vs-trading-session holding counts,
   and `price_snapshot_runs` / `price_snapshot_rows` scaffolding.
+- Intel Capture + Vision MVP 0.1: Streamlit dashboard, Chandler fixture,
+  manual capture inbox, public web collection for public URLs, image storage and
+  vision-provider fallback, vision review workflow, internal-vs-external overlap
+  labels, notes/review storage, and daily Markdown intel reports.
 
 Not implemented yet:
 
 - Formal Phase 5 backtesting: full baselines, ablation, rolling/expanding
   validation, performance metrics, or performance conclusions.
-- Phase 6: Streamlit dashboard, documentation polish, CI, and GitHub-ready demo
-  workflow.
+- Full X ingestion, automatic Discord group collection, official Discord bot
+  ingestion, browser-login collection, or private-channel crawling.
+- Phase 6 documentation polish, CI, and GitHub-ready demo workflow.
 - Live data providers. Current ingestion is CSV/fixture based.
 
 Current limitations:
@@ -89,6 +97,10 @@ Current limitations:
   sequencing, but not full open-position risk, sector exposure, or NEUTRAL sizing.
 - Provider-priority price selection is currently an in-memory snapshot layer; it
   is not yet persisted as a frozen price snapshot table.
+- External intel is an overlay only. It does not modify SectorScout scores,
+  setup detection, execution QA, lifecycle QA, or ledger QA.
+- Vision-provider processing is optional. Non-public images stay local unless
+  the user explicitly allows the configured provider to process that image.
 
 ## Quick Start
 

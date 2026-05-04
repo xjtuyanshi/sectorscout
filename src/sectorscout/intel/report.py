@@ -5,7 +5,6 @@ from pathlib import Path
 
 from sectorscout.config import SectorScoutConfig, config_hash
 from sectorscout.db import connect_database
-from sectorscout.intel.chandler_seed import seed_chandler_fixture
 from sectorscout.intel.overlap import compute_overlap
 from sectorscout.intel.storage import ensure_intel_tables
 from sectorscout.metadata import get_git_commit
@@ -59,7 +58,6 @@ def generate_intel_daily_report(
     output_dir: str | Path = "data/intel/reports",
 ) -> Path:
     ensure_intel_tables(config)
-    seed_chandler_fixture(config, asof_date=asof_date)
     overlap = compute_overlap(config)
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)

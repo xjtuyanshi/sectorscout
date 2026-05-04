@@ -142,6 +142,7 @@ def load_external_views(config: SectorScoutConfig) -> pd.DataFrame:
                canonical_symbols_json, extraction_confidence, requires_review,
                user_confirmed, risk_notes, invalidation_condition
         FROM intel_trade_views
+        WHERE superseded_by_view_id IS NULL
         ORDER BY created_at DESC
         """,
     )
@@ -185,8 +186,10 @@ def classify_overlap(
         return "NEEDS_REVIEW"
     if has_internal and direction in {"bearish", "mixed"}:
         return "CONFLICT"
-    if has_internal and direction in {"bullish", "conditional", "neutral", "unknown"}:
+    if has_internal and direction in {"bullish", "conditional"}:
         return "CONFIRMED"
+    if has_internal and direction in {"neutral", "unknown"}:
+        return "NEEDS_REVIEW"
     if not has_internal and direction in {"unknown", "neutral"}:
         return "WATCH_ONLY"
     if not has_internal:
@@ -216,13 +219,12 @@ def compute_overlap(config: SectorScoutConfig) -> list[dict[str, Any]]:
         if external_items:
             directions = sorted({str(item["direction"]) for item in external_items})
             sources = sorted({str(item["source_id"]) for item in external_items})
-            requires_review = any(item["requires_review"] for item in external_items)
-            confirmed = any(item["user_confirmed"] for item in external_items)
+            unresolved_review = any(item["requires_review"] and not item["user_confirmed"] for item in external_items)
             label = classify_overlap(
                 has_internal=internal_row is not None,
                 external_direction="mixed" if "bearish" in directions and len(directions) > 1 else directions[0],
-                requires_review=requires_review,
-                user_confirmed=confirmed,
+                requires_review=unresolved_review,
+                user_confirmed=False,
             )
             external_status = "mentioned"
             external_bias = ", ".join(directions)

@@ -25,6 +25,8 @@ def capture_text(
     author: str | None = None,
     title: str | None = None,
     url: str | None = None,
+    published_at: str | None = None,
+    captured_at: str | None = None,
     rights_scope: str = "manual_private",
     asof_date: date | None = None,
     metadata: dict | None = None,
@@ -38,6 +40,8 @@ def capture_text(
         author=author,
         platform=platform,
         url=url,
+        published_at=published_at,
+        captured_at=captured_at,
         asof_date=asof_date,
         raw_text=raw_text,
         normalized_text=normalized,
@@ -55,6 +59,8 @@ def capture_text(
             author=author,
             platform=platform,
             url=url,
+            published_at=published_at,
+            captured_at=captured_at,
             asof_date=asof_date,
             rights_scope=rights_scope,
             requires_review=True,
@@ -78,6 +84,8 @@ def capture_markdown_file(
         author=capture.author,
         title=Path(path).stem,
         url=capture.url,
+        published_at=capture.published_at,
+        captured_at=capture.captured_at,
         rights_scope=capture.rights_scope,
         asof_date=asof_date,
         metadata=capture.metadata,
@@ -98,6 +106,8 @@ def capture_markdown_text(
         platform=capture.platform,
         author=capture.author,
         url=capture.url,
+        published_at=capture.published_at,
+        captured_at=capture.captured_at,
         rights_scope=capture.rights_scope,
         asof_date=asof_date,
         metadata=capture.metadata,
@@ -111,6 +121,7 @@ def capture_image_file(
     source_id: str = "manual_image",
     rights_scope: str = "manual_private",
     raw_item_id: str | None = None,
+    allow_vision_provider: bool = False,
 ) -> str:
     ensure_intel_dirs()
     media_id = save_media_file(
@@ -119,6 +130,7 @@ def capture_image_file(
         raw_item_id=raw_item_id,
         source_id=source_id,
         rights_scope=rights_scope,
+        metadata={"vision_provider_consent": allow_vision_provider},
     )
     extract_image_observation(config, media_id)
     return media_id

@@ -11,7 +11,6 @@ import pandas as pd
 
 from sectorscout.config import SectorScoutConfig, config_hash, load_config
 from sectorscout.db import connect_database
-from sectorscout.intel.chandler_seed import seed_chandler_fixture
 from sectorscout.intel.storage import ensure_intel_dirs, ensure_intel_tables
 from sectorscout.metadata import get_git_commit
 
@@ -27,10 +26,6 @@ def load_ui_context(config_path: str | Path) -> UIContext:
     config = load_config(config_path)
     ensure_intel_dirs()
     ensure_intel_tables(config)
-    try:
-        seed_chandler_fixture(config)
-    except FileNotFoundError:
-        pass
     return UIContext(config=config, config_path=Path(config_path), asof_date=latest_asof_date(config))
 
 
@@ -83,7 +78,6 @@ def latest_asof_date(config: SectorScoutConfig) -> date | None:
         "execution_decisions",
         "trade_ledger",
         "market_regime",
-        "intel_trade_views",
     ]:
         if not table_exists(config, table):
             continue
@@ -136,5 +130,5 @@ def system_status(config: SectorScoutConfig) -> dict[str, Any]:
         "universe_version": config.reproducibility.universe_version,
         "theme_version": config.reproducibility.theme_version,
         "openai_vision_provider": bool(os.environ.get("OPENAI_API_KEY")),
-        "x_api": bool(os.environ.get("X_BEARER_TOKEN")),
+        "x_api_status": "not_implemented_in_mvp_token_not_required",
     }

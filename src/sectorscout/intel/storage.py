@@ -13,7 +13,15 @@ from sectorscout.db import connect_database
 from sectorscout.intel.models import MediaItemInput, TradeViewDraft
 
 
+INTEL_SCHEMA_VERSION = 2
+
+
 INTEL_SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS intel_schema_metadata (
+    schema_version INTEGER PRIMARY KEY,
+    applied_at TIMESTAMPTZ NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS intel_raw_items (
     raw_item_id VARCHAR PRIMARY KEY,
     source_id VARCHAR NOT NULL,
@@ -100,7 +108,8 @@ CREATE TABLE IF NOT EXISTS intel_trade_views (
     rights_scope VARCHAR NOT NULL,
     requires_review BOOLEAN NOT NULL,
     user_confirmed BOOLEAN NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL
+    created_at TIMESTAMPTZ NOT NULL,
+    superseded_by_view_id VARCHAR
 );
 
 CREATE TABLE IF NOT EXISTS intel_review_marks (
@@ -128,6 +137,11 @@ CREATE TABLE IF NOT EXISTS intel_notes (
 """
 
 
+INTEL_MIGRATION_COLUMNS: tuple[tuple[str, str, str], ...] = (
+    ("intel_trade_views", "superseded_by_view_id", "VARCHAR"),
+)
+
+
 def ensure_intel_dirs(root: str | Path = "data/intel") -> None:
     base = Path(root)
     for name in ["fixtures", "manual", "captures", "media", "reports"]:
@@ -137,6 +151,29 @@ def ensure_intel_dirs(root: str | Path = "data/intel") -> None:
 def ensure_intel_tables(config: SectorScoutConfig) -> None:
     with connect_database(config.database.path) as connection:
         connection.execute(INTEL_SCHEMA_SQL)
+        _apply_intel_migrations(connection)
+        connection.execute(
+            "DELETE FROM intel_schema_metadata WHERE schema_version = ?",
+            [INTEL_SCHEMA_VERSION],
+        )
+        connection.execute(
+            "INSERT INTO intel_schema_metadata (schema_version, applied_at) VALUES (?, ?)",
+            [INTEL_SCHEMA_VERSION, _now()],
+        )
+
+
+def _table_columns(connection, table_name: str) -> set[str]:
+    try:
+        rows = connection.execute(f"PRAGMA table_info('{table_name}')").fetchall()
+    except Exception:
+        return set()
+    return {str(row[1]) for row in rows}
+
+
+def _apply_intel_migrations(connection) -> None:
+    for table_name, column_name, definition in INTEL_MIGRATION_COLUMNS:
+        if column_name not in _table_columns(connection, table_name):
+            connection.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {definition}")
 
 
 def stable_hash_bytes(payload: bytes) -> str:
@@ -456,8 +493,15 @@ def save_media_bytes(
     ensure_intel_dirs()
     temp_root = Path(media_root).parent / "captures"
     temp_root.mkdir(parents=True, exist_ok=True)
-    temp_path = temp_root / filename
+    content_hash = stable_hash_bytes(payload)
+    safe_name = Path(filename).name
+    if safe_name in {"", ".", ".."}:
+        suffix = Path(filename).suffix or ".bin"
+        safe_name = f"{content_hash}{suffix}"
+    temp_path = temp_root / f"{uuid4()}_{safe_name}"
     temp_path.write_bytes(payload)
+    media_metadata = dict(metadata or {})
+    media_metadata.setdefault("original_filename", filename)
     return save_media_file(
         config,
         temp_path,
@@ -466,7 +510,7 @@ def save_media_bytes(
         source_url=source_url,
         rights_scope=rights_scope,
         media_root=media_root,
-        metadata=metadata,
+        metadata=media_metadata,
     )
 
 
@@ -555,6 +599,22 @@ def set_trade_view_confirmed(config: SectorScoutConfig, intel_view_id: str, conf
         connection.execute(
             "UPDATE intel_trade_views SET user_confirmed = ?, requires_review = ? WHERE intel_view_id = ?",
             [confirmed, not confirmed, intel_view_id],
+        )
+
+
+def mark_media_trade_views_superseded(config: SectorScoutConfig, media_id: str, superseding_view_id: str) -> None:
+    ensure_intel_tables(config)
+    with connect_database(config.database.path) as connection:
+        connection.execute(
+            """
+            UPDATE intel_trade_views
+            SET requires_review = false,
+                superseded_by_view_id = ?
+            WHERE media_id = ?
+              AND intel_view_id <> ?
+              AND superseded_by_view_id IS NULL
+            """,
+            [superseding_view_id, media_id, superseding_view_id],
         )
 
 

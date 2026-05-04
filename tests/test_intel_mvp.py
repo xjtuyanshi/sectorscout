@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -7,20 +8,26 @@ import pytest
 from sectorscout.config import SectorScoutConfig
 from sectorscout.db import connect_database, initialize_database
 from sectorscout.intel.chandler_seed import load_chandler_fixture, seed_chandler_fixture
+from sectorscout.intel.capture_inbox import capture_markdown_text
 from sectorscout.intel.manual_inbox import parse_manual_markdown
-from sectorscout.intel.overlap import classify_overlap
+from sectorscout.intel.models import TradeViewDraft
+from sectorscout.intel.overlap import classify_overlap, compute_overlap
 from sectorscout.intel.public_sources import collect_public_sources, load_public_sources
 from sectorscout.intel.public_web import collect_public_url
+from sectorscout.intel.report import generate_intel_daily_report
 from sectorscout.intel.storage import (
     ensure_intel_tables,
     insert_note,
     insert_review_mark,
+    insert_trade_view,
     mark_image_observation_reviewed,
+    mark_media_trade_views_superseded,
     save_media_bytes,
 )
 from sectorscout.intel.symbol_normalize import normalize_symbols, related_symbols
 from sectorscout.intel.text_extract import extract_trade_view
 from sectorscout.intel.vision_extract import extract_image_observation
+from sectorscout.ui.data import latest_asof_date
 
 
 def _config(tmp_path: Path) -> SectorScoutConfig:
@@ -28,6 +35,51 @@ def _config(tmp_path: Path) -> SectorScoutConfig:
     initialize_database(config)
     ensure_intel_tables(config)
     return config
+
+
+def _draft(
+    *,
+    source_id: str = "external_source",
+    symbols: list[str] | None = None,
+    direction: str = "bullish",
+    media_id: str | None = None,
+    requires_review: bool = False,
+    user_confirmed: bool = False,
+    extraction_method: str = "rule_text_v1",
+) -> TradeViewDraft:
+    raw_symbols = symbols or ["QQQ"]
+    return TradeViewDraft(
+        source_id=source_id,
+        source_type="manual_capture",
+        source_title="Test external context",
+        author=None,
+        platform="other",
+        url=None,
+        asof_date="2026-04-27",
+        published_at=None,
+        collected_at=None,
+        captured_at=None,
+        raw_symbols=raw_symbols,
+        canonical_symbols=normalize_symbols(raw_symbols),
+        asset_class="unknown",
+        timeframe="daily",
+        direction=direction,
+        setup_type=["pullback"],
+        key_levels=[],
+        trigger_condition=None,
+        invalidation_condition=None,
+        target_area=None,
+        no_trade_condition=None,
+        risk_notes=None,
+        summary="External context for test.",
+        source_excerpt="External context for test.",
+        extraction_method=extraction_method,
+        extraction_confidence="medium",
+        rights_scope="manual_private",
+        requires_review=requires_review,
+        user_confirmed=user_confirmed,
+        media_id=media_id,
+    )
 
 
 def test_manual_capture_parser_preserves_frontmatter_and_body() -> None:
@@ -55,6 +107,45 @@ NQ demand around 27300. Wait for reclaim.
     assert "NQ demand" in parsed.raw_text
 
 
+def test_manual_markdown_capture_preserves_timestamps(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    raw = """---
+source_id: discord_manual
+author: "source name"
+platform: discord
+published_at: "2026-04-27T06:30:00-07:00"
+captured_at: "2026-04-27T07:00:00-07:00"
+tags: [NQ]
+rights_scope: manual_private
+---
+
+NQ demand around 27300. Wait for reclaim.
+"""
+    raw_item_id, view_id = capture_markdown_text(config, raw, asof_date=date(2026, 4, 27))
+    assert view_id is not None
+    with connect_database(config.database.path) as connection:
+        raw_row = connection.execute(
+            """
+            SELECT published_at, captured_at
+            FROM intel_raw_items
+            WHERE raw_item_id = ?
+            """,
+            [raw_item_id],
+        ).fetchone()
+        view_row = connection.execute(
+            """
+            SELECT published_at, captured_at
+            FROM intel_trade_views
+            WHERE intel_view_id = ?
+            """,
+            [view_id],
+        ).fetchone()
+    assert str(raw_row[0]).startswith("2026-04-27 13:30:00")
+    assert str(raw_row[1]).startswith("2026-04-27 14:00:00")
+    assert str(view_row[0]).startswith("2026-04-27 13:30:00")
+    assert str(view_row[1]).startswith("2026-04-27 14:00:00")
+
+
 def test_image_media_storage_deduplicates_by_hash(tmp_path: Path) -> None:
     config = _config(tmp_path)
     payload = b"\x89PNG\r\n\x1a\nsame-image"
@@ -78,6 +169,27 @@ def test_image_media_storage_deduplicates_by_hash(tmp_path: Path) -> None:
     with connect_database(config.database.path) as connection:
         count = connection.execute("SELECT COUNT(*) FROM intel_media_items").fetchone()[0]
     assert count == 1
+
+
+def test_save_media_bytes_sanitizes_uploaded_filename(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    media_id = save_media_bytes(
+        config,
+        b"\x89PNG\r\n\x1a\npath-traversal",
+        filename="../escape.png",
+        raw_item_id=None,
+        source_id="manual_image",
+        media_root=tmp_path / "media",
+    )
+    with connect_database(config.database.path) as connection:
+        local_path = Path(
+            connection.execute(
+                "SELECT local_path FROM intel_media_items WHERE media_id = ?",
+                [media_id],
+            ).fetchone()[0]
+        )
+    assert local_path.parent == tmp_path / "media"
+    assert not (tmp_path / "escape.png").exists()
 
 
 def test_vision_fallback_marks_pending_without_provider(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -105,6 +217,46 @@ def test_vision_fallback_marks_pending_without_provider(tmp_path: Path, monkeypa
     assert observation == ("none", True)
 
 
+def test_vision_provider_requires_consent_for_private_media(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    config = _config(tmp_path)
+    media_id = save_media_bytes(
+        config,
+        b"\x89PNG\r\n\x1a\nprivate-no-consent",
+        filename="private.png",
+        raw_item_id=None,
+        source_id="manual_image",
+        rights_scope="manual_private",
+        media_root=tmp_path / "media",
+    )
+
+    def fail_if_called(_media: dict) -> dict:
+        raise AssertionError("private media should not be sent to a vision provider without consent")
+
+    monkeypatch.setattr("sectorscout.intel.vision_extract._call_openai_vision", fail_if_called)
+    observation_id = extract_image_observation(config, media_id)
+    with connect_database(config.database.path) as connection:
+        status = connection.execute(
+            "SELECT extraction_status FROM intel_media_items WHERE media_id = ?",
+            [media_id],
+        ).fetchone()[0]
+        observation = connection.execute(
+            """
+            SELECT extraction_provider, inferred_context
+            FROM intel_image_observations
+            WHERE observation_id = ?
+            """,
+            [observation_id],
+        ).fetchone()
+        view_count = connection.execute("SELECT COUNT(*) FROM intel_trade_views").fetchone()[0]
+    assert status == "pending_vision_consent"
+    assert observation[0] == "none"
+    assert "explicit user consent" in observation[1]
+    assert view_count == 0
+
+
 def test_vision_provider_creates_review_required_draft_view(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     config = _config(tmp_path)
@@ -114,6 +266,7 @@ def test_vision_provider_creates_review_required_draft_view(tmp_path: Path, monk
         filename="provider.png",
         raw_item_id=None,
         source_id="manual_image",
+        metadata={"vision_provider_consent": True},
         media_root=tmp_path / "media",
     )
 
@@ -203,6 +356,28 @@ def test_seed_chandler_fixture_deduplicates_trade_view(tmp_path: Path) -> None:
     assert view_count == 1
 
 
+def test_latest_asof_date_ignores_intel_overlay_dates(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    insert_trade_view(
+        config,
+        raw_item_id=None,
+        draft=_draft(symbols=["QQQ"], direction="bullish"),
+    )
+    assert latest_asof_date(config) is None
+
+
+def test_daily_report_does_not_auto_seed_chandler_fixture(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    report_path = generate_intel_daily_report(config, date(2026, 4, 27), output_dir=tmp_path / "reports")
+    with connect_database(config.database.path) as connection:
+        raw_count = connection.execute("SELECT COUNT(*) FROM intel_raw_items").fetchone()[0]
+        view_count = connection.execute("SELECT COUNT(*) FROM intel_trade_views").fetchone()[0]
+    report = report_path.read_text(encoding="utf-8")
+    assert raw_count == 0
+    assert view_count == 0
+    assert "No external views available." in report
+
+
 def test_public_source_registry_loads_only_public_web_sources(tmp_path: Path) -> None:
     sources_file = tmp_path / "public_sources.yaml"
     sources_file.write_text(
@@ -233,6 +408,35 @@ def test_public_url_collection_skips_non_public_scheme(tmp_path: Path) -> None:
     assert result.raw_item_id is None
 
 
+def test_public_url_collection_skips_private_and_credentialed_urls(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    urls = [
+        "http://127.0.0.1/private",
+        "http://localhost/private",
+        "https://user:pass@example.com/post",
+    ]
+    for url in urls:
+        result = collect_public_url(config, url)
+        assert result.status == "SKIPPED"
+        assert result.raw_item_id is None
+
+
+def test_public_url_collection_skips_private_redirect(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    config = _config(tmp_path)
+
+    def fake_fetch(_url: str) -> tuple[str, str, str]:
+        return (
+            "text/html",
+            "<html><title>Redirected</title><body>NQ demand around 27300.</body></html>",
+            "http://127.0.0.1/private",
+        )
+
+    monkeypatch.setattr("sectorscout.intel.public_web._fetch_url", fake_fetch)
+    result = collect_public_url(config, "https://example.com/post")
+    assert result.status == "SKIPPED"
+    assert result.raw_item_id is None
+
+
 def test_public_source_collection_extracts_rule_view(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     config = _config(tmp_path)
     sources_file = tmp_path / "public_sources.yaml"
@@ -248,10 +452,11 @@ sources:
         encoding="utf-8",
     )
 
-    def fake_fetch(_url: str) -> tuple[str, str]:
+    def fake_fetch(_url: str) -> tuple[str, str, str]:
         return (
             "text/html",
             "<html><title>Public Blog</title><body>NQ demand around 27300. Wait for bullish reaction.</body></html>",
+            "https://example.com/post",
         )
 
     monkeypatch.setattr("sectorscout.intel.public_web._fetch_url", fake_fetch)
@@ -278,8 +483,85 @@ def test_symbol_normalization_required_aliases() -> None:
 def test_overlap_labels() -> None:
     assert classify_overlap(has_internal=True, external_direction="bullish") == "CONFIRMED"
     assert classify_overlap(has_internal=True, external_direction="bearish") == "CONFLICT"
+    assert classify_overlap(has_internal=True, external_direction="unknown") == "NEEDS_REVIEW"
+    assert classify_overlap(has_internal=True, external_direction="neutral") == "NEEDS_REVIEW"
     assert classify_overlap(has_internal=False, external_direction="conditional") == "EXTERNAL_ONLY"
     assert classify_overlap(has_internal=True, external_direction=None, requires_review=True) == "NEEDS_REVIEW"
+
+
+def test_unreviewed_image_view_keeps_overlap_needs_review_with_confirmed_peer(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    insert_trade_view(
+        config,
+        raw_item_id=None,
+        draft=_draft(
+            symbols=["QQQ"],
+            direction="bullish",
+            media_id="media-1",
+            requires_review=True,
+            user_confirmed=False,
+            extraction_method="vision_provider_v1",
+        ),
+    )
+    insert_trade_view(
+        config,
+        raw_item_id=None,
+        draft=_draft(
+            symbols=["QQQ"],
+            direction="bullish",
+            media_id="media-1",
+            requires_review=False,
+            user_confirmed=True,
+            extraction_method="vision_review_manual",
+        ),
+    )
+    rows = {row["symbol"]: row for row in compute_overlap(config)}
+    assert rows["QQQ"]["overlap_label"] == "NEEDS_REVIEW"
+
+
+def test_superseded_image_trade_views_are_excluded_from_overlap(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    media_id = save_media_bytes(
+        config,
+        b"\x89PNG\r\n\x1a\nsuperseded",
+        filename="superseded.png",
+        raw_item_id=None,
+        source_id="manual_image",
+        media_root=tmp_path / "media",
+    )
+    draft_view_id = insert_trade_view(
+        config,
+        raw_item_id=None,
+        draft=_draft(
+            symbols=["QQQ"],
+            direction="bullish",
+            media_id=media_id,
+            requires_review=True,
+            user_confirmed=False,
+            extraction_method="vision_provider_v1",
+        ),
+    )
+    confirmed_view_id = insert_trade_view(
+        config,
+        raw_item_id=None,
+        draft=_draft(
+            symbols=["QQQ"],
+            direction="bullish",
+            media_id=media_id,
+            requires_review=False,
+            user_confirmed=True,
+            extraction_method="vision_review_manual",
+        ),
+    )
+    mark_media_trade_views_superseded(config, media_id, confirmed_view_id)
+    with connect_database(config.database.path) as connection:
+        superseded_by = connection.execute(
+            "SELECT superseded_by_view_id FROM intel_trade_views WHERE intel_view_id = ?",
+            [draft_view_id],
+        ).fetchone()[0]
+    rows = {row["symbol"]: row for row in compute_overlap(config)}
+    assert superseded_by == confirmed_view_id
+    assert rows["QQQ"]["overlap_label"] == "CONFIRMED"
 
 
 def test_review_marks_do_not_aggregate_status(tmp_path: Path) -> None:
