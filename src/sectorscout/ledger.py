@@ -215,6 +215,92 @@ def _load_baseline_rows(config: SectorScoutConfig, lifecycle_run_id: str) -> lis
     return [dict(zip(columns, row, strict=True)) for row in rows]
 
 
+def _json_list(value: object) -> list[str]:
+    if not value:
+        return []
+    return [str(item) for item in json.loads(str(value))]
+
+
+def _load_lifecycle_input_qa(config: SectorScoutConfig, lifecycle_run_id: str) -> dict:
+    with connect_database(config.database.path) as connection:
+        row = connection.execute(
+            """
+            SELECT
+                market_regime_rows,
+                theme_score_rows,
+                market_regime_config_hashes_json,
+                market_regime_git_commits_json,
+                market_regime_data_snapshot_ids_json,
+                market_regime_universe_versions_json,
+                market_regime_theme_versions_json,
+                theme_score_config_hashes_json,
+                theme_score_git_commits_json,
+                theme_score_data_snapshot_ids_json,
+                theme_score_universe_versions_json,
+                theme_score_theme_versions_json,
+                market_regime_source_mismatch_warning,
+                theme_score_source_mismatch_warning,
+                non_price_input_snapshot_warning,
+                non_price_input_mode
+            FROM lifecycle_input_qa
+            WHERE lifecycle_run_id = ?
+            """,
+            [lifecycle_run_id],
+        ).fetchone()
+    if row is None:
+        return {
+            "market_regime_rows": 0,
+            "theme_score_rows": 0,
+            "market_regime_config_hashes": [],
+            "market_regime_git_commits": [],
+            "market_regime_data_snapshot_ids": [],
+            "market_regime_universe_versions": [],
+            "market_regime_theme_versions": [],
+            "theme_score_config_hashes": [],
+            "theme_score_git_commits": [],
+            "theme_score_data_snapshot_ids": [],
+            "theme_score_universe_versions": [],
+            "theme_score_theme_versions": [],
+            "market_regime_source_mismatch_warning": False,
+            "theme_score_source_mismatch_warning": False,
+            "non_price_input_snapshot_warning": False,
+            "non_price_input_mode": "live_table_version_guardrail",
+        }
+    columns = [
+        "market_regime_rows",
+        "theme_score_rows",
+        "market_regime_config_hashes",
+        "market_regime_git_commits",
+        "market_regime_data_snapshot_ids",
+        "market_regime_universe_versions",
+        "market_regime_theme_versions",
+        "theme_score_config_hashes",
+        "theme_score_git_commits",
+        "theme_score_data_snapshot_ids",
+        "theme_score_universe_versions",
+        "theme_score_theme_versions",
+        "market_regime_source_mismatch_warning",
+        "theme_score_source_mismatch_warning",
+        "non_price_input_snapshot_warning",
+        "non_price_input_mode",
+    ]
+    payload = dict(zip(columns, row, strict=True))
+    for key in (
+        "market_regime_config_hashes",
+        "market_regime_git_commits",
+        "market_regime_data_snapshot_ids",
+        "market_regime_universe_versions",
+        "market_regime_theme_versions",
+        "theme_score_config_hashes",
+        "theme_score_git_commits",
+        "theme_score_data_snapshot_ids",
+        "theme_score_universe_versions",
+        "theme_score_theme_versions",
+    ):
+        payload[key] = _json_list(payload[key])
+    return payload
+
+
 def _qa_status(position: dict) -> str:
     if position["risk_per_share"] is None or float(position["risk_per_share"]) <= 0:
         return "INVALID_RISK"
@@ -330,7 +416,12 @@ def _baseline_qa(config: SectorScoutConfig, rows: list[dict], through_date: date
     }
 
 
-def _warning_flags(context: dict, baseline_qa: dict, skips: list[dict]) -> dict:
+def _warning_flags(
+    context: dict,
+    baseline_qa: dict,
+    skips: list[dict],
+    input_qa: dict,
+) -> dict:
     lifecycle_snapshot_id = context.get("lifecycle_price_snapshot_id")
     execution_snapshot_id = context.get("execution_price_snapshot_id")
     return {
@@ -351,6 +442,15 @@ def _warning_flags(context: dict, baseline_qa: dict, skips: list[dict]) -> dict:
             and execution_snapshot_id is not None
             and lifecycle_snapshot_id != execution_snapshot_id
         ),
+        "non_price_input_snapshot_warning": bool(
+            input_qa.get("non_price_input_snapshot_warning")
+        ),
+        "market_regime_source_mismatch_warning": bool(
+            input_qa.get("market_regime_source_mismatch_warning")
+        ),
+        "theme_score_source_mismatch_warning": bool(
+            input_qa.get("theme_score_source_mismatch_warning")
+        ),
     }
 
 
@@ -360,7 +460,7 @@ def _price_snapshot_mode(context: dict) -> str:
     return IN_MEMORY_PRICE_SNAPSHOT_MODE
 
 
-def _provenance(context: dict) -> dict:
+def _provenance(context: dict, input_qa: dict) -> dict:
     return {
         "lifecycle_run_id": context["lifecycle_run_id"],
         "execution_run_id": context["execution_run_id"],
@@ -379,6 +479,21 @@ def _provenance(context: dict) -> dict:
         "lifecycle_price_snapshot_id": context.get("lifecycle_price_snapshot_id"),
         "execution_price_snapshot_id": context.get("execution_price_snapshot_id"),
         "price_snapshot_mode": _price_snapshot_mode(context),
+        "non_price_input_mode": input_qa.get(
+            "non_price_input_mode",
+            "live_table_version_guardrail",
+        ),
+        "market_regime_rows": input_qa.get("market_regime_rows", 0),
+        "theme_score_rows": input_qa.get("theme_score_rows", 0),
+        "market_regime_data_snapshot_ids": input_qa.get(
+            "market_regime_data_snapshot_ids",
+            [],
+        ),
+        "theme_score_data_snapshot_ids": input_qa.get("theme_score_data_snapshot_ids", []),
+        "market_regime_config_hashes": input_qa.get("market_regime_config_hashes", []),
+        "theme_score_config_hashes": input_qa.get("theme_score_config_hashes", []),
+        "market_regime_theme_versions": input_qa.get("market_regime_theme_versions", []),
+        "theme_score_theme_versions": input_qa.get("theme_score_theme_versions", []),
     }
 
 
@@ -389,6 +504,7 @@ def persist_trade_ledger_qa(
     baseline_qa: dict,
     warnings: dict,
     skips: list[dict],
+    input_qa: dict,
 ) -> None:
     lifecycle_run_id = context["lifecycle_run_id"]
     with connect_database(config.database.path) as connection:
@@ -452,10 +568,15 @@ def persist_trade_ledger_qa(
                 config_mismatch_warning, snapshot_mismatch_warning,
                 missing_baseline_coverage_warning,
                 missing_entry_session_price_warning,
-                price_snapshot_mismatch_warning, price_snapshot_mode,
+                price_snapshot_mismatch_warning,
+                non_price_input_snapshot_warning,
+                market_regime_source_mismatch_warning,
+                theme_score_source_mismatch_warning,
+                non_price_input_mode, non_price_input_qa_json,
+                price_snapshot_mode,
                 lifecycle_generated_at_utc, lifecycle_config_hash,
                 lifecycle_git_commit, lifecycle_data_snapshot_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 lifecycle_run_id,
@@ -480,6 +601,11 @@ def persist_trade_ledger_qa(
                 warnings["missing_baseline_coverage_warning"],
                 warnings["missing_entry_session_price_warning"],
                 warnings["price_snapshot_mismatch_warning"],
+                warnings["non_price_input_snapshot_warning"],
+                warnings["market_regime_source_mismatch_warning"],
+                warnings["theme_score_source_mismatch_warning"],
+                input_qa.get("non_price_input_mode", "live_table_version_guardrail"),
+                json.dumps(input_qa, sort_keys=True),
                 _price_snapshot_mode(context),
                 context["lifecycle_generated_at"],
                 context["lifecycle_config_hash"],
@@ -499,12 +625,21 @@ def generate_trade_ledger_qa(
     positions = _load_positions(config, lifecycle_run_id)
     skips = _load_skips(config, lifecycle_run_id)
     baseline_rows = _load_baseline_rows(config, lifecycle_run_id)
+    input_qa = _load_lifecycle_input_qa(config, lifecycle_run_id)
     ledger_rows = [_ledger_row(config, context, position) for position in positions]
     baseline = _baseline_qa(config, baseline_rows, _date_value(context["through_date"]))
-    warnings = _warning_flags(context, baseline, skips)
-    provenance = _provenance(context)
+    warnings = _warning_flags(context, baseline, skips, input_qa)
+    provenance = _provenance(context, input_qa)
     if persist:
-        persist_trade_ledger_qa(config, context, ledger_rows, baseline, warnings, skips)
+        persist_trade_ledger_qa(
+            config,
+            context,
+            ledger_rows,
+            baseline,
+            warnings,
+            skips,
+            input_qa,
+        )
     return TradeLedgerQAResult(
         lifecycle_run_id=context["lifecycle_run_id"],
         execution_run_id=context["execution_run_id"],
@@ -513,7 +648,7 @@ def generate_trade_ledger_qa(
         provenance=provenance,
         warnings=warnings,
         warning=(
-            "Phase 5B3 only: trade ledger rows, baseline coverage, and provenance are QA "
+            "Phase 5B only: trade ledger rows, baseline coverage, and provenance are QA "
             "scaffolding, not a result report or strategy conclusion."
         ),
     )

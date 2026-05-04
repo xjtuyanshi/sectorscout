@@ -451,6 +451,31 @@ CREATE TABLE IF NOT EXISTS baseline_price_series (
     PRIMARY KEY (lifecycle_run_id, symbol, price_date)
 );
 
+CREATE TABLE IF NOT EXISTS lifecycle_input_qa (
+    lifecycle_run_id VARCHAR PRIMARY KEY,
+    execution_run_id VARCHAR NOT NULL,
+    market_regime_rows INTEGER NOT NULL,
+    theme_score_rows INTEGER NOT NULL,
+    market_regime_config_hashes_json VARCHAR NOT NULL DEFAULT '[]',
+    market_regime_git_commits_json VARCHAR NOT NULL DEFAULT '[]',
+    market_regime_data_snapshot_ids_json VARCHAR NOT NULL DEFAULT '[]',
+    market_regime_universe_versions_json VARCHAR NOT NULL DEFAULT '[]',
+    market_regime_theme_versions_json VARCHAR NOT NULL DEFAULT '[]',
+    theme_score_config_hashes_json VARCHAR NOT NULL DEFAULT '[]',
+    theme_score_git_commits_json VARCHAR NOT NULL DEFAULT '[]',
+    theme_score_data_snapshot_ids_json VARCHAR NOT NULL DEFAULT '[]',
+    theme_score_universe_versions_json VARCHAR NOT NULL DEFAULT '[]',
+    theme_score_theme_versions_json VARCHAR NOT NULL DEFAULT '[]',
+    market_regime_source_mismatch_warning BOOLEAN NOT NULL DEFAULT false,
+    theme_score_source_mismatch_warning BOOLEAN NOT NULL DEFAULT false,
+    non_price_input_snapshot_warning BOOLEAN NOT NULL DEFAULT false,
+    non_price_input_mode VARCHAR NOT NULL DEFAULT 'live_table_version_guardrail',
+    lifecycle_generated_at_utc TIMESTAMPTZ NOT NULL,
+    lifecycle_config_hash VARCHAR NOT NULL,
+    lifecycle_git_commit VARCHAR NOT NULL,
+    lifecycle_data_snapshot_id VARCHAR NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS trade_ledger (
     lifecycle_run_id VARCHAR NOT NULL,
     execution_run_id VARCHAR NOT NULL,
@@ -505,6 +530,11 @@ CREATE TABLE IF NOT EXISTS lifecycle_qa (
     missing_baseline_coverage_warning BOOLEAN NOT NULL,
     missing_entry_session_price_warning BOOLEAN NOT NULL,
     price_snapshot_mismatch_warning BOOLEAN NOT NULL DEFAULT false,
+    non_price_input_snapshot_warning BOOLEAN NOT NULL DEFAULT false,
+    market_regime_source_mismatch_warning BOOLEAN NOT NULL DEFAULT false,
+    theme_score_source_mismatch_warning BOOLEAN NOT NULL DEFAULT false,
+    non_price_input_mode VARCHAR NOT NULL DEFAULT 'live_table_version_guardrail',
+    non_price_input_qa_json VARCHAR NOT NULL DEFAULT '{}',
     price_snapshot_mode VARCHAR NOT NULL,
     lifecycle_generated_at_utc TIMESTAMPTZ NOT NULL,
     lifecycle_config_hash VARCHAR NOT NULL,

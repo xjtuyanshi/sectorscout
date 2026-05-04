@@ -182,6 +182,52 @@ def _insert_skip(config: SectorScoutConfig, reason: str) -> None:
         )
 
 
+def _insert_lifecycle_input_qa(
+    config: SectorScoutConfig,
+    *,
+    market_warning: bool = False,
+    theme_warning: bool = False,
+) -> None:
+    with connect_database(config.database.path) as connection:
+        connection.execute(
+            """
+            INSERT INTO lifecycle_input_qa (
+                lifecycle_run_id, execution_run_id, market_regime_rows,
+                theme_score_rows, market_regime_config_hashes_json,
+                market_regime_git_commits_json,
+                market_regime_data_snapshot_ids_json,
+                market_regime_universe_versions_json,
+                market_regime_theme_versions_json,
+                theme_score_config_hashes_json,
+                theme_score_git_commits_json,
+                theme_score_data_snapshot_ids_json,
+                theme_score_universe_versions_json,
+                theme_score_theme_versions_json,
+                market_regime_source_mismatch_warning,
+                theme_score_source_mismatch_warning,
+                non_price_input_snapshot_warning, non_price_input_mode,
+                lifecycle_generated_at_utc, lifecycle_config_hash,
+                lifecycle_git_commit, lifecycle_data_snapshot_id
+            ) VALUES (
+                ?, ?, 1, 1, '[\"hash\"]', '[\"commit\"]',
+                '[\"snapshot\"]', '[\"universe\"]', '[\"theme\"]',
+                '[\"hash\"]', '[\"commit\"]', '[\"theme_snapshot\"]',
+                '[\"universe\"]', '[\"theme\"]', ?, ?, ?,
+                'live_table_version_guardrail',
+                '2024-12-06T21:00:00+00:00', 'lifecycle_hash',
+                'lifecycle_commit', 'lifecycle_snapshot'
+            )
+            """,
+            [
+                LIFECYCLE_RUN_ID,
+                EXECUTION_RUN_ID,
+                market_warning,
+                theme_warning,
+                market_warning or theme_warning,
+            ],
+        )
+
+
 def test_phase5b2_trade_ledger_records_position_qa_fields(tmp_path: Path) -> None:
     config = _config(tmp_path)
     _insert_lifecycle_context(config)
@@ -357,6 +403,15 @@ def test_phase5b2_provenance_and_warnings_are_persisted(tmp_path: Path) -> None:
         "lifecycle_price_snapshot_id": None,
         "execution_price_snapshot_id": None,
         "price_snapshot_mode": "in_memory_provider_priority",
+        "non_price_input_mode": "live_table_version_guardrail",
+        "market_regime_rows": 0,
+        "theme_score_rows": 0,
+        "market_regime_data_snapshot_ids": [],
+        "theme_score_data_snapshot_ids": [],
+        "market_regime_config_hashes": [],
+        "theme_score_config_hashes": [],
+        "market_regime_theme_versions": [],
+        "theme_score_theme_versions": [],
     }
     assert result["warnings"]["config_mismatch_warning"] is True
     assert result["warnings"]["snapshot_mismatch_warning"] is True
@@ -365,11 +420,12 @@ def test_phase5b2_provenance_and_warnings_are_persisted(tmp_path: Path) -> None:
         row = connection.execute(
             """
             SELECT config_mismatch_warning, snapshot_mismatch_warning,
-                   missing_entry_session_price_warning, price_snapshot_mode
+                   missing_entry_session_price_warning, price_snapshot_mode,
+                   non_price_input_snapshot_warning
             FROM lifecycle_qa
             """
         ).fetchone()
-    assert row == (True, True, True, "in_memory_provider_priority")
+    assert row == (True, True, True, "in_memory_provider_priority", False)
 
 
 def test_phase5b4_price_snapshot_mismatch_warning_is_persisted(tmp_path: Path) -> None:
@@ -392,6 +448,35 @@ def test_phase5b4_price_snapshot_mismatch_warning_is_persisted(tmp_path: Path) -
             "SELECT price_snapshot_mismatch_warning, price_snapshot_mode FROM lifecycle_qa"
         ).fetchone()
     assert row == (True, "persisted_price_snapshot")
+
+
+def test_phase5b5_ledger_surfaces_non_price_input_snapshot_warning(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    _insert_lifecycle_context(config)
+    _insert_position(config)
+    _insert_lifecycle_input_qa(config, market_warning=True)
+
+    result = generate_trade_ledger_qa(config, LIFECYCLE_RUN_ID).to_dict()
+
+    assert result["warnings"]["non_price_input_snapshot_warning"] is True
+    assert result["warnings"]["market_regime_source_mismatch_warning"] is True
+    assert result["warnings"]["theme_score_source_mismatch_warning"] is False
+    assert result["provenance"]["market_regime_data_snapshot_ids"] == ["snapshot"]
+    assert result["provenance"]["theme_score_data_snapshot_ids"] == ["theme_snapshot"]
+    assert result["provenance"]["non_price_input_mode"] == "live_table_version_guardrail"
+    with connect_database(config.database.path) as connection:
+        row = connection.execute(
+            """
+            SELECT non_price_input_snapshot_warning,
+                   market_regime_source_mismatch_warning,
+                   theme_score_source_mismatch_warning,
+                   non_price_input_mode,
+                   non_price_input_qa_json
+            FROM lifecycle_qa
+            """
+        ).fetchone()
+    assert row[:4] == (True, True, False, "live_table_version_guardrail")
+    assert json.loads(row[4])["market_regime_source_mismatch_warning"] is True
 
 
 def test_phase5b2_cli_output_has_no_formal_metric_terms(tmp_path: Path) -> None:

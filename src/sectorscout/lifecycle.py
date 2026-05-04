@@ -111,8 +111,38 @@ class PositionLifecycleRunResult:
     exit_decisions: list[dict]
     skipped_executions: list[dict]
     qa_summary: dict
+    input_qa: dict
     baseline_symbols: list[str]
     warning: str
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class LifecycleInputQA:
+    lifecycle_run_id: str
+    execution_run_id: str
+    market_regime_rows: int
+    theme_score_rows: int
+    market_regime_config_hashes: list[str]
+    market_regime_git_commits: list[str]
+    market_regime_data_snapshot_ids: list[str]
+    market_regime_universe_versions: list[str]
+    market_regime_theme_versions: list[str]
+    theme_score_config_hashes: list[str]
+    theme_score_git_commits: list[str]
+    theme_score_data_snapshot_ids: list[str]
+    theme_score_universe_versions: list[str]
+    theme_score_theme_versions: list[str]
+    market_regime_source_mismatch_warning: bool
+    theme_score_source_mismatch_warning: bool
+    non_price_input_snapshot_warning: bool
+    non_price_input_mode: str
+    lifecycle_generated_at: str
+    lifecycle_config_hash: str
+    lifecycle_git_commit: str
+    lifecycle_data_snapshot_id: str
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -189,6 +219,168 @@ def _load_execution_price_snapshot_id(
             [execution_run_id],
         ).fetchone()
     return row[0] if row else None
+
+
+def _load_execution_context(config: SectorScoutConfig, execution_run_id: str) -> dict:
+    with connect_database(config.database.path) as connection:
+        row = connection.execute(
+            """
+            SELECT
+                execution_config_hash,
+                execution_git_commit,
+                execution_data_snapshot_id,
+                source_signal_snapshot_id,
+                source_signal_config_hash,
+                source_signal_git_commit,
+                source_universe_version,
+                source_theme_version,
+                mixed_source_signal_metadata
+            FROM execution_runs
+            WHERE execution_run_id = ?
+            """,
+            [execution_run_id],
+        ).fetchone()
+    if row is None:
+        return {}
+    columns = [
+        "execution_config_hash",
+        "execution_git_commit",
+        "execution_data_snapshot_id",
+        "source_signal_snapshot_id",
+        "source_signal_config_hash",
+        "source_signal_git_commit",
+        "source_universe_version",
+        "source_theme_version",
+        "mixed_source_signal_metadata",
+    ]
+    return dict(zip(columns, row, strict=True))
+
+
+def _distinct_metadata_values(rows: list[tuple], index: int) -> list[str]:
+    return sorted({str(row[index]) for row in rows if row[index] is not None})
+
+
+def _metadata_mismatch(values: list[str], expected: str | None) -> bool:
+    if expected is None or not values:
+        return False
+    return any(value != expected for value in values)
+
+
+def _non_price_input_qa(
+    config: SectorScoutConfig,
+    lifecycle_run_id: str,
+    execution_run_id: str,
+    executions: list[dict],
+    through_date: date,
+    metadata,
+) -> LifecycleInputQA:
+    active_executions = [
+        execution
+        for execution in executions
+        if _date_value(execution["entry_date"]) <= through_date
+    ]
+    if active_executions:
+        start_date = min(_date_value(execution["entry_date"]) for execution in active_executions)
+        theme_ids = sorted({execution["theme_id"] for execution in active_executions})
+    else:
+        start_date = through_date
+        theme_ids = []
+
+    with connect_database(config.database.path) as connection:
+        market_rows = connection.execute(
+            """
+            SELECT config_hash, git_commit, data_snapshot_id, universe_version, theme_version
+            FROM market_regime
+            WHERE asof_date >= ?
+              AND asof_date <= ?
+            ORDER BY asof_date
+            """,
+            [start_date, through_date],
+        ).fetchall()
+        if theme_ids:
+            theme_rows = connection.execute(
+                """
+                SELECT config_hash, git_commit, data_snapshot_id, universe_version, theme_version
+                FROM theme_scores
+                WHERE theme_id IN (SELECT unnest(?))
+                  AND asof_date >= ?
+                  AND asof_date <= ?
+                ORDER BY asof_date, theme_id
+                """,
+                [theme_ids, start_date, through_date],
+            ).fetchall()
+        else:
+            theme_rows = []
+
+    execution_context = _load_execution_context(config, execution_run_id)
+    expected_config_hash = (
+        execution_context.get("source_signal_config_hash")
+        or execution_context.get("execution_config_hash")
+    )
+    expected_git_commit = (
+        execution_context.get("source_signal_git_commit")
+        or execution_context.get("execution_git_commit")
+    )
+    expected_data_snapshot_id = (
+        execution_context.get("source_signal_snapshot_id")
+        or execution_context.get("execution_data_snapshot_id")
+    )
+    expected_universe_version = execution_context.get("source_universe_version")
+    expected_theme_version = execution_context.get("source_theme_version")
+
+    market_config_hashes = _distinct_metadata_values(market_rows, 0)
+    market_git_commits = _distinct_metadata_values(market_rows, 1)
+    market_snapshots = _distinct_metadata_values(market_rows, 2)
+    market_universe_versions = _distinct_metadata_values(market_rows, 3)
+    market_theme_versions = _distinct_metadata_values(market_rows, 4)
+    theme_config_hashes = _distinct_metadata_values(theme_rows, 0)
+    theme_git_commits = _distinct_metadata_values(theme_rows, 1)
+    theme_snapshots = _distinct_metadata_values(theme_rows, 2)
+    theme_universe_versions = _distinct_metadata_values(theme_rows, 3)
+    theme_theme_versions = _distinct_metadata_values(theme_rows, 4)
+
+    market_warning = any(
+        (
+            _metadata_mismatch(market_config_hashes, expected_config_hash),
+            _metadata_mismatch(market_git_commits, expected_git_commit),
+            _metadata_mismatch(market_snapshots, expected_data_snapshot_id),
+            _metadata_mismatch(market_universe_versions, expected_universe_version),
+            _metadata_mismatch(market_theme_versions, expected_theme_version),
+        )
+    )
+    theme_warning = any(
+        (
+            _metadata_mismatch(theme_config_hashes, expected_config_hash),
+            _metadata_mismatch(theme_git_commits, expected_git_commit),
+            _metadata_mismatch(theme_snapshots, expected_data_snapshot_id),
+            _metadata_mismatch(theme_universe_versions, expected_universe_version),
+            _metadata_mismatch(theme_theme_versions, expected_theme_version),
+        )
+    )
+    return LifecycleInputQA(
+        lifecycle_run_id=lifecycle_run_id,
+        execution_run_id=execution_run_id,
+        market_regime_rows=len(market_rows),
+        theme_score_rows=len(theme_rows),
+        market_regime_config_hashes=market_config_hashes,
+        market_regime_git_commits=market_git_commits,
+        market_regime_data_snapshot_ids=market_snapshots,
+        market_regime_universe_versions=market_universe_versions,
+        market_regime_theme_versions=market_theme_versions,
+        theme_score_config_hashes=theme_config_hashes,
+        theme_score_git_commits=theme_git_commits,
+        theme_score_data_snapshot_ids=theme_snapshots,
+        theme_score_universe_versions=theme_universe_versions,
+        theme_score_theme_versions=theme_theme_versions,
+        market_regime_source_mismatch_warning=market_warning,
+        theme_score_source_mismatch_warning=theme_warning,
+        non_price_input_snapshot_warning=market_warning or theme_warning,
+        non_price_input_mode="live_table_version_guardrail",
+        lifecycle_generated_at=metadata.signal_generated_at,
+        lifecycle_config_hash=metadata.config_hash,
+        lifecycle_git_commit=metadata.git_commit,
+        lifecycle_data_snapshot_id=metadata.data_snapshot_id,
+    )
 
 
 def _load_prices(
@@ -578,6 +770,7 @@ def persist_position_lifecycle(
     exits: list[ExitDecision],
     skips: list[LifecycleSkip],
     baselines: list[dict],
+    input_qa: LifecycleInputQA,
     metadata,
     price_snapshot_id: str | None,
 ) -> None:
@@ -601,6 +794,52 @@ def persist_position_lifecycle(
                 metadata.data_snapshot_id,
                 price_snapshot_id,
                 metadata.created_at,
+            ],
+        )
+        connection.execute(
+            """
+            INSERT INTO lifecycle_input_qa (
+                lifecycle_run_id, execution_run_id, market_regime_rows,
+                theme_score_rows, market_regime_config_hashes_json,
+                market_regime_git_commits_json,
+                market_regime_data_snapshot_ids_json,
+                market_regime_universe_versions_json,
+                market_regime_theme_versions_json,
+                theme_score_config_hashes_json,
+                theme_score_git_commits_json,
+                theme_score_data_snapshot_ids_json,
+                theme_score_universe_versions_json,
+                theme_score_theme_versions_json,
+                market_regime_source_mismatch_warning,
+                theme_score_source_mismatch_warning,
+                non_price_input_snapshot_warning, non_price_input_mode,
+                lifecycle_generated_at_utc, lifecycle_config_hash,
+                lifecycle_git_commit, lifecycle_data_snapshot_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                input_qa.lifecycle_run_id,
+                input_qa.execution_run_id,
+                input_qa.market_regime_rows,
+                input_qa.theme_score_rows,
+                json.dumps(input_qa.market_regime_config_hashes, sort_keys=True),
+                json.dumps(input_qa.market_regime_git_commits, sort_keys=True),
+                json.dumps(input_qa.market_regime_data_snapshot_ids, sort_keys=True),
+                json.dumps(input_qa.market_regime_universe_versions, sort_keys=True),
+                json.dumps(input_qa.market_regime_theme_versions, sort_keys=True),
+                json.dumps(input_qa.theme_score_config_hashes, sort_keys=True),
+                json.dumps(input_qa.theme_score_git_commits, sort_keys=True),
+                json.dumps(input_qa.theme_score_data_snapshot_ids, sort_keys=True),
+                json.dumps(input_qa.theme_score_universe_versions, sort_keys=True),
+                json.dumps(input_qa.theme_score_theme_versions, sort_keys=True),
+                input_qa.market_regime_source_mismatch_warning,
+                input_qa.theme_score_source_mismatch_warning,
+                input_qa.non_price_input_snapshot_warning,
+                input_qa.non_price_input_mode,
+                input_qa.lifecycle_generated_at,
+                input_qa.lifecycle_config_hash,
+                input_qa.lifecycle_git_commit,
+                input_qa.lifecycle_data_snapshot_id,
             ],
         )
         for row in positions:
@@ -842,6 +1081,14 @@ def generate_position_lifecycle(
         ),
         "baseline_rows_count": len(baselines),
     }
+    input_qa = _non_price_input_qa(
+        config,
+        lifecycle_run_id,
+        execution_run_id,
+        executions,
+        through_date,
+        metadata,
+    )
     if persist:
         persist_position_lifecycle(
             config,
@@ -852,6 +1099,7 @@ def generate_position_lifecycle(
             exits,
             skips,
             baselines,
+            input_qa,
             metadata,
             effective_price_snapshot_id,
         )
@@ -864,9 +1112,11 @@ def generate_position_lifecycle(
         exit_decisions=[row.to_dict() for row in exits],
         skipped_executions=[row.to_dict() for row in skips],
         qa_summary=qa_summary,
+        input_qa=input_qa.to_dict(),
         baseline_symbols=sorted(BENCHMARK_SYMBOLS),
         warning=(
-            "Phase 5B1 only: position lifecycle and exit-decision records are "
-            "scaffolding, not a formal result report or strategy conclusion."
+            "Phase 5B only: position lifecycle, exit-decision records, and input "
+            "provenance are scaffolding, not a formal result report or strategy "
+            "conclusion."
         ),
     )

@@ -4,12 +4,12 @@ SectorScout is a staged, point-in-time research system for finding strong market
 themes, ranking strong stocks inside those themes, and waiting for technical
 setups before labeling anything actionable.
 
-Current status: Phase 5B5 reproducibility scaffolding is implemented. It creates
+Current status: Phase 5B6 reproducibility scaffolding is implemented. It creates
 next-open execution-decision records from frozen Phase 4 triggered setup
 candidates, then builds simulated position lifecycle, exit-decision,
 trade-ledger QA, and baseline coverage QA records, with stronger run provenance
-and persisted frozen price snapshot validation. It does not calculate strategy
-performance.
+persisted frozen price snapshot validation, and non-price lifecycle input
+metadata guardrails. It does not calculate strategy performance.
 
 Implemented so far:
 
@@ -47,6 +47,9 @@ Implemented so far:
   `--price-snapshot-id` wiring, fail-fast snapshot coverage checks, exact
   execution/lifecycle session validation, benchmark coverage validation,
   snapshot mismatch warnings, and rowset hash validation.
+- Phase 5B6: non-price lifecycle input guardrails for `market_regime` and
+  `theme_scores`, with metadata-set audit rows and ledger warnings when those
+  live-table inputs do not match the source signal/execution provenance.
 
 Not implemented yet:
 
@@ -94,8 +97,9 @@ Current limitations:
   sequencing, but not full open-position risk, sector exposure, or NEUTRAL sizing.
 - Provider-priority price selection can be persisted as frozen
   `price_snapshot_runs` / `price_snapshot_rows`, but those snapshots freeze only
-  prices. Market-regime and theme-score lifecycle inputs still need their own
-  frozen snapshot/version model before formal validation.
+  prices. Market-regime and theme-score lifecycle inputs now emit
+  `live_table_version_guardrail` QA metadata and mismatch warnings, but they
+  still need a full frozen snapshot model before formal validation.
 
 ## Quick Start
 
@@ -147,5 +151,5 @@ Important design constraints to review:
   claims.
 - Scores rank candidates; Phase 4 setup triggers create research candidates only.
 - The system must not output direct buy labels or execution instructions.
-- Phase 5A/5B1/5B2/5B3/5B4/5B5 records are not a performance backtest, so no
+- Phase 5A through Phase 5B6 records are not a performance backtest, so no
   performance claims should be inferred from the current repository.

@@ -109,6 +109,10 @@ def test_initialize_database_adds_missing_phase5b3_columns(tmp_path: Path) -> No
         lifecycle_qa_columns = {
             row[1] for row in connection.execute("PRAGMA table_info('lifecycle_qa')").fetchall()
         }
+        lifecycle_input_qa_columns = {
+            row[1]
+            for row in connection.execute("PRAGMA table_info('lifecycle_input_qa')").fetchall()
+        }
         price_snapshot_run_columns = {
             row[1]
             for row in connection.execute("PRAGMA table_info('price_snapshot_runs')").fetchall()
@@ -131,5 +135,17 @@ def test_initialize_database_adds_missing_phase5b3_columns(tmp_path: Path) -> No
         "execution_config_hash",
         "execution_data_snapshot_id",
     }.issubset(ledger_columns)
-    assert "price_snapshot_mismatch_warning" in lifecycle_qa_columns
+    assert {
+        "price_snapshot_mismatch_warning",
+        "non_price_input_snapshot_warning",
+        "market_regime_source_mismatch_warning",
+        "theme_score_source_mismatch_warning",
+        "non_price_input_mode",
+        "non_price_input_qa_json",
+    }.issubset(lifecycle_qa_columns)
+    assert {
+        "market_regime_data_snapshot_ids_json",
+        "theme_score_theme_versions_json",
+        "non_price_input_snapshot_warning",
+    }.issubset(lifecycle_input_qa_columns)
     assert "snapshot_rows_hash" in price_snapshot_run_columns

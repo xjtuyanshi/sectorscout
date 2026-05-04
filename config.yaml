@@ -1,6 +1,6 @@
 project:
   name: SectorScout
-  schema_version: 17
+  schema_version: 18
 
 market:
   calendar: XNYS

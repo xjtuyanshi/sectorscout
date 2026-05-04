@@ -94,6 +94,30 @@ def _insert_accepted_execution(
         )
 
 
+def _insert_execution_run_context(config: SectorScoutConfig, execution_run_id: str = RUN_ID) -> None:
+    with connect_database(config.database.path) as connection:
+        connection.execute(
+            """
+            INSERT INTO execution_runs (
+                execution_run_id, asof_date, execution_model,
+                execution_generated_at_utc, execution_config_hash,
+                execution_git_commit, execution_data_snapshot_id,
+                source_signal_snapshot_id, source_signal_config_hash,
+                source_signal_git_commit, source_universe_version,
+                source_theme_version, mixed_source_signal_metadata,
+                created_at_utc
+            ) VALUES (
+                ?, DATE '2024-11-29', 'next_open',
+                '2024-11-29T18:01:00+00:00', 'hash',
+                'commit', 'snapshot', 'snapshot', 'hash',
+                'commit', 'universe', 'theme', false,
+                '2024-11-29T18:01:00+00:00'
+            )
+            """,
+            [execution_run_id],
+        )
+
+
 def _insert_prices(
     config: SectorScoutConfig,
     symbol: str,
@@ -125,6 +149,86 @@ def _insert_prices(
                     provider,
                 ],
             )
+
+
+def _insert_market_regime(
+    config: SectorScoutConfig,
+    row_date: date,
+    *,
+    config_hash: str = "hash",
+    git_commit: str = "commit",
+    data_snapshot_id: str = "snapshot",
+    universe_version: str = "universe",
+    theme_version: str = "theme",
+    risk_state: str = "RISK_ON",
+) -> None:
+    with connect_database(config.database.path) as connection:
+        connection.execute(
+            """
+            INSERT INTO market_regime (
+                asof_date, spy_stage, qqq_stage, spy_above_50dma, spy_above_200dma,
+                qqq_above_50dma, qqq_above_200dma, pct_universe_above_50dma,
+                pct_universe_above_200dma, pct_universe_stage2, risk_state,
+                signal_generated_at_utc, config_hash, git_commit, data_snapshot_id,
+                universe_version, theme_version
+            ) VALUES (
+                ?, 'Stage 2', 'Stage 2', true, true,
+                true, true, 0.8, 0.8, 0.5, ?,
+                '2024-12-03T21:00:00+00:00', ?, ?, ?,
+                ?, ?
+            )
+            """,
+            [
+                row_date,
+                risk_state,
+                config_hash,
+                git_commit,
+                data_snapshot_id,
+                universe_version,
+                theme_version,
+            ],
+        )
+
+
+def _insert_theme_score(
+    config: SectorScoutConfig,
+    row_date: date,
+    *,
+    theme_score: float = 60.0,
+    config_hash: str = "hash",
+    git_commit: str = "commit",
+    data_snapshot_id: str = "snapshot",
+    universe_version: str = "universe",
+    theme_version: str = "theme",
+) -> None:
+    with connect_database(config.database.path) as connection:
+        connection.execute(
+            """
+            INSERT INTO theme_scores (
+                asof_date, theme_id, theme_score, technical_relative_strength,
+                breadth, fundamental_acceleration, catalyst_score,
+                risk_valuation_penalty, component_coverage_pct, members_count,
+                raw_members_count, eligible_members_count, excluded_members_count,
+                technical_coverage_pct, theme_fundamental_coverage_pct,
+                members_with_valid_fundamentals, signal_generated_at_utc,
+                config_hash, git_commit, data_snapshot_id, universe_version,
+                theme_version
+            ) VALUES (
+                ?, 'ai-memory', ?, 40, 40, 40, 0, 0, 1, 1,
+                1, 1, 0, 1, 1, 1, '2024-12-02T21:00:00+00:00',
+                ?, ?, ?, ?, ?
+            )
+            """,
+            [
+                row_date,
+                theme_score,
+                config_hash,
+                git_commit,
+                data_snapshot_id,
+                universe_version,
+                theme_version,
+            ],
+        )
 
 
 def _position(config: SectorScoutConfig, through: date, *, run_id: str = RUN_ID) -> dict:
@@ -166,6 +270,70 @@ def test_phase5b1_skips_missing_entry_session_price(tmp_path: Path) -> None:
     assert result["positions"] == []
     assert result["qa_summary"]["missing_entry_session_price_count"] == 1
     assert result["skipped_executions"][0]["skip_reason"] == "MISSING_ENTRY_SESSION_PRICE"
+
+
+def test_phase5b5_lifecycle_input_qa_records_matching_non_price_metadata(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    _insert_execution_run_context(config)
+    _insert_accepted_execution(config)
+    _insert_prices(
+        config,
+        "TEST",
+        [
+            (ENTRY, 100.0, 102.0, 99.0, 101.0),
+            (date(2024, 12, 3), 101.0, 102.0, 100.0, 101.0),
+        ],
+    )
+    _insert_market_regime(config, date(2024, 12, 3))
+    _insert_theme_score(config, date(2024, 12, 3))
+
+    result = generate_position_lifecycle(config, RUN_ID, date(2024, 12, 3)).to_dict()
+
+    assert result["input_qa"]["market_regime_rows"] == 1
+    assert result["input_qa"]["theme_score_rows"] == 1
+    assert result["input_qa"]["non_price_input_snapshot_warning"] is False
+    with connect_database(config.database.path) as connection:
+        row = connection.execute(
+            """
+            SELECT non_price_input_snapshot_warning,
+                   market_regime_data_snapshot_ids_json,
+                   theme_score_theme_versions_json
+            FROM lifecycle_input_qa
+            """
+        ).fetchone()
+    assert row == (False, '["snapshot"]', '["theme"]')
+
+
+def test_phase5b5_lifecycle_input_qa_flags_market_regime_source_mismatch(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    _insert_execution_run_context(config)
+    _insert_accepted_execution(config)
+    _insert_prices(config, "TEST", [(ENTRY, 100.0, 102.0, 99.0, 101.0)])
+    _insert_market_regime(config, ENTRY, data_snapshot_id="other_snapshot")
+
+    result = generate_position_lifecycle(config, RUN_ID, ENTRY).to_dict()
+
+    assert result["input_qa"]["market_regime_source_mismatch_warning"] is True
+    assert result["input_qa"]["non_price_input_snapshot_warning"] is True
+
+
+def test_phase5b5_lifecycle_input_qa_flags_theme_score_source_mismatch(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    _insert_execution_run_context(config)
+    _insert_accepted_execution(config)
+    _insert_prices(config, "TEST", [(ENTRY, 100.0, 102.0, 99.0, 101.0)])
+    _insert_theme_score(config, ENTRY, theme_version="other_theme")
+
+    result = generate_position_lifecycle(config, RUN_ID, ENTRY).to_dict()
+
+    assert result["input_qa"]["theme_score_source_mismatch_warning"] is True
+    assert result["input_qa"]["theme_score_theme_versions"] == ["other_theme"]
 
 
 def test_phase5b1_gap_down_stop_at_open_exit(tmp_path: Path) -> None:
