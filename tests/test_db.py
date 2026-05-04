@@ -135,6 +135,9 @@ def test_initialize_database_adds_missing_phase5b3_columns(tmp_path: Path) -> No
                 "PRAGMA table_info('lifecycle_theme_score_snapshot_rows')"
             ).fetchall()
         }
+        run_manifest_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info('run_manifests')").fetchall()
+        }
     assert {
         "source_signal_config_hash",
         "source_signal_git_commit",
@@ -195,3 +198,14 @@ def test_initialize_database_adds_missing_phase5b3_columns(tmp_path: Path) -> No
     assert {"lifecycle_input_snapshot_id", "asof_date", "theme_id", "theme_score"}.issubset(
         lifecycle_theme_snapshot_columns
     )
+    assert {
+        "run_manifest_id",
+        "lifecycle_run_id",
+        "execution_run_id",
+        "execution_decision_rows_hash",
+        "price_snapshot_id",
+        "price_snapshot_rows_hash",
+        "lifecycle_input_snapshot_id",
+        "lifecycle_input_snapshot_rows_hash",
+        "validation_status",
+    }.issubset(run_manifest_columns)

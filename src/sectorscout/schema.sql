@@ -663,3 +663,29 @@ CREATE TABLE IF NOT EXISTS price_snapshot_rows (
     adjustment_warning BOOLEAN NOT NULL,
     PRIMARY KEY (price_snapshot_id, symbol, price_date)
 );
+
+CREATE TABLE IF NOT EXISTS run_manifests (
+    run_manifest_id VARCHAR PRIMARY KEY,
+    lifecycle_run_id VARCHAR NOT NULL,
+    execution_run_id VARCHAR NOT NULL,
+    source_signal_snapshot_id VARCHAR,
+    source_signal_config_hash VARCHAR,
+    source_signal_git_commit VARCHAR,
+    source_universe_version VARCHAR,
+    source_theme_version VARCHAR,
+    execution_model VARCHAR NOT NULL,
+    execution_decision_rows INTEGER NOT NULL,
+    execution_decision_rows_hash VARCHAR NOT NULL,
+    price_snapshot_id VARCHAR,
+    price_snapshot_rows_hash VARCHAR,
+    lifecycle_input_snapshot_id VARCHAR,
+    lifecycle_input_snapshot_rows_hash VARCHAR,
+    schema_version INTEGER NOT NULL,
+    config_hash VARCHAR NOT NULL,
+    git_commit VARCHAR NOT NULL,
+    data_snapshot_id VARCHAR NOT NULL,
+    validation_status VARCHAR NOT NULL,
+    validation_errors_json VARCHAR NOT NULL DEFAULT '[]',
+    validation_warnings_json VARCHAR NOT NULL DEFAULT '[]',
+    created_at_utc TIMESTAMPTZ NOT NULL
+);

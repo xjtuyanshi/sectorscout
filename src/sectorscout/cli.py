@@ -33,6 +33,7 @@ from sectorscout.metadata import build_run_metadata
 from sectorscout.pit import available_fundamental_facts, theme_members_asof, universe_asof
 from sectorscout.prices import create_frozen_price_snapshot
 from sectorscout.reports import generate_daily_report
+from sectorscout.run_manifest import generate_run_manifest, validate_run_manifest
 from sectorscout.scoring import run_scoring
 from sectorscout.setups import detect_setups
 
@@ -372,6 +373,37 @@ def lifecycle_input_snapshot(
         persist=persist,
     )
     typer.echo(json.dumps(result.to_dict(), indent=2, sort_keys=True))
+
+
+@app.command("run-manifest")
+def run_manifest(
+    lifecycle_run_id: str = typer.Option(..., "--lifecycle-run-id"),
+    persist: bool = typer.Option(True, "--persist/--no-persist"),
+    strict: bool = typer.Option(True, "--strict/--no-strict"),
+    config: Path = typer.Option(Path("config.yaml"), "--config"),
+) -> None:
+    loaded = _load(config)
+    result = generate_run_manifest(
+        loaded,
+        lifecycle_run_id,
+        persist=persist,
+    )
+    typer.echo(json.dumps(result.to_dict(), indent=2, sort_keys=True))
+    if strict and result.validation_status != "PASS":
+        raise typer.Exit(1)
+
+
+@app.command("provenance-validate")
+def provenance_validate(
+    run_manifest_id: str = typer.Option(..., "--run-manifest-id"),
+    strict: bool = typer.Option(True, "--strict/--no-strict"),
+    config: Path = typer.Option(Path("config.yaml"), "--config"),
+) -> None:
+    loaded = _load(config)
+    result = validate_run_manifest(loaded, run_manifest_id)
+    typer.echo(json.dumps(result.to_dict(), indent=2, sort_keys=True))
+    if strict and result.validation_status != "PASS":
+        raise typer.Exit(1)
 
 
 @app.command()

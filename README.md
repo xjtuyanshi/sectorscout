@@ -4,13 +4,13 @@ SectorScout is a staged, point-in-time research system for finding strong market
 themes, ranking strong stocks inside those themes, and waiting for technical
 setups before labeling anything actionable.
 
-Current status: Phase 5B7 reproducibility scaffolding is implemented. It creates
+Current status: Phase 5B8 reproducibility scaffolding is implemented. It creates
 next-open execution-decision records from frozen Phase 4 triggered setup
 candidates, then builds simulated position lifecycle, exit-decision,
 trade-ledger QA, and baseline coverage QA records, with stronger run provenance,
 persisted frozen price snapshot validation, non-price lifecycle input metadata
-guardrails, and frozen non-price lifecycle input snapshots. It does not
-calculate strategy performance.
+guardrails, frozen non-price lifecycle input snapshots, and run-manifest
+rowset-hash validation. It does not calculate strategy performance.
 
 Implemented so far:
 
@@ -57,6 +57,12 @@ Implemented so far:
   `market_regime` and `theme_scores`, with persisted required key coverage,
   source metadata sets, rowset hashes, fail-fast validation, lifecycle CLI
   wiring, and ledger provenance.
+- Phase 5B8: run manifest / provenance validation scaffolding that ties
+  together source-signal provenance, `execution_run_id`, execution-decision
+  rowset hash, persisted `price_snapshot_id`, persisted
+  `lifecycle_input_snapshot_id`, schema version, config hash, git commit, and
+  validation status. The `provenance-validate` command fails if persisted
+  manifest rowsets drift.
 
 Not implemented yet:
 
@@ -107,6 +113,9 @@ Current limitations:
   lifecycle inputs can now be persisted as frozen lifecycle input snapshots, but
   those snapshots are still provenance scaffolding and not formal validation or
   performance evidence.
+- Phase 5B8 run manifests require persisted price and lifecycle-input snapshots
+  for a PASS status; they validate rowset hashes only and do not produce returns
+  or strategy conclusions.
 
 ## Quick Start
 
@@ -143,6 +152,8 @@ Run the current research commands:
 .venv/bin/sectorscout lifecycle-input-snapshot --execution-run-id <execution_run_id> --through 2024-12-31 --config config.yaml
 .venv/bin/sectorscout position-lifecycle --execution-run-id <execution_run_id> --through 2024-12-31 --price-snapshot-id <price_snapshot_id> --lifecycle-input-snapshot-id <lifecycle_input_snapshot_id> --config config.yaml
 .venv/bin/sectorscout trade-ledger-qa --lifecycle-run-id <lifecycle_run_id> --config config.yaml
+.venv/bin/sectorscout run-manifest --lifecycle-run-id <lifecycle_run_id> --config config.yaml
+.venv/bin/sectorscout provenance-validate --run-manifest-id <run_manifest_id> --config config.yaml
 .venv/bin/sectorscout report --date 2024-11-29 --config config.yaml
 ```
 
@@ -159,5 +170,5 @@ Important design constraints to review:
   claims.
 - Scores rank candidates; Phase 4 setup triggers create research candidates only.
 - The system must not output direct buy labels or execution instructions.
-- Phase 5A through Phase 5B7 records are not a performance backtest, so no
+- Phase 5A through Phase 5B8 records are not a performance backtest, so no
   performance claims should be inferred from the current repository.
