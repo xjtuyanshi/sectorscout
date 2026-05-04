@@ -109,6 +109,10 @@ def test_initialize_database_adds_missing_phase5b3_columns(tmp_path: Path) -> No
         lifecycle_qa_columns = {
             row[1] for row in connection.execute("PRAGMA table_info('lifecycle_qa')").fetchall()
         }
+        price_snapshot_run_columns = {
+            row[1]
+            for row in connection.execute("PRAGMA table_info('price_snapshot_runs')").fetchall()
+        }
     assert {
         "source_signal_config_hash",
         "source_signal_git_commit",
@@ -128,3 +132,4 @@ def test_initialize_database_adds_missing_phase5b3_columns(tmp_path: Path) -> No
         "execution_data_snapshot_id",
     }.issubset(ledger_columns)
     assert "price_snapshot_mismatch_warning" in lifecycle_qa_columns
+    assert "snapshot_rows_hash" in price_snapshot_run_columns

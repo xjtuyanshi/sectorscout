@@ -522,6 +522,7 @@ CREATE TABLE IF NOT EXISTS price_snapshot_runs (
     max_price_date DATE,
     raw_row_count INTEGER NOT NULL,
     chosen_row_count INTEGER NOT NULL,
+    snapshot_rows_hash VARCHAR,
     config_hash VARCHAR NOT NULL,
     git_commit VARCHAR NOT NULL,
     created_at_utc TIMESTAMPTZ NOT NULL

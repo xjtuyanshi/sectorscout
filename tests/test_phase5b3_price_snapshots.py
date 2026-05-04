@@ -13,7 +13,11 @@ from sectorscout.db import connect_database, initialize_database
 from sectorscout.execution import generate_execution_decisions
 from sectorscout.ledger import generate_trade_ledger_qa
 from sectorscout.lifecycle import generate_position_lifecycle
-from sectorscout.prices import PriceSnapshotValidationError, create_frozen_price_snapshot
+from sectorscout.prices import (
+    PriceSnapshotValidationError,
+    create_frozen_price_snapshot,
+    snapshot_rows_hash,
+)
 
 
 ASOF = date(2024, 12, 3)
@@ -163,13 +167,23 @@ def test_phase5b3_persists_frozen_price_snapshot_scaffold(tmp_path: Path) -> Non
     assert result["max_price_date"] == "2024-12-03"
     assert result["raw_row_count"] == 3
     assert result["chosen_row_count"] == 2
+    assert len(result["snapshot_rows_hash"]) == 64
     with connect_database(config.database.path) as connection:
         run = connection.execute(
             """
-            SELECT duplicate_provider_rows_dropped, raw_row_count, chosen_row_count
+            SELECT duplicate_provider_rows_dropped, raw_row_count,
+                   chosen_row_count, snapshot_rows_hash
             FROM price_snapshot_runs
             """
         ).fetchone()
+        rows_frame = connection.execute(
+            """
+            SELECT symbol, price_date, adj_open, adj_high, adj_low, adj_close,
+                   adj_volume, provider, adjustment_warning
+            FROM price_snapshot_rows
+            ORDER BY symbol
+            """
+        ).fetchdf()
         rows = connection.execute(
             """
             SELECT symbol, price_date, adj_close, provider
@@ -177,7 +191,8 @@ def test_phase5b3_persists_frozen_price_snapshot_scaffold(tmp_path: Path) -> Non
             ORDER BY symbol
             """
         ).fetchall()
-    assert run == (1, 3, 2)
+    assert run == (1, 3, 2, result["snapshot_rows_hash"])
+    assert snapshot_rows_hash(rows_frame) == result["snapshot_rows_hash"]
     assert rows == [
         ("MU", date(2024, 12, 2), 100.0, "FMP"),
         ("NVDA", date(2024, 12, 3), 120.0, "yfinance"),
@@ -354,6 +369,32 @@ def test_phase5b3_execution_rejects_snapshot_missing_exact_next_session(
         PriceSnapshotValidationError,
         match="PRICE_SNAPSHOT_MISSING_REQUIRED_SESSIONS",
     ):
+        generate_execution_decisions(config, SIGNAL_ASOF, price_snapshot_id=price_snapshot_id)
+
+
+def test_phase5b5_execution_rejects_price_snapshot_row_hash_mismatch(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    _insert_signal(config)
+    _insert_price(config, "MU", NEXT_SESSION, 101.0, "FMP")
+    price_snapshot_id = create_frozen_price_snapshot(
+        config,
+        NEXT_SESSION,
+        symbols=["MU"],
+    ).price_snapshot_id
+    with connect_database(config.database.path) as connection:
+        connection.execute(
+            """
+            UPDATE price_snapshot_rows
+            SET adj_close = 102
+            WHERE price_snapshot_id = ?
+              AND symbol = 'MU'
+            """,
+            [price_snapshot_id],
+        )
+
+    with pytest.raises(PriceSnapshotValidationError, match="PRICE_SNAPSHOT_HASH_MISMATCH"):
         generate_execution_decisions(config, SIGNAL_ASOF, price_snapshot_id=price_snapshot_id)
 
 

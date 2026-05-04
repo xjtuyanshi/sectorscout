@@ -9,7 +9,7 @@ import duckdb
 from sectorscout.config import SectorScoutConfig, config_hash
 from sectorscout.metadata import RunMetadata, get_git_commit
 
-SCHEMA_VERSION = 16
+SCHEMA_VERSION = 17
 SCHEMA_PATH = Path(__file__).with_name("schema.sql")
 
 
@@ -38,6 +38,7 @@ MIGRATION_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("trade_ledger", "execution_config_hash", "VARCHAR"),
     ("trade_ledger", "execution_data_snapshot_id", "VARCHAR"),
     ("lifecycle_qa", "price_snapshot_mismatch_warning", "BOOLEAN DEFAULT false"),
+    ("price_snapshot_runs", "snapshot_rows_hash", "VARCHAR"),
 )
 
 

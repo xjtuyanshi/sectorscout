@@ -4,11 +4,12 @@ SectorScout is a staged, point-in-time research system for finding strong market
 themes, ranking strong stocks inside those themes, and waiting for technical
 setups before labeling anything actionable.
 
-Current status: Phase 5B3 reproducibility scaffolding is implemented. It creates next-open
-execution-decision records from frozen Phase 4 triggered setup candidates, then
-builds simulated position lifecycle, exit-decision, trade-ledger QA, and
-baseline coverage QA records, with stronger run provenance and frozen price
-snapshot scaffolding. It does not calculate strategy performance.
+Current status: Phase 5B5 reproducibility scaffolding is implemented. It creates
+next-open execution-decision records from frozen Phase 4 triggered setup
+candidates, then builds simulated position lifecycle, exit-decision,
+trade-ledger QA, and baseline coverage QA records, with stronger run provenance
+and persisted frozen price snapshot validation. It does not calculate strategy
+performance.
 
 Implemented so far:
 
@@ -42,6 +43,10 @@ Implemented so far:
   signal metadata on `execution_runs`, richer `trade_ledger` identity fields,
   per-symbol baseline coverage QA, calendar-vs-trading-session holding counts,
   and `price_snapshot_runs` / `price_snapshot_rows` scaffolding.
+- Phase 5B4/5B5: persisted price snapshot hardening, including CLI
+  `--price-snapshot-id` wiring, fail-fast snapshot coverage checks, exact
+  execution/lifecycle session validation, benchmark coverage validation,
+  snapshot mismatch warnings, and rowset hash validation.
 
 Not implemented yet:
 
@@ -68,9 +73,9 @@ Current limitations:
   aggregated into summary metrics or used as evidence of strategy quality.
 - Phase 5B2 baseline rows are coverage/provider QA scaffolding only; they are
   not a benchmark return model.
-- Phase 5B3 frozen price snapshot tables are scaffolding only. The existing
-  execution/lifecycle paths still use the provider-priority in-memory snapshot
-  layer until a later phase wires persisted snapshots into those paths.
+- Phase 5B5 frozen price snapshot tables are still scaffolding, but
+  execution/lifecycle can now use persisted `price_snapshot_id` rows with
+  fail-fast coverage and rowset hash validation.
 - `trade_ledger.gross_r_multiple` remains a row-level QA diagnostic before
   slippage/commission and is not aggregated into strategy metrics.
 - Theme-score deterioration uses a strict consecutive market-session streak;
@@ -87,8 +92,10 @@ Current limitations:
   earnings-events provider.
 - Portfolio risk is still a scaffold: it handles per-day count and theme exposure
   sequencing, but not full open-position risk, sector exposure, or NEUTRAL sizing.
-- Provider-priority price selection is currently an in-memory snapshot layer; it
-  is not yet persisted as a frozen price snapshot table.
+- Provider-priority price selection can be persisted as frozen
+  `price_snapshot_runs` / `price_snapshot_rows`, but those snapshots freeze only
+  prices. Market-regime and theme-score lifecycle inputs still need their own
+  frozen snapshot/version model before formal validation.
 
 ## Quick Start
 
@@ -120,10 +127,10 @@ Run the current research commands:
 .venv/bin/sectorscout theme-members-asof --asof 2024-11-29 --config config.yaml
 .venv/bin/sectorscout score --asof 2024-11-29 --config config.yaml
 .venv/bin/sectorscout detect-setups --asof 2024-11-29 --config config.yaml
-.venv/bin/sectorscout execution-decisions --asof 2024-11-29 --config config.yaml
-.venv/bin/sectorscout position-lifecycle --execution-run-id <execution_run_id> --through 2024-12-31 --config config.yaml
+.venv/bin/sectorscout price-snapshot --asof 2024-12-31 --config config.yaml
+.venv/bin/sectorscout execution-decisions --asof 2024-11-29 --price-snapshot-id <price_snapshot_id> --config config.yaml
+.venv/bin/sectorscout position-lifecycle --execution-run-id <execution_run_id> --through 2024-12-31 --price-snapshot-id <price_snapshot_id> --config config.yaml
 .venv/bin/sectorscout trade-ledger-qa --lifecycle-run-id <lifecycle_run_id> --config config.yaml
-.venv/bin/sectorscout price-snapshot --asof 2024-11-29 --config config.yaml
 .venv/bin/sectorscout report --date 2024-11-29 --config config.yaml
 ```
 
@@ -140,5 +147,5 @@ Important design constraints to review:
   claims.
 - Scores rank candidates; Phase 4 setup triggers create research candidates only.
 - The system must not output direct buy labels or execution instructions.
-- Phase 5A/5B1/5B2/5B3 records are not a performance backtest, so no
+- Phase 5A/5B1/5B2/5B3/5B4/5B5 records are not a performance backtest, so no
   performance claims should be inferred from the current repository.

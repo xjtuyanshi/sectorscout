@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import asdict, dataclass
 from datetime import date, datetime
@@ -36,6 +37,7 @@ class FrozenPriceSnapshotResult:
     max_price_date: str | None
     raw_row_count: int
     chosen_row_count: int
+    snapshot_rows_hash: str
     config_hash: str
     git_commit: str
     warning: str
@@ -55,6 +57,7 @@ class PriceSnapshotUsage:
     max_price_date: str | None
     raw_row_count: int
     chosen_row_count: int
+    snapshot_rows_hash: str | None
     required_symbols: list[str]
     missing_symbols: list[str]
     required_symbol_dates: dict[str, list[str]]
@@ -217,6 +220,28 @@ def _json_list(value: object) -> list[str]:
     return [str(item) for item in json.loads(str(value))]
 
 
+def snapshot_rows_hash(rows: pd.DataFrame) -> str:
+    records: list[dict] = []
+    if not rows.empty:
+        sorted_rows = rows.sort_values(["symbol", "price_date", "provider"])
+        for _, row in sorted_rows.iterrows():
+            records.append(
+                {
+                    "symbol": str(row["symbol"]).upper(),
+                    "price_date": _date_iso(row["price_date"]),
+                    "adj_open": float(row["adj_open"]),
+                    "adj_high": float(row["adj_high"]),
+                    "adj_low": float(row["adj_low"]),
+                    "adj_close": float(row["adj_close"]),
+                    "adj_volume": int(row["adj_volume"]),
+                    "provider": str(row["provider"]),
+                    "adjustment_warning": bool(row["adjustment_warning"]),
+                }
+            )
+    payload = json.dumps(records, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
 def validate_price_snapshot_usage(
     config: SectorScoutConfig,
     price_snapshot_id: str,
@@ -252,7 +277,8 @@ def validate_price_snapshot_usage(
                 min_price_date,
                 max_price_date,
                 raw_row_count,
-                chosen_row_count
+                chosen_row_count,
+                snapshot_rows_hash
             FROM price_snapshot_runs
             WHERE price_snapshot_id = ?
             """,
@@ -287,6 +313,24 @@ def validate_price_snapshot_usage(
             ).fetchall()
         else:
             present_exact_rows = []
+        rows_for_hash = connection.execute(
+            """
+            SELECT
+                symbol,
+                price_date,
+                adj_open,
+                adj_high,
+                adj_low,
+                adj_close,
+                adj_volume,
+                provider,
+                adjustment_warning
+            FROM price_snapshot_rows
+            WHERE price_snapshot_id = ?
+            ORDER BY symbol, price_date, provider
+            """,
+            [price_snapshot_id],
+        ).fetchdf()
 
     (
         asof_date,
@@ -297,6 +341,7 @@ def validate_price_snapshot_usage(
         max_price_date,
         raw_row_count,
         chosen_row_count,
+        stored_snapshot_rows_hash,
     ) = run
     if require_rows and int(chosen_row_count) == 0:
         raise PriceSnapshotValidationError(f"EMPTY_PRICE_SNAPSHOT: {price_snapshot_id}")
@@ -332,6 +377,14 @@ def validate_price_snapshot_usage(
             f"PRICE_SNAPSHOT_MISSING_REQUIRED_SESSIONS: {price_snapshot_id} "
             f"missing={','.join(missing_symbol_dates)}"
         )
+    calculated_snapshot_rows_hash = snapshot_rows_hash(rows_for_hash)
+    if (
+        stored_snapshot_rows_hash
+        and str(stored_snapshot_rows_hash) != calculated_snapshot_rows_hash
+    ):
+        raise PriceSnapshotValidationError(
+            f"PRICE_SNAPSHOT_HASH_MISMATCH: {price_snapshot_id}"
+        )
 
     return PriceSnapshotUsage(
         price_snapshot_id=price_snapshot_id,
@@ -343,6 +396,7 @@ def validate_price_snapshot_usage(
         max_price_date=_date_iso(max_price_date),
         raw_row_count=int(raw_row_count),
         chosen_row_count=int(chosen_row_count),
+        snapshot_rows_hash=stored_snapshot_rows_hash,
         required_symbols=required,
         missing_symbols=missing_symbols,
         required_symbol_dates={
@@ -398,6 +452,7 @@ def create_frozen_price_snapshot(
     provider_mix = _provider_mix(chosen)
     min_price_date = None if chosen.empty else chosen["price_date"].min()
     max_price_date = None if chosen.empty else chosen["price_date"].max()
+    rows_hash = snapshot_rows_hash(chosen)
 
     if persist:
         with connect_database(config.database.path) as connection:
@@ -407,8 +462,9 @@ def create_frozen_price_snapshot(
                     price_snapshot_id, asof_date, provider_priority_json,
                     provider_mix_json, duplicate_provider_rows_dropped,
                     min_price_date, max_price_date, raw_row_count,
-                    chosen_row_count, config_hash, git_commit, created_at_utc
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    chosen_row_count, snapshot_rows_hash, config_hash,
+                    git_commit, created_at_utc
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 [
                     price_snapshot_id,
@@ -420,6 +476,7 @@ def create_frozen_price_snapshot(
                     max_price_date,
                     int(len(raw_rows)),
                     int(len(chosen)),
+                    rows_hash,
                     metadata.config_hash,
                     metadata.git_commit,
                     metadata.created_at,
@@ -458,6 +515,7 @@ def create_frozen_price_snapshot(
         max_price_date=_date_iso(max_price_date),
         raw_row_count=int(len(raw_rows)),
         chosen_row_count=int(len(chosen)),
+        snapshot_rows_hash=rows_hash,
         config_hash=metadata.config_hash,
         git_commit=metadata.git_commit,
         warning=(
