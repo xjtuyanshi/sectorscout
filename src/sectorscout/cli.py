@@ -7,6 +7,7 @@ from pathlib import Path
 import typer
 
 from sectorscout import __version__
+from sectorscout.audit import generate_provenance_audit_report
 from sectorscout.config import config_hash, load_config
 from sectorscout.data_quality import (
     compute_data_quality,
@@ -401,6 +402,23 @@ def provenance_validate(
 ) -> None:
     loaded = _load(config)
     result = validate_run_manifest(loaded, run_manifest_id)
+    typer.echo(json.dumps(result.to_dict(), indent=2, sort_keys=True))
+    if strict and result.validation_status != "PASS":
+        raise typer.Exit(1)
+
+
+@app.command("provenance-report")
+def provenance_report(
+    run_manifest_id: str = typer.Option(..., "--run-manifest-id"),
+    strict: bool = typer.Option(True, "--strict/--no-strict"),
+    config: Path = typer.Option(Path("config.yaml"), "--config"),
+) -> None:
+    loaded = _load(config)
+    result = generate_provenance_audit_report(
+        loaded,
+        run_manifest_id,
+        strict=strict,
+    )
     typer.echo(json.dumps(result.to_dict(), indent=2, sort_keys=True))
     if strict and result.validation_status != "PASS":
         raise typer.Exit(1)

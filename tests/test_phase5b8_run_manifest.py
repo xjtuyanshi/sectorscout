@@ -8,6 +8,7 @@ import pandas as pd
 from typer.testing import CliRunner
 
 from sectorscout.cli import app
+from sectorscout.audit import generate_provenance_audit_report
 from sectorscout.config import SectorScoutConfig
 from sectorscout.db import connect_database, initialize_database
 from sectorscout.lifecycle_inputs import (
@@ -676,6 +677,124 @@ def test_phase5b8_provenance_validate_cli_fails_on_rowset_drift(tmp_path: Path) 
         "EXECUTION_DECISION_ROWSET_HASH_MISMATCH" in error
         for error in payload["validation_errors"]
     )
+    for forbidden in (
+        "cagr",
+        "sharpe",
+        "max drawdown",
+        "annual return",
+        "annual returns",
+        "win_rate",
+        "win rate",
+        "profit_factor",
+        "profit factor",
+        "expectancy",
+        "edge claim",
+        "claim edge",
+    ):
+        assert forbidden not in output
+
+
+def test_phase5b9_provenance_report_exports_manifest_audit_bundle(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    price_hash, input_hash = _complete_manifest_fixture(config)
+    manifest = generate_run_manifest(config, LIFECYCLE_RUN_ID).to_dict()
+
+    result = generate_provenance_audit_report(
+        config,
+        manifest["run_manifest_id"],
+    ).to_dict()
+
+    assert result["audit_exported"] is True
+    assert result["validation_status"] == "PASS"
+    assert result["run_ids"]["execution_run_id"] == EXECUTION_RUN_ID
+    assert result["source_signal_provenance"]["source_signal_config_hash"] == "signal_hash"
+    assert result["price_snapshot"]["validated_rows_hash"] == price_hash
+    assert result["lifecycle_input_snapshot"]["validated_rows_hash"] == input_hash
+    assert result["execution_decision_rowset"]["row_count"] == 1
+
+
+def test_phase5b9_provenance_report_blocks_failed_manifest(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    _complete_manifest_fixture(config)
+    manifest = generate_run_manifest(config, LIFECYCLE_RUN_ID).to_dict()
+    with connect_database(config.database.path) as connection:
+        connection.execute(
+            """
+            UPDATE execution_decisions
+            SET actual_entry_price = 999
+            WHERE execution_run_id = ?
+            """,
+            [EXECUTION_RUN_ID],
+        )
+
+    result = generate_provenance_audit_report(
+        config,
+        manifest["run_manifest_id"],
+    ).to_dict()
+
+    assert result["audit_exported"] is False
+    assert result["validation_status"] == "FAIL"
+    assert result["execution_decision_rowset"] == {}
+
+
+def test_phase5b9_provenance_report_uses_frozen_snapshot_provenance_after_live_mutation(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    price_hash, input_hash = _complete_manifest_fixture(config)
+    manifest = generate_run_manifest(config, LIFECYCLE_RUN_ID).to_dict()
+    with connect_database(config.database.path) as connection:
+        connection.execute(
+            """
+            INSERT INTO daily_prices (
+                symbol, price_date, open, high, low, close, volume,
+                adj_open, adj_high, adj_low, adj_close, adj_volume,
+                provider, is_adjusted, adjustment_warning, ingested_at_utc
+            ) VALUES (
+                'MU', DATE '2024-12-03', 999, 1000, 998, 999, 1000000,
+                999, 1000, 998, 999, 1000000, 'yfinance', true, false, now()
+            )
+            """
+        )
+
+    result = generate_provenance_audit_report(
+        config,
+        manifest["run_manifest_id"],
+    ).to_dict()
+
+    assert result["audit_exported"] is True
+    assert result["price_snapshot"]["validated_rows_hash"] == price_hash
+    assert result["lifecycle_input_snapshot"]["validated_rows_hash"] == input_hash
+
+
+def test_phase5b9_provenance_report_cli_has_no_formal_metric_terms(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    _complete_manifest_fixture(config)
+    manifest = generate_run_manifest(config, LIFECYCLE_RUN_ID).to_dict()
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(f"database:\n  path: {config.database.path}\n", encoding="utf-8")
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "provenance-report",
+            "--run-manifest-id",
+            manifest["run_manifest_id"],
+            "--config",
+            str(config_path),
+        ],
+    )
+    output = result.stdout.lower()
+    payload = json.loads(result.stdout)
+
+    assert result.exit_code == 0
+    assert payload["audit_exported"] is True
     for forbidden in (
         "cagr",
         "sharpe",
