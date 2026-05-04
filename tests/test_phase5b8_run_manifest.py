@@ -8,7 +8,7 @@ import pandas as pd
 from typer.testing import CliRunner
 
 from sectorscout.cli import app
-from sectorscout.audit import generate_provenance_audit_report
+from sectorscout.audit import generate_provenance_audit_report, validate_audit_report
 from sectorscout.config import SectorScoutConfig
 from sectorscout.db import connect_database, initialize_database
 from sectorscout.lifecycle_inputs import (
@@ -316,10 +316,82 @@ def _insert_lifecycle_input_snapshot(config: SectorScoutConfig) -> str:
     return rows_hash
 
 
+def _insert_lifecycle_qa_rows(config: SectorScoutConfig, input_hash: str) -> None:
+    with connect_database(config.database.path) as connection:
+        connection.execute(
+            """
+            INSERT INTO lifecycle_input_qa (
+                lifecycle_run_id, execution_run_id, market_regime_rows,
+                theme_score_rows, expected_market_regime_sessions_json,
+                missing_market_regime_sessions_json, expected_theme_score_keys_json,
+                missing_theme_score_keys_json, market_regime_source_mismatch_warning,
+                theme_score_source_mismatch_warning,
+                missing_market_regime_coverage_warning,
+                missing_theme_score_coverage_warning,
+                mixed_source_signal_metadata_warning,
+                non_price_input_snapshot_warning, non_price_input_mode,
+                lifecycle_input_snapshot_id, lifecycle_input_snapshot_rows_hash,
+                lifecycle_generated_at_utc, lifecycle_config_hash,
+                lifecycle_git_commit, lifecycle_data_snapshot_id
+            ) VALUES (
+                ?, ?, 2, 2, '["2024-12-02", "2024-12-03"]', '[]',
+                '["ai-memory:2024-12-02", "ai-memory:2024-12-03"]',
+                '[]', false, false, false, false, false, false,
+                'persisted_lifecycle_input_snapshot', ?, ?,
+                '2024-12-03T21:01:00+00:00', 'lifecycle_hash',
+                'lifecycle_commit', 'lifecycle_snapshot'
+            )
+            """,
+            [LIFECYCLE_RUN_ID, EXECUTION_RUN_ID, INPUT_SNAPSHOT_ID, input_hash],
+        )
+        connection.execute(
+            """
+            INSERT INTO lifecycle_qa (
+                lifecycle_run_id, execution_run_id, accepted_execution_count,
+                simulated_position_count, closed_position_count, open_position_count,
+                skipped_count, missing_price_path_count,
+                missing_entry_session_price_count, baseline_rows_count,
+                baseline_symbols_expected_json, baseline_symbols_present_json,
+                baseline_symbols_missing_json, baseline_provider_mix_json,
+                baseline_symbol_qa_json, baseline_coverage_start, baseline_coverage_end,
+                config_mismatch_warning, snapshot_mismatch_warning,
+                missing_baseline_coverage_warning,
+                missing_entry_session_price_warning, price_snapshot_mismatch_warning,
+                non_price_input_snapshot_warning,
+                market_regime_source_mismatch_warning,
+                theme_score_source_mismatch_warning,
+                missing_market_regime_coverage_warning,
+                missing_theme_score_coverage_warning,
+                missing_lifecycle_input_qa_warning,
+                mixed_source_signal_metadata_warning,
+                non_price_input_mode, lifecycle_input_snapshot_id,
+                lifecycle_input_snapshot_rows_hash, non_price_input_qa_json,
+                price_snapshot_mode, lifecycle_generated_at_utc,
+                lifecycle_config_hash, lifecycle_git_commit,
+                lifecycle_data_snapshot_id
+            ) VALUES (
+                ?, ?, 1, 1, 1, 0, 0, 0, 0, 3,
+                '["QQQ", "SMH", "SPY"]',
+                '["QQQ", "SMH", "SPY"]',
+                '[]', '{"FMP": 3}', '{}',
+                DATE '2024-12-03', DATE '2024-12-03',
+                false, false, false, false, false, false,
+                false, false, false, false, false, false,
+                'persisted_lifecycle_input_snapshot', ?, ?, '{}',
+                'persisted_price_snapshot',
+                '2024-12-03T21:01:00+00:00', 'lifecycle_hash',
+                'lifecycle_commit', 'lifecycle_snapshot'
+            )
+            """,
+            [LIFECYCLE_RUN_ID, EXECUTION_RUN_ID, INPUT_SNAPSHOT_ID, input_hash],
+        )
+
+
 def _complete_manifest_fixture(config: SectorScoutConfig) -> tuple[str, str]:
     price_hash = _insert_price_snapshot(config)
     input_hash = _insert_lifecycle_input_snapshot(config)
     _insert_execution_and_lifecycle(config)
+    _insert_lifecycle_qa_rows(config, input_hash)
     return price_hash, input_hash
 
 
@@ -708,11 +780,27 @@ def test_phase5b9_provenance_report_exports_manifest_audit_bundle(
 
     assert result["audit_exported"] is True
     assert result["validation_status"] == "PASS"
+    assert result["audit_report_hash"]
+    assert result["audit_completeness_status"] == "PASS"
     assert result["run_ids"]["execution_run_id"] == EXECUTION_RUN_ID
     assert result["source_signal_provenance"]["source_signal_config_hash"] == "signal_hash"
     assert result["price_snapshot"]["validated_rows_hash"] == price_hash
     assert result["lifecycle_input_snapshot"]["validated_rows_hash"] == input_hash
     assert result["execution_decision_rowset"]["row_count"] == 1
+    with connect_database(config.database.path) as connection:
+        persisted = connection.execute(
+            """
+            SELECT run_manifest_id, audit_report_hash, audit_completeness_status
+            FROM audit_reports
+            WHERE audit_report_id = ?
+            """,
+            [result["audit_report_id"]],
+        ).fetchone()
+    assert persisted == (
+        manifest["run_manifest_id"],
+        result["audit_report_hash"],
+        "PASS",
+    )
 
 
 def test_phase5b9_provenance_report_blocks_failed_manifest(
@@ -739,6 +827,80 @@ def test_phase5b9_provenance_report_blocks_failed_manifest(
     assert result["audit_exported"] is False
     assert result["validation_status"] == "FAIL"
     assert result["execution_decision_rowset"] == {}
+
+
+def test_phase5b10_provenance_report_blocks_missing_lifecycle_qa_in_strict_mode(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    _complete_manifest_fixture(config)
+    manifest = generate_run_manifest(config, LIFECYCLE_RUN_ID).to_dict()
+    with connect_database(config.database.path) as connection:
+        connection.execute("DELETE FROM lifecycle_qa WHERE lifecycle_run_id = ?", [LIFECYCLE_RUN_ID])
+
+    result = generate_provenance_audit_report(
+        config,
+        manifest["run_manifest_id"],
+    ).to_dict()
+
+    assert result["audit_exported"] is False
+    assert result["validation_status"] == "PASS"
+    assert result["audit_completeness_status"] == "FAIL"
+    assert "MISSING_LIFECYCLE_QA" in result["audit_completeness_warnings"]
+
+
+def test_phase5b10_provenance_report_blocks_missing_lifecycle_input_qa_in_strict_mode(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    _complete_manifest_fixture(config)
+    manifest = generate_run_manifest(config, LIFECYCLE_RUN_ID).to_dict()
+    with connect_database(config.database.path) as connection:
+        connection.execute(
+            "DELETE FROM lifecycle_input_qa WHERE lifecycle_run_id = ?",
+            [LIFECYCLE_RUN_ID],
+        )
+
+    result = generate_provenance_audit_report(
+        config,
+        manifest["run_manifest_id"],
+    ).to_dict()
+
+    assert result["audit_exported"] is False
+    assert result["validation_status"] == "PASS"
+    assert result["audit_completeness_status"] == "FAIL"
+    assert "MISSING_LIFECYCLE_INPUT_QA" in result["audit_completeness_warnings"]
+
+
+def test_phase5b10_provenance_report_non_strict_surfaces_component_failure(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    _complete_manifest_fixture(config)
+    manifest = generate_run_manifest(config, LIFECYCLE_RUN_ID).to_dict()
+    with connect_database(config.database.path) as connection:
+        connection.execute(
+            """
+            UPDATE price_snapshot_rows
+            SET adj_close = 888
+            WHERE price_snapshot_id = ?
+              AND symbol = 'MU'
+              AND price_date = DATE '2024-12-03'
+            """,
+            [PRICE_SNAPSHOT_ID],
+        )
+
+    result = generate_provenance_audit_report(
+        config,
+        manifest["run_manifest_id"],
+        strict=False,
+        persist=False,
+    ).to_dict()
+
+    assert result["audit_exported"] is True
+    assert result["validation_status"] == "FAIL"
+    assert result["price_snapshot"]["validation_status"] == "FAIL"
+    assert result["price_snapshot"]["validation_errors"]
 
 
 def test_phase5b9_provenance_report_uses_frozen_snapshot_provenance_after_live_mutation(
@@ -771,6 +933,41 @@ def test_phase5b9_provenance_report_uses_frozen_snapshot_provenance_after_live_m
     assert result["lifecycle_input_snapshot"]["validated_rows_hash"] == input_hash
 
 
+def test_phase5b10_provenance_report_cli_fails_on_strict_manifest_error(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    _complete_manifest_fixture(config)
+    manifest = generate_run_manifest(config, LIFECYCLE_RUN_ID).to_dict()
+    with connect_database(config.database.path) as connection:
+        connection.execute(
+            """
+            UPDATE execution_decisions
+            SET chosen_provider = 'changed'
+            WHERE execution_run_id = ?
+            """,
+            [EXECUTION_RUN_ID],
+        )
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(f"database:\n  path: {config.database.path}\n", encoding="utf-8")
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "provenance-report",
+            "--run-manifest-id",
+            manifest["run_manifest_id"],
+            "--config",
+            str(config_path),
+        ],
+    )
+    payload = json.loads(result.stdout)
+
+    assert result.exit_code == 1
+    assert payload["audit_exported"] is False
+    assert payload["validation_status"] == "FAIL"
+
+
 def test_phase5b9_provenance_report_cli_has_no_formal_metric_terms(
     tmp_path: Path,
 ) -> None:
@@ -795,6 +992,121 @@ def test_phase5b9_provenance_report_cli_has_no_formal_metric_terms(
 
     assert result.exit_code == 0
     assert payload["audit_exported"] is True
+    for forbidden in (
+        "cagr",
+        "sharpe",
+        "max drawdown",
+        "annual return",
+        "annual returns",
+        "win_rate",
+        "win rate",
+        "profit_factor",
+        "profit factor",
+        "expectancy",
+        "edge claim",
+        "claim edge",
+    ):
+        assert forbidden not in output
+
+
+def test_phase5b10_validate_audit_report_passes_persisted_bundle(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    _complete_manifest_fixture(config)
+    manifest = generate_run_manifest(config, LIFECYCLE_RUN_ID).to_dict()
+    report = generate_provenance_audit_report(config, manifest["run_manifest_id"]).to_dict()
+
+    result = validate_audit_report(config, report["audit_report_id"]).to_dict()
+
+    assert result["validation_status"] == "PASS"
+    assert result["stored_audit_report_hash"] == report["audit_report_hash"]
+    assert result["stored_payload_hash"] == report["audit_report_hash"]
+    assert result["recomputed_audit_report_hash"] == report["audit_report_hash"]
+
+
+def test_phase5b10_validate_audit_report_catches_payload_hash_drift(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    _complete_manifest_fixture(config)
+    manifest = generate_run_manifest(config, LIFECYCLE_RUN_ID).to_dict()
+    report = generate_provenance_audit_report(config, manifest["run_manifest_id"]).to_dict()
+    with connect_database(config.database.path) as connection:
+        payload = json.loads(
+            connection.execute(
+                "SELECT audit_payload_json FROM audit_reports WHERE audit_report_id = ?",
+                [report["audit_report_id"]],
+            ).fetchone()[0]
+        )
+        payload["source_signal_provenance"]["source_signal_config_hash"] = "tampered"
+        connection.execute(
+            """
+            UPDATE audit_reports
+            SET audit_payload_json = ?
+            WHERE audit_report_id = ?
+            """,
+            [json.dumps(payload, sort_keys=True), report["audit_report_id"]],
+        )
+
+    result = validate_audit_report(config, report["audit_report_id"]).to_dict()
+
+    assert result["validation_status"] == "FAIL"
+    assert any(
+        "AUDIT_REPORT_PAYLOAD_HASH_MISMATCH" in error
+        for error in result["validation_errors"]
+    )
+
+
+def test_phase5b10_validate_audit_report_catches_source_hash_drift(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    _complete_manifest_fixture(config)
+    manifest = generate_run_manifest(config, LIFECYCLE_RUN_ID).to_dict()
+    report = generate_provenance_audit_report(config, manifest["run_manifest_id"]).to_dict()
+    with connect_database(config.database.path) as connection:
+        connection.execute(
+            """
+            UPDATE lifecycle_qa
+            SET baseline_rows_count = 99
+            WHERE lifecycle_run_id = ?
+            """,
+            [LIFECYCLE_RUN_ID],
+        )
+
+    result = validate_audit_report(config, report["audit_report_id"]).to_dict()
+
+    assert result["validation_status"] == "FAIL"
+    assert any(
+        "AUDIT_REPORT_SOURCE_HASH_MISMATCH" in error
+        for error in result["validation_errors"]
+    )
+
+
+def test_phase5b10_audit_report_validate_cli_has_no_formal_metric_terms(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    _complete_manifest_fixture(config)
+    manifest = generate_run_manifest(config, LIFECYCLE_RUN_ID).to_dict()
+    report = generate_provenance_audit_report(config, manifest["run_manifest_id"]).to_dict()
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(f"database:\n  path: {config.database.path}\n", encoding="utf-8")
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "audit-report-validate",
+            "--audit-report-id",
+            report["audit_report_id"],
+            "--config",
+            str(config_path),
+        ],
+    )
+    output = result.stdout.lower()
+
+    assert result.exit_code == 0
     for forbidden in (
         "cagr",
         "sharpe",

@@ -4,14 +4,14 @@ SectorScout is a staged, point-in-time research system for finding strong market
 themes, ranking strong stocks inside those themes, and waiting for technical
 setups before labeling anything actionable.
 
-Current status: Phase 5B9 reproducibility scaffolding is implemented. It creates
+Current status: Phase 5B10 reproducibility scaffolding is implemented. It creates
 next-open execution-decision records from frozen Phase 4 triggered setup
 candidates, then builds simulated position lifecycle, exit-decision,
 trade-ledger QA, and baseline coverage QA records, with stronger run provenance,
 persisted frozen price snapshot validation, non-price lifecycle input metadata
 guardrails, frozen non-price lifecycle input snapshots, and run-manifest
-rowset-hash validation, plus manifest-gated provenance audit export. It does
-not calculate strategy performance.
+rowset-hash validation, plus manifest-gated persisted provenance audit exports.
+It does not calculate strategy performance.
 
 Implemented so far:
 
@@ -68,6 +68,11 @@ Implemented so far:
   It requires a `run_manifest_id`, validates the manifest first, blocks by
   default on failed validation, and emits only run ids, source provenance,
   snapshot ids/hashes, row counts, coverage/warning flags, and QA diagnostics.
+- Phase 5B10: persisted audit bundle and audit-completeness guardrails. Strict
+  audit export now requires manifest validation plus lifecycle QA and lifecycle
+  input QA presence, persists an `audit_reports` row with a canonical
+  `audit_report_hash`, and adds `audit-report-validate` to recompute and verify
+  saved audit artifacts.
 
 Not implemented yet:
 
@@ -124,6 +129,9 @@ Current limitations:
 - Phase 5B9 provenance reports are audit bundles only. They are blocked by
   failing manifests by default and still do not calculate returns or strategy
   conclusions.
+- Phase 5B10 audit reports are integrity artifacts only. Missing lifecycle QA
+  or lifecycle input QA blocks strict export, and saved audit report hashes are
+  for reproducibility checks, not strategy evaluation.
 
 ## Quick Start
 
@@ -163,6 +171,7 @@ Run the current research commands:
 .venv/bin/sectorscout run-manifest --lifecycle-run-id <lifecycle_run_id> --config config.yaml
 .venv/bin/sectorscout provenance-validate --run-manifest-id <run_manifest_id> --config config.yaml
 .venv/bin/sectorscout provenance-report --run-manifest-id <run_manifest_id> --config config.yaml
+.venv/bin/sectorscout audit-report-validate --audit-report-id <audit_report_id> --config config.yaml
 .venv/bin/sectorscout report --date 2024-11-29 --config config.yaml
 ```
 
@@ -179,5 +188,5 @@ Important design constraints to review:
   claims.
 - Scores rank candidates; Phase 4 setup triggers create research candidates only.
 - The system must not output direct buy labels or execution instructions.
-- Phase 5A through Phase 5B9 records are not a performance backtest, so no
+- Phase 5A through Phase 5B10 records are not a performance backtest, so no
   performance claims should be inferred from the current repository.

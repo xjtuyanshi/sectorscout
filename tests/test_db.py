@@ -138,6 +138,9 @@ def test_initialize_database_adds_missing_phase5b3_columns(tmp_path: Path) -> No
         run_manifest_columns = {
             row[1] for row in connection.execute("PRAGMA table_info('run_manifests')").fetchall()
         }
+        audit_report_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info('audit_reports')").fetchall()
+        }
     assert {
         "source_signal_config_hash",
         "source_signal_git_commit",
@@ -209,3 +212,11 @@ def test_initialize_database_adds_missing_phase5b3_columns(tmp_path: Path) -> No
         "lifecycle_input_snapshot_rows_hash",
         "validation_status",
     }.issubset(run_manifest_columns)
+    assert {
+        "audit_report_id",
+        "run_manifest_id",
+        "strict_mode",
+        "audit_report_hash",
+        "audit_payload_json",
+        "audit_completeness_status",
+    }.issubset(audit_report_columns)

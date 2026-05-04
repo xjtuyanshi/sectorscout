@@ -7,7 +7,7 @@ from pathlib import Path
 import typer
 
 from sectorscout import __version__
-from sectorscout.audit import generate_provenance_audit_report
+from sectorscout.audit import generate_provenance_audit_report, validate_audit_report
 from sectorscout.config import config_hash, load_config
 from sectorscout.data_quality import (
     compute_data_quality,
@@ -411,6 +411,7 @@ def provenance_validate(
 def provenance_report(
     run_manifest_id: str = typer.Option(..., "--run-manifest-id"),
     strict: bool = typer.Option(True, "--strict/--no-strict"),
+    persist: bool = typer.Option(True, "--persist/--no-persist"),
     config: Path = typer.Option(Path("config.yaml"), "--config"),
 ) -> None:
     loaded = _load(config)
@@ -418,7 +419,25 @@ def provenance_report(
         loaded,
         run_manifest_id,
         strict=strict,
+        persist=persist,
     )
+    typer.echo(json.dumps(result.to_dict(), indent=2, sort_keys=True))
+    if strict and (
+        result.validation_status != "PASS"
+        or result.audit_completeness_status != "PASS"
+        or not result.audit_exported
+    ):
+        raise typer.Exit(1)
+
+
+@app.command("audit-report-validate")
+def audit_report_validate(
+    audit_report_id: str = typer.Option(..., "--audit-report-id"),
+    strict: bool = typer.Option(True, "--strict/--no-strict"),
+    config: Path = typer.Option(Path("config.yaml"), "--config"),
+) -> None:
+    loaded = _load(config)
+    result = validate_audit_report(loaded, audit_report_id)
     typer.echo(json.dumps(result.to_dict(), indent=2, sort_keys=True))
     if strict and result.validation_status != "PASS":
         raise typer.Exit(1)

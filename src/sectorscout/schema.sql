@@ -689,3 +689,18 @@ CREATE TABLE IF NOT EXISTS run_manifests (
     validation_warnings_json VARCHAR NOT NULL DEFAULT '[]',
     created_at_utc TIMESTAMPTZ NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS audit_reports (
+    audit_report_id VARCHAR PRIMARY KEY,
+    run_manifest_id VARCHAR NOT NULL,
+    strict_mode BOOLEAN NOT NULL,
+    audit_report_hash VARCHAR NOT NULL,
+    audit_payload_json VARCHAR NOT NULL,
+    audit_exported BOOLEAN NOT NULL,
+    validation_status VARCHAR NOT NULL,
+    audit_completeness_status VARCHAR NOT NULL,
+    validation_errors_json VARCHAR NOT NULL DEFAULT '[]',
+    validation_warnings_json VARCHAR NOT NULL DEFAULT '[]',
+    audit_completeness_warnings_json VARCHAR NOT NULL DEFAULT '[]',
+    created_at_utc TIMESTAMPTZ NOT NULL
+);
