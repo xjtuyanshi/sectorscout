@@ -31,7 +31,7 @@ sectorscout = "sectorscout.cli:app"
 where = ["src"]
 
 [tool.setuptools.package-data]
-sectorscout = ["schema.sql"]
+sectorscout = ["schema.sql", "intel/fixtures/*.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

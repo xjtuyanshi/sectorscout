@@ -31,25 +31,49 @@ def _table_exists(config: SectorScoutConfig, table: str) -> bool:
     return row is not None
 
 
-def _count(config: SectorScoutConfig, table: str) -> int:
+def _table_columns(config: SectorScoutConfig, table: str) -> set[str]:
+    if not _table_exists(config, table):
+        return set()
+    with connect_database(config.database.path) as connection:
+        rows = connection.execute(f"PRAGMA table_info('{table}')").fetchall()
+    return {str(row[1]) for row in rows}
+
+
+def _count(config: SectorScoutConfig, table: str, *, asof_date: date | None = None) -> int:
     if not _table_exists(config, table):
         return 0
     with connect_database(config.database.path) as connection:
+        if asof_date is not None and "asof_date" in _table_columns(config, table):
+            return int(connection.execute(f"SELECT COUNT(*) FROM {table} WHERE asof_date = ?", [asof_date]).fetchone()[0])
         return int(connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
 
 
-def _top_rows(config: SectorScoutConfig, table: str, columns: str, order: str, limit: int = 8) -> list[tuple]:
+def _top_rows(
+    config: SectorScoutConfig,
+    table: str,
+    columns: str,
+    order: str,
+    limit: int = 8,
+    *,
+    asof_date: date | None = None,
+) -> list[tuple]:
     if not _table_exists(config, table):
         return []
+    where = ""
+    params: list[object] = []
+    if asof_date is not None and "asof_date" in _table_columns(config, table):
+        where = "WHERE asof_date = ?"
+        params.append(asof_date)
     with connect_database(config.database.path) as connection:
         return connection.execute(
-            f"SELECT {columns} FROM {table} ORDER BY {order} LIMIT {limit}"
+            f"SELECT {columns} FROM {table} {where} ORDER BY {order} LIMIT {limit}",
+            params,
         ).fetchall()
 
 
-def _query_rows(config: SectorScoutConfig, sql: str, limit: int = 10) -> list[tuple]:
+def _query_rows(config: SectorScoutConfig, sql: str, limit: int = 10, params: list | None = None) -> list[tuple]:
     with connect_database(config.database.path) as connection:
-        return connection.execute(f"{sql} LIMIT {limit}").fetchall()
+        return connection.execute(f"{sql} LIMIT {limit}", params or []).fetchall()
 
 
 def generate_intel_daily_report(
@@ -59,7 +83,7 @@ def generate_intel_daily_report(
     output_dir: str | Path = "data/intel/reports",
 ) -> Path:
     ensure_intel_tables(config)
-    overlap = compute_overlap(config)
+    overlap = compute_overlap(config, asof_date=asof_date)
     queue = build_research_queue(config, asof_date=asof_date)
     queue_summary = workflow_summary(config, asof_date=asof_date)
     output = Path(output_dir)
@@ -70,20 +94,29 @@ def generate_intel_daily_report(
         "theme_scores",
         "theme_id, theme_score, breadth, members_count",
         "theme_score DESC",
+        asof_date=asof_date,
     )
     top_stocks = _top_rows(
         config,
         "stock_scores",
         "symbol, theme_id, stock_opportunity_score, state",
         "stock_opportunity_score DESC",
+        asof_date=asof_date,
     )
-    setup_rows = _top_rows(config, "signals", "symbol, theme_id, setup_type, action_category", "symbol")
+    setup_rows = _top_rows(
+        config,
+        "signals",
+        "symbol, theme_id, setup_type, action_category",
+        "symbol",
+        asof_date=asof_date,
+    )
     external_views = _top_rows(
         config,
         "intel_trade_views",
         "source_id, direction, timeframe, summary, requires_review",
         "created_at DESC",
         limit=10,
+        asof_date=asof_date,
     )
     image_observations = _top_rows(
         config,
@@ -98,6 +131,7 @@ def generate_intel_daily_report(
         SELECT 'intel_view' AS item_type, intel_view_id AS item_id, source_id, summary
         FROM intel_trade_views
         WHERE requires_review = true
+          AND asof_date = ?
         UNION ALL
         SELECT 'image_observation' AS item_type, observation_id AS item_id, source_id,
                coalesce(inferred_context, 'Image observation pending review') AS summary
@@ -105,6 +139,7 @@ def generate_intel_daily_report(
         WHERE requires_review = true
         """,
         limit=15,
+        params=[asof_date],
     )
     notes = _top_rows(
         config,
@@ -112,6 +147,7 @@ def generate_intel_daily_report(
         "coalesce(symbol, object_id), note_text, updated_at",
         "updated_at DESC",
         limit=10,
+        asof_date=asof_date,
     )
     lines = [
         f"# SectorScout Intel Daily Report - {asof_date.isoformat()}",
@@ -123,11 +159,11 @@ def generate_intel_daily_report(
         f"- Research workflow queue: {queue_summary['total']} items",
         f"- Urgent review items: {queue_summary['urgent']}",
         f"- Themes: {_count(config, 'themes')}",
-        f"- Theme score rows: {_count(config, 'theme_scores')}",
-        f"- Stock score rows: {_count(config, 'stock_scores')}",
-        f"- Setup candidate rows: {_count(config, 'signals')}",
-        f"- Execution QA rows: {_count(config, 'execution_decisions')}",
-        f"- Lifecycle QA rows: {_count(config, 'lifecycle_qa')}",
+        f"- Theme score rows: {_count(config, 'theme_scores', asof_date=asof_date)}",
+        f"- Stock score rows: {_count(config, 'stock_scores', asof_date=asof_date)}",
+        f"- Setup candidate rows: {_count(config, 'signals', asof_date=asof_date)}",
+        f"- Execution QA rows: {_count(config, 'execution_decisions', asof_date=asof_date)}",
+        f"- Lifecycle QA rows: {_count(config, 'lifecycle_qa', asof_date=asof_date)}",
         "",
         "## Top Themes / Sectors",
     ]
@@ -140,9 +176,9 @@ def generate_intel_daily_report(
         [
             "",
             "## External Intel Summary",
-            f"- Raw captured items: {_count(config, 'intel_raw_items')}",
+            f"- Raw captured items: {_count(config, 'intel_raw_items', asof_date=asof_date)}",
             f"- Media items: {_count(config, 'intel_media_items')}",
-            f"- Extracted views: {_count(config, 'intel_trade_views')}",
+            f"- Extracted views: {_count(config, 'intel_trade_views', asof_date=asof_date)}",
         ]
     )
     lines.extend(

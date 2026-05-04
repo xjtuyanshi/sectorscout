@@ -12,6 +12,9 @@ from sectorscout.intel.vision_extract import extract_image_observation
 from sectorscout.ui.data import UIContext
 
 
+MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+
+
 def render(ctx: UIContext) -> None:
     st.title("Capture Inbox")
     st.caption("Manual capture is the safe MVP path for private/community screenshots and pasted notes.")
@@ -54,9 +57,16 @@ def render(ctx: UIContext) -> None:
     )
     if uploaded is not None and st.button("Save uploaded file"):
         payload = uploaded.getvalue()
-        if uploaded.name.lower().endswith(".md"):
-            raw_item_id, view_id = capture_markdown_text(ctx.config, payload.decode("utf-8"), asof_date=ctx.asof_date)
-            st.success(f"Saved markdown item {raw_item_id}. Draft view: {view_id or 'already existed'}.")
+        if len(payload) > MAX_UPLOAD_BYTES:
+            st.error("File is too large for MVP capture. Keep uploads under 10 MB.")
+        elif uploaded.name.lower().endswith(".md"):
+            try:
+                text = payload.decode("utf-8")
+            except UnicodeDecodeError:
+                st.error("Markdown uploads must be UTF-8 encoded.")
+            else:
+                raw_item_id, view_id = capture_markdown_text(ctx.config, text, asof_date=ctx.asof_date)
+                st.success(f"Saved markdown item {raw_item_id}. Draft view: {view_id or 'already existed'}.")
         else:
             media_id = save_media_bytes(
                 ctx.config,
@@ -79,7 +89,8 @@ def render(ctx: UIContext) -> None:
     st.subheader("Public URL")
     url = st.text_input("Public URL")
     if st.button("Collect public URL", disabled=not url.strip()):
-        result = collect_public_url(ctx.config, url, asof_date=ctx.asof_date)
+        cleaned_url = url.strip()
+        result = collect_public_url(ctx.config, cleaned_url, asof_date=ctx.asof_date)
         if result.status == "COLLECTED":
             st.success(f"Collected {result.title or result.url}")
         else:

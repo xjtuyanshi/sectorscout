@@ -110,6 +110,25 @@ uv pip install '.[dev]'
 .venv/bin/python -m pytest
 ```
 
+For the fastest local demo, initialize the fixture database, seed the Chandler
+intel fixture, generate the Markdown intel report, and launch the dashboard:
+
+```bash
+.venv/bin/sectorscout quickstart --reset --launch-ui --config config.yaml
+```
+
+`--reset` replaces the local fixture DuckDB file configured in `config.yaml`.
+Omit it when you want to keep an existing local database.
+
+If you only want to prepare the non-blank local state without launching
+Streamlit:
+
+```bash
+.venv/bin/sectorscout demo-init --reset --config config.yaml
+.venv/bin/sectorscout demo-status --config config.yaml
+.venv/bin/sectorscout ui --config config.yaml
+```
+
 Initialize a local fixture database:
 
 ```bash

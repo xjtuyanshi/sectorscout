@@ -132,19 +132,25 @@ def load_internal_symbols(config: SectorScoutConfig) -> pd.DataFrame:
     return combined.drop_duplicates(["symbol", "source", "theme", "setup_status"])
 
 
-def load_external_views(config: SectorScoutConfig) -> pd.DataFrame:
+def load_external_views(config: SectorScoutConfig, *, asof_date: Any | None = None) -> pd.DataFrame:
     if not _table_exists(config, "intel_trade_views"):
         return pd.DataFrame()
+    where = "WHERE superseded_by_view_id IS NULL"
+    params: list[Any] = []
+    if asof_date is not None:
+        where += " AND asof_date = ?"
+        params.append(asof_date)
     return _safe_df(
         config,
-        """
+        f"""
         SELECT intel_view_id, source_id, source_title, platform, direction,
                canonical_symbols_json, extraction_confidence, requires_review,
                user_confirmed, risk_notes, invalidation_condition
         FROM intel_trade_views
-        WHERE superseded_by_view_id IS NULL
+        {where}
         ORDER BY created_at DESC
         """,
+        params,
     )
 
 
@@ -197,9 +203,9 @@ def classify_overlap(
     return "INTERNAL_ONLY"
 
 
-def compute_overlap(config: SectorScoutConfig) -> list[dict[str, Any]]:
+def compute_overlap(config: SectorScoutConfig, *, asof_date: Any | None = None) -> list[dict[str, Any]]:
     internal = load_internal_symbols(config)
-    external_rows = _external_symbol_rows(load_external_views(config))
+    external_rows = _external_symbol_rows(load_external_views(config, asof_date=asof_date))
     internal_by_symbol: dict[str, dict] = {}
     for _, row in internal.iterrows():
         symbol = str(row["symbol"]).upper()

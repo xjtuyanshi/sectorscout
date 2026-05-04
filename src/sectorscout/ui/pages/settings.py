@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import streamlit as st
 
+from sectorscout.demo import DEMO_ASOF_DATE, demo_readiness
 from sectorscout.intel.public_sources import load_public_sources
 from sectorscout.ui.data import UIContext, row_count, system_status, table_df, table_exists
 
@@ -30,6 +31,15 @@ TABLES = [
 def render(ctx: UIContext) -> None:
     st.title("Settings / Source Status")
     status = system_status(ctx.config)
+    st.subheader("Demo Readiness")
+    readiness_date = ctx.asof_date or DEMO_ASOF_DATE
+    readiness = demo_readiness(ctx.config, asof_date=readiness_date)
+    ready = all(item["ok"] for item in readiness)
+    if ready:
+        st.success(f"Demo is ready for {readiness_date.isoformat()}.")
+    else:
+        st.warning("Demo is not fully ready. Run: sectorscout demo-init --config config.yaml")
+    st.dataframe(readiness, use_container_width=True, hide_index=True)
     st.subheader("SectorScout")
     st.json(status)
     st.subheader("Source Status")

@@ -16,6 +16,7 @@ from sectorscout.data_quality import (
     persist_data_quality,
 )
 from sectorscout.db import initialize_database, persist_run_metadata
+from sectorscout.demo import DEMO_ASOF_DATE, demo_readiness, run_demo_init
 from sectorscout.execution import generate_execution_decisions
 from sectorscout.ingest import (
     ingest_corporate_actions_csv,
@@ -65,6 +66,23 @@ def _parse_iso_date(value: str | None) -> date | None:
         raise typer.BadParameter("Expected date in YYYY-MM-DD format") from exc
 
 
+def _demo_init_command(
+    *,
+    date_: str,
+    config: Path,
+    reset: bool,
+    launch_ui: bool,
+    port: int,
+) -> None:
+    loaded = _load(config)
+    parsed_date = _parse_iso_date(date_)
+    assert parsed_date is not None
+    result = run_demo_init(loaded, asof_date=parsed_date, reset=reset)
+    typer.echo(json.dumps(result.to_dict(), indent=2, sort_keys=True))
+    if launch_ui:
+        _launch_streamlit(config, port)
+
+
 @app.command()
 def version() -> None:
     """Show the SectorScout package version."""
@@ -110,6 +128,42 @@ def init_db(config: Path = typer.Option(Path("config.yaml"), "--config")) -> Non
     loaded = _load(config)
     db_path = initialize_database(loaded)
     typer.echo(f"Initialized DuckDB schema at {db_path}")
+
+
+@app.command("demo-init")
+def demo_init(
+    date_: str = typer.Option(DEMO_ASOF_DATE.isoformat(), "--date"),
+    reset: bool = typer.Option(False, "--reset/--no-reset"),
+    launch_ui: bool = typer.Option(False, "--launch-ui/--no-launch-ui"),
+    port: int = typer.Option(8501, "--port"),
+    config: Path = typer.Option(Path("config.yaml"), "--config"),
+) -> None:
+    """Initialize fixture data, seed sample intel, and generate the demo report."""
+    _demo_init_command(date_=date_, config=config, reset=reset, launch_ui=launch_ui, port=port)
+
+
+@app.command("quickstart")
+def quickstart(
+    date_: str = typer.Option(DEMO_ASOF_DATE.isoformat(), "--date"),
+    reset: bool = typer.Option(False, "--reset/--no-reset"),
+    launch_ui: bool = typer.Option(False, "--launch-ui/--no-launch-ui"),
+    port: int = typer.Option(8501, "--port"),
+    config: Path = typer.Option(Path("config.yaml"), "--config"),
+) -> None:
+    """One-command local demo setup for a non-blank dashboard."""
+    _demo_init_command(date_=date_, config=config, reset=reset, launch_ui=launch_ui, port=port)
+
+
+@app.command("demo-status")
+def demo_status(
+    date_: str = typer.Option(DEMO_ASOF_DATE.isoformat(), "--date"),
+    config: Path = typer.Option(Path("config.yaml"), "--config"),
+) -> None:
+    """Show whether the local demo/dashboard is ready."""
+    loaded = _load(config)
+    parsed_date = _parse_iso_date(date_)
+    assert parsed_date is not None
+    typer.echo(json.dumps(demo_readiness(loaded, asof_date=parsed_date), indent=2, sort_keys=True))
 
 
 @app.command("metadata")

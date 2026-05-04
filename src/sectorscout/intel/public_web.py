@@ -14,6 +14,14 @@ from sectorscout.intel.storage import insert_raw_item, insert_trade_view, trade_
 from sectorscout.intel.text_extract import extract_trade_view, normalize_text
 
 
+REDIRECT_STATUS_CODES = {301, 302, 303, 307, 308}
+MAX_PUBLIC_REDIRECTS = 5
+
+
+class UnsafePublicUrlError(ValueError):
+    pass
+
+
 class _ReadableHTMLParser(HTMLParser):
     def __init__(self) -> None:
         super().__init__()
@@ -60,6 +68,20 @@ class PublicWebResult:
     reason: str | None = None
 
 
+@dataclass(frozen=True)
+class _HttpFetchResult:
+    status_code: int
+    content_type: str
+    payload: str
+    final_url: str
+    redirect_url: str | None = None
+
+
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001
+        return None
+
+
 def _looks_login_required(text: str) -> bool:
     lowered = text.lower()
     login_terms = ["log in", "login", "sign in", "password", "captcha"]
@@ -87,16 +109,57 @@ def _is_public_http_url(url: str) -> tuple[bool, str | None]:
     return True, None
 
 
-def _fetch_url(url: str) -> tuple[str, str, str]:
+def _open_url_once(url: str) -> _HttpFetchResult:
     request = urllib.request.Request(
         url,
         headers={"User-Agent": "SectorScoutIntel/0.1 public research fetcher"},
     )
-    with urllib.request.urlopen(request, timeout=20) as response:
-        content_type = response.headers.get("content-type", "")
-        final_url = response.geturl()
-        payload = response.read(2_000_000).decode("utf-8", errors="replace")
-    return content_type, payload, final_url
+    opener = urllib.request.build_opener(_NoRedirectHandler)
+    try:
+        with opener.open(request, timeout=20) as response:
+            content_type = response.headers.get("content-type", "")
+            final_url = response.geturl()
+            payload = response.read(2_000_000).decode("utf-8", errors="replace")
+            return _HttpFetchResult(
+                status_code=int(response.status),
+                content_type=content_type,
+                payload=payload,
+                final_url=final_url,
+            )
+    except urllib.error.HTTPError as exc:
+        if exc.code in REDIRECT_STATUS_CODES:
+            return _HttpFetchResult(
+                status_code=int(exc.code),
+                content_type=exc.headers.get("content-type", ""),
+                payload="",
+                final_url=url,
+                redirect_url=exc.headers.get("Location"),
+            )
+        raise
+
+
+def _fetch_url(url: str) -> tuple[str, str, str]:
+    current_url = url
+    redirect_chain: list[str] = []
+    for _ in range(MAX_PUBLIC_REDIRECTS + 1):
+        allowed, reason = _is_public_http_url(current_url)
+        if not allowed:
+            raise UnsafePublicUrlError(reason or "Unsupported URL.")
+        result = _open_url_once(current_url)
+        if result.status_code not in REDIRECT_STATUS_CODES:
+            allowed, reason = _is_public_http_url(result.final_url)
+            if not allowed:
+                raise UnsafePublicUrlError(f"Resolved to unsupported URL: {reason}")
+            return result.content_type, result.payload, result.final_url
+        if not result.redirect_url:
+            raise urllib.error.URLError("Redirect response did not include a Location header.")
+        next_url = urllib.parse.urljoin(current_url, result.redirect_url)
+        allowed, reason = _is_public_http_url(next_url)
+        if not allowed:
+            raise UnsafePublicUrlError(f"Redirected to unsupported URL before request: {reason}")
+        redirect_chain.append(next_url)
+        current_url = next_url
+    raise urllib.error.URLError(f"Too many redirects: {' -> '.join(redirect_chain)}")
 
 
 def collect_public_url(
@@ -113,6 +176,8 @@ def collect_public_url(
         return PublicWebResult("SKIPPED", None, None, url, reason)
     try:
         content_type, payload, final_url = _fetch_url(url)
+    except UnsafePublicUrlError as exc:
+        return PublicWebResult("SKIPPED", None, None, url, str(exc))
     except urllib.error.HTTPError as exc:
         if exc.code in {401, 403}:
             return PublicWebResult("LOGIN_REQUIRED", None, None, url, f"HTTP {exc.code}")

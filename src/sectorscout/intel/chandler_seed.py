@@ -9,11 +9,16 @@ from sectorscout.intel.text_extract import extract_trade_view, normalize_text
 
 
 CHANDLER_FIXTURE_PATH = Path("data/intel/fixtures/chandler_2026_04_26.md")
+PACKAGE_CHANDLER_FIXTURE_PATH = Path(__file__).with_name("fixtures") / "chandler_2026_04_26.md"
 CHANDLER_URL = "https://chandlertrades.com/2026/04/26/weekend-prep-april-26-2/"
 
 
-def load_chandler_fixture(path: str | Path = CHANDLER_FIXTURE_PATH) -> str:
-    return Path(path).read_text(encoding="utf-8")
+def load_chandler_fixture(path: str | Path | None = None) -> str:
+    candidates = [Path(path)] if path is not None else [CHANDLER_FIXTURE_PATH, PACKAGE_CHANDLER_FIXTURE_PATH]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate.read_text(encoding="utf-8")
+    raise FileNotFoundError(f"Chandler fixture not found in: {', '.join(str(candidate) for candidate in candidates)}")
 
 
 def seed_chandler_fixture(config: SectorScoutConfig, *, asof_date: date | None = None) -> str:

@@ -11,6 +11,16 @@ from sectorscout.intel.workflow import build_research_queue, workflow_summary
 from sectorscout.ui.data import UIContext
 
 
+def _valid_follow_up(value: str) -> tuple[bool, str | None]:
+    if not value.strip():
+        return True, None
+    try:
+        parsed = date.fromisoformat(value.strip())
+    except ValueError:
+        return False, None
+    return True, parsed.isoformat()
+
+
 def render(ctx: UIContext) -> None:
     st.title("Research Workflow")
     st.caption("A prioritized queue for capture, review, overlap triage, follow-ups, and report preparation.")
@@ -65,17 +75,21 @@ def render(ctx: UIContext) -> None:
             follow_up = st.text_input("Follow-up date", placeholder="YYYY-MM-DD")
             submitted = st.form_submit_button("Save review mark")
         if submitted:
-            insert_review_mark(
-                ctx.config,
-                object_type=str(selected["object_type"]),
-                object_id=str(selected["object_id"]),
-                review_status=review_status,
-                notes=notes or None,
-                personal_plan=plan or None,
-                follow_up_date=follow_up or None,
-            )
-            st.success("Saved review mark. Future follow-up dates defer this item until due.")
-            st.rerun()
+            valid_follow_up, parsed_follow_up = _valid_follow_up(follow_up)
+            if not valid_follow_up:
+                st.error("Follow-up date must use YYYY-MM-DD.")
+            else:
+                insert_review_mark(
+                    ctx.config,
+                    object_type=str(selected["object_type"]),
+                    object_id=str(selected["object_id"]),
+                    review_status=review_status,
+                    notes=notes or None,
+                    personal_plan=plan or None,
+                    follow_up_date=parsed_follow_up,
+                )
+                st.success("Saved review mark. Future follow-up dates defer this item until due.")
+                st.rerun()
 
     st.subheader("Daily Report")
     report_date = ctx.asof_date or date.today()

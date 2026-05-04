@@ -7,13 +7,14 @@ import pytest
 
 from sectorscout.config import SectorScoutConfig
 from sectorscout.db import connect_database, initialize_database
+from sectorscout.demo import demo_readiness, run_demo_init
 from sectorscout.intel.chandler_seed import load_chandler_fixture, seed_chandler_fixture
 from sectorscout.intel.capture_inbox import capture_markdown_text
 from sectorscout.intel.manual_inbox import parse_manual_markdown
 from sectorscout.intel.models import TradeViewDraft
 from sectorscout.intel.overlap import classify_overlap, compute_overlap
 from sectorscout.intel.public_sources import collect_public_sources, load_public_sources
-from sectorscout.intel.public_web import collect_public_url
+from sectorscout.intel.public_web import _HttpFetchResult, collect_public_url
 from sectorscout.intel.report import generate_intel_daily_report
 from sectorscout.intel.storage import (
     ensure_intel_tables,
@@ -29,6 +30,8 @@ from sectorscout.intel.text_extract import extract_trade_view
 from sectorscout.intel.vision_extract import extract_image_observation
 from sectorscout.intel.workflow import build_research_queue, workflow_summary
 from sectorscout.ui.data import latest_asof_date
+from sectorscout.ui.pages.notes_review import _valid_follow_up as notes_valid_follow_up
+from sectorscout.ui.pages.workflow import _valid_follow_up as workflow_valid_follow_up
 
 
 def _config(tmp_path: Path) -> SectorScoutConfig:
@@ -43,6 +46,8 @@ def _draft(
     source_id: str = "external_source",
     symbols: list[str] | None = None,
     direction: str = "bullish",
+    asof_date: str = "2026-04-27",
+    summary: str = "External context for test.",
     media_id: str | None = None,
     requires_review: bool = False,
     user_confirmed: bool = False,
@@ -56,7 +61,7 @@ def _draft(
         author=None,
         platform="other",
         url=None,
-        asof_date="2026-04-27",
+        asof_date=asof_date,
         published_at=None,
         collected_at=None,
         captured_at=None,
@@ -72,8 +77,8 @@ def _draft(
         target_area=None,
         no_trade_condition=None,
         risk_notes=None,
-        summary="External context for test.",
-        source_excerpt="External context for test.",
+        summary=summary,
+        source_excerpt=summary,
         extraction_method=extraction_method,
         extraction_confidence="medium",
         rights_scope="manual_private",
@@ -346,6 +351,16 @@ def test_chandler_fixture_extraction_expected_context() -> None:
     assert "1-2H bullish control" in view.invalidation_condition
 
 
+def test_chandler_fixture_loads_when_current_directory_has_no_data_folder(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    raw = load_chandler_fixture()
+    assert "Chandler Weekend Prep" in raw
+    assert "NQ demand is around 27300" in raw
+
+
 def test_seed_chandler_fixture_deduplicates_trade_view(tmp_path: Path) -> None:
     config = _config(tmp_path)
     seed_chandler_fixture(config)
@@ -378,6 +393,36 @@ def test_daily_report_does_not_auto_seed_chandler_fixture(tmp_path: Path) -> Non
     assert view_count == 0
     assert "No external views available." in report
     assert "Research Workflow Queue" in report
+
+
+def test_daily_report_filters_external_views_by_asof_date(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    insert_trade_view(
+        config,
+        raw_item_id=None,
+        draft=_draft(asof_date="2026-04-27", summary="Included same-date external context."),
+    )
+    insert_trade_view(
+        config,
+        raw_item_id=None,
+        draft=_draft(asof_date="2026-04-28", summary="Excluded next-date external context."),
+    )
+    report_path = generate_intel_daily_report(config, date(2026, 4, 27), output_dir=tmp_path / "reports")
+    report = report_path.read_text(encoding="utf-8")
+    assert "Included same-date external context." in report
+    assert "Excluded next-date external context." not in report
+    assert "- Extracted views: 1" in report
+
+
+def test_demo_init_creates_nonblank_local_state(tmp_path: Path) -> None:
+    config = SectorScoutConfig.model_validate({"database": {"path": tmp_path / "demo.duckdb"}})
+    result = run_demo_init(config, reports_dir=tmp_path / "reports", reset=True)
+    assert Path(result.report_path).exists()
+    assert result.row_counts["symbols"] > 0
+    assert result.row_counts["theme_scores"] > 0
+    assert result.row_counts["intel_trade_views"] > 0
+    readiness = demo_readiness(config, reports_dir=tmp_path / "reports")
+    assert all(item["ok"] for item in readiness)
 
 
 def test_public_source_registry_loads_only_public_web_sources(tmp_path: Path) -> None:
@@ -437,6 +482,59 @@ def test_public_url_collection_skips_private_redirect(tmp_path: Path, monkeypatc
     result = collect_public_url(config, "https://example.com/post")
     assert result.status == "SKIPPED"
     assert result.raw_item_id is None
+
+
+def test_public_url_collection_checks_redirect_before_requesting_private_url(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _config(tmp_path)
+    requested_urls: list[str] = []
+
+    def fake_open(url: str) -> _HttpFetchResult:
+        requested_urls.append(url)
+        if url.startswith("http://127.0.0.1"):
+            raise AssertionError("private redirect target must not be requested")
+        return _HttpFetchResult(
+            status_code=302,
+            content_type="",
+            payload="",
+            final_url=url,
+            redirect_url="http://127.0.0.1/private",
+        )
+
+    monkeypatch.setattr("sectorscout.intel.public_web._open_url_once", fake_open)
+    result = collect_public_url(config, "https://example.com/redirect")
+    assert result.status == "SKIPPED"
+    assert result.raw_item_id is None
+    assert requested_urls == ["https://example.com/redirect"]
+
+
+def test_public_url_collection_follows_safe_redirect(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    config = _config(tmp_path)
+    requested_urls: list[str] = []
+
+    def fake_open(url: str) -> _HttpFetchResult:
+        requested_urls.append(url)
+        if url == "https://example.com/start":
+            return _HttpFetchResult(
+                status_code=302,
+                content_type="",
+                payload="",
+                final_url=url,
+                redirect_url="/post",
+            )
+        return _HttpFetchResult(
+            status_code=200,
+            content_type="text/html",
+            payload="<html><title>Public Post</title><body>NQ demand around 27300.</body></html>",
+            final_url=url,
+        )
+
+    monkeypatch.setattr("sectorscout.intel.public_web._open_url_once", fake_open)
+    result = collect_public_url(config, "https://example.com/start")
+    assert result.status == "COLLECTED"
+    assert requested_urls == ["https://example.com/start", "https://example.com/post"]
 
 
 def test_public_source_collection_extracts_rule_view(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -674,6 +772,14 @@ def test_notes_are_saved_without_scoring(tmp_path: Path) -> None:
             [note_id],
         ).fetchone()
     assert row == ("NQ", "Review only; condition still needs confirmation.")
+
+
+def test_follow_up_date_validation_helpers() -> None:
+    assert workflow_valid_follow_up("") == (True, None)
+    assert workflow_valid_follow_up("2026-05-05") == (True, "2026-05-05")
+    assert workflow_valid_follow_up("05/05/2026") == (False, None)
+    assert notes_valid_follow_up("2026-05-05") == (True, "2026-05-05")
+    assert notes_valid_follow_up("not-a-date") == (False, None)
 
 
 def test_forbidden_automation_modes_are_not_configured() -> None:
