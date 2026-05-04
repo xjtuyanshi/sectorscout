@@ -17,6 +17,7 @@ from sectorscout.lifecycle_inputs import (
     lifecycle_input_snapshot_rows_hash,
 )
 from sectorscout.prices import PRICE_SNAPSHOT_COLUMNS, snapshot_rows_hash
+from sectorscout.reproducibility import run_reproducibility_check
 from sectorscout.run_manifest import generate_run_manifest, validate_run_manifest
 
 
@@ -1107,6 +1108,144 @@ def test_phase5b10_audit_report_validate_cli_has_no_formal_metric_terms(
     output = result.stdout.lower()
 
     assert result.exit_code == 0
+    for forbidden in (
+        "cagr",
+        "sharpe",
+        "max drawdown",
+        "annual return",
+        "annual returns",
+        "win_rate",
+        "win rate",
+        "profit_factor",
+        "profit factor",
+        "expectancy",
+        "edge claim",
+        "claim edge",
+    ):
+        assert forbidden not in output
+
+
+def test_phase5b11_reproducibility_check_passes_complete_chain(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    price_hash, input_hash = _complete_manifest_fixture(config)
+    manifest = generate_run_manifest(config, LIFECYCLE_RUN_ID).to_dict()
+
+    result = run_reproducibility_check(config, manifest["run_manifest_id"]).to_dict()
+
+    assert result["validation_status"] == "PASS"
+    assert result["failure_reasons"] == []
+    assert result["manifest_validation_status"] == "PASS"
+    assert result["audit_exported"] is True
+    assert result["audit_completeness_status"] == "PASS"
+    assert result["audit_report_validation_status"] == "PASS"
+    assert result["price_snapshot_rows_hash"] == price_hash
+    assert result["lifecycle_input_snapshot_rows_hash"] == input_hash
+    assert result["audit_report_hash"]
+
+
+def test_phase5b11_reproducibility_check_fails_manifest_drift(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    _complete_manifest_fixture(config)
+    manifest = generate_run_manifest(config, LIFECYCLE_RUN_ID).to_dict()
+    with connect_database(config.database.path) as connection:
+        connection.execute(
+            """
+            UPDATE execution_decisions
+            SET chosen_provider = 'changed'
+            WHERE execution_run_id = ?
+            """,
+            [EXECUTION_RUN_ID],
+        )
+
+    result = run_reproducibility_check(config, manifest["run_manifest_id"]).to_dict()
+
+    assert result["validation_status"] == "FAIL"
+    assert "MANIFEST_VALIDATION_FAIL" in result["failure_reasons"]
+    assert "AUDIT_EXPORT_BLOCKED" in result["failure_reasons"]
+
+
+def test_phase5b11_reproducibility_check_fails_missing_lifecycle_qa(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    _complete_manifest_fixture(config)
+    manifest = generate_run_manifest(config, LIFECYCLE_RUN_ID).to_dict()
+    with connect_database(config.database.path) as connection:
+        connection.execute("DELETE FROM lifecycle_qa WHERE lifecycle_run_id = ?", [LIFECYCLE_RUN_ID])
+
+    result = run_reproducibility_check(config, manifest["run_manifest_id"]).to_dict()
+
+    assert result["validation_status"] == "FAIL"
+    assert "AUDIT_COMPLETENESS_FAIL" in result["failure_reasons"]
+    assert "MISSING_LIFECYCLE_QA" in result["audit_completeness_warnings"]
+
+
+def test_phase5b11_reproducibility_check_fails_audit_hash_drift(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    _complete_manifest_fixture(config)
+    manifest = generate_run_manifest(config, LIFECYCLE_RUN_ID).to_dict()
+    report = generate_provenance_audit_report(config, manifest["run_manifest_id"]).to_dict()
+    with connect_database(config.database.path) as connection:
+        payload = json.loads(
+            connection.execute(
+                "SELECT audit_payload_json FROM audit_reports WHERE audit_report_id = ?",
+                [report["audit_report_id"]],
+            ).fetchone()[0]
+        )
+        payload["manifest_metadata"]["config_hash"] = "tampered"
+        connection.execute(
+            """
+            UPDATE audit_reports
+            SET audit_payload_json = ?
+            WHERE audit_report_id = ?
+            """,
+            [json.dumps(payload, sort_keys=True), report["audit_report_id"]],
+        )
+
+    result = run_reproducibility_check(
+        config,
+        manifest["run_manifest_id"],
+        audit_report_id=report["audit_report_id"],
+    ).to_dict()
+
+    assert result["validation_status"] == "FAIL"
+    assert "AUDIT_REPORT_VALIDATION_FAIL" in result["failure_reasons"]
+    assert any(
+        "AUDIT_REPORT_PAYLOAD_HASH_MISMATCH" in error
+        for error in result["audit_report_validation_errors"]
+    )
+
+
+def test_phase5b11_reproducibility_check_cli_has_no_formal_metric_terms(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    _complete_manifest_fixture(config)
+    manifest = generate_run_manifest(config, LIFECYCLE_RUN_ID).to_dict()
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(f"database:\n  path: {config.database.path}\n", encoding="utf-8")
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "reproducibility-check",
+            "--run-manifest-id",
+            manifest["run_manifest_id"],
+            "--config",
+            str(config_path),
+        ],
+    )
+    output = result.stdout.lower()
+    payload = json.loads(result.stdout)
+
+    assert result.exit_code == 0
+    assert payload["validation_status"] == "PASS"
     for forbidden in (
         "cagr",
         "sharpe",
