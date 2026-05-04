@@ -18,44 +18,12 @@ from sectorscout.lifecycle_inputs import (
     validate_lifecycle_input_snapshot_usage,
 )
 from sectorscout.metadata import build_run_metadata
-from sectorscout.prices import PRICE_SNAPSHOT_COLUMNS, snapshot_rows_hash
-
-
-EXECUTION_DECISION_HASH_COLUMNS = [
-    "execution_run_id",
-    "asof_date",
-    "symbol",
-    "theme_id",
-    "setup_type",
-    "execution_model",
-    "decision",
-    "reject_reason",
-    "signal_entry_trigger",
-    "signal_stop_loss",
-    "next_session_date",
-    "chosen_provider",
-    "actual_entry_price",
-    "actual_stop_loss",
-    "risk_per_share",
-    "target_2r",
-    "target_3r",
-    "reward_risk",
-    "execution_price_available",
-    "execution_data_quality_pass",
-    "execution_rule_pass",
-    "risk_rule_pass",
-    "source_signal_generated_at_utc",
-    "source_signal_config_hash",
-    "source_signal_git_commit",
-    "source_signal_data_snapshot_id",
-    "source_universe_version",
-    "source_theme_version",
-    "execution_generated_at_utc",
-    "execution_config_hash",
-    "execution_git_commit",
-    "execution_data_snapshot_id",
-    "price_snapshot_id",
-]
+from sectorscout.pit import BENCHMARK_SYMBOLS
+from sectorscout.prices import (
+    PRICE_SNAPSHOT_COLUMNS,
+    snapshot_rows_hash,
+    validate_price_snapshot_usage,
+)
 
 
 @dataclass(frozen=True)
@@ -193,24 +161,60 @@ def _load_lifecycle_context(config: SectorScoutConfig, lifecycle_run_id: str) ->
     return dict(zip(columns, row, strict=True))
 
 
+def _execution_decision_columns(config: SectorScoutConfig) -> list[str]:
+    with connect_database(config.database.path) as connection:
+        rows = connection.execute("PRAGMA table_info('execution_decisions')").fetchall()
+    return [str(row[1]) for row in sorted(rows, key=lambda item: int(item[0]))]
+
+
 def execution_decision_rows_hash(
     config: SectorScoutConfig,
     execution_run_id: str,
 ) -> tuple[int, str]:
+    columns = _execution_decision_columns(config)
     with connect_database(config.database.path) as connection:
         rows = connection.execute(
             f"""
-            SELECT {", ".join(EXECUTION_DECISION_HASH_COLUMNS)}
+            SELECT {", ".join(columns)}
             FROM execution_decisions
             WHERE execution_run_id = ?
             ORDER BY asof_date, symbol, theme_id, setup_type, execution_model
             """,
             [execution_run_id],
         ).fetchall()
-    records = [
-        dict(zip(EXECUTION_DECISION_HASH_COLUMNS, row, strict=True)) for row in rows
-    ]
+    records = [dict(zip(columns, row, strict=True)) for row in rows]
     return len(records), _hash_records(records)
+
+
+def _accepted_execution_price_requirements(
+    config: SectorScoutConfig,
+    execution_run_id: str,
+    through_date: date,
+) -> tuple[set[str], dict[str, set[date]]]:
+    with connect_database(config.database.path) as connection:
+        rows = connection.execute(
+            """
+            SELECT symbol, next_session_date
+            FROM execution_decisions
+            WHERE execution_run_id = ?
+              AND decision = 'SIMULATED_NEXT_OPEN_ACCEPTED'
+              AND execution_data_quality_pass = true
+              AND execution_rule_pass = true
+              AND risk_rule_pass = true
+            ORDER BY symbol, next_session_date
+            """,
+            [execution_run_id],
+        ).fetchall()
+    required_symbols = {str(symbol).upper() for symbol, _entry_date in rows}
+    required_symbol_dates: dict[str, set[date]] = {}
+    for symbol, entry_date in rows:
+        required_symbol_dates.setdefault(str(symbol).upper(), set()).add(
+            _date_value(entry_date)
+        )
+    for symbol in BENCHMARK_SYMBOLS:
+        required_symbols.add(symbol)
+        required_symbol_dates.setdefault(symbol, set()).add(through_date)
+    return required_symbols, required_symbol_dates
 
 
 def _price_snapshot_hash(
@@ -299,14 +303,14 @@ def _lifecycle_input_snapshot_hash(
 
 
 def _effective_price_snapshot_id(context: dict) -> tuple[str | None, list[str]]:
-    warnings: list[str] = []
+    errors: list[str] = []
     lifecycle_id = context.get("lifecycle_price_snapshot_id")
     execution_id = context.get("execution_price_snapshot_id")
     if lifecycle_id and execution_id and lifecycle_id != execution_id:
-        warnings.append(
+        errors.append(
             f"PRICE_SNAPSHOT_ID_MISMATCH: lifecycle={lifecycle_id} execution={execution_id}"
         )
-    return lifecycle_id or execution_id, warnings
+    return lifecycle_id or execution_id, errors
 
 
 def _manifest_warning() -> str:
@@ -327,18 +331,35 @@ def _build_manifest_payload(
     context = _load_lifecycle_context(config, lifecycle_run_id)
     errors: list[str] = []
     warnings: list[str] = []
+    if context.get("execution_model") is None:
+        errors.append("MISSING_EXECUTION_RUN")
 
     decision_count, decision_hash = execution_decision_rows_hash(
         config,
         context["execution_run_id"],
     )
-    price_snapshot_id, price_warnings = _effective_price_snapshot_id(context)
-    warnings.extend(price_warnings)
+    if decision_count == 0:
+        errors.append("MISSING_EXECUTION_DECISIONS")
+    price_snapshot_id, price_errors = _effective_price_snapshot_id(context)
+    errors.extend(price_errors)
     price_rows_hash: str | None = None
     if price_snapshot_id is None:
         errors.append("MISSING_PRICE_SNAPSHOT_ID")
     else:
         try:
+            required_symbols, required_symbol_dates = _accepted_execution_price_requirements(
+                config,
+                context["execution_run_id"],
+                _date_value(context["through_date"]),
+            )
+            validate_price_snapshot_usage(
+                config,
+                price_snapshot_id,
+                required_symbols=required_symbols,
+                required_symbol_dates=required_symbol_dates,
+                through_date=_date_value(context["through_date"]),
+                require_rows=bool(decision_count),
+            )
             stored_price_hash, calculated_price_hash, hash_warnings = _price_snapshot_hash(
                 config,
                 price_snapshot_id,
@@ -397,7 +418,11 @@ def _build_manifest_payload(
         "data_snapshot_id": metadata.data_snapshot_id,
         "created_at_utc": metadata.created_at,
     }
-    return payload, errors, warnings
+    return payload, _dedupe(errors), _dedupe(warnings)
+
+
+def _dedupe(items: list[str]) -> list[str]:
+    return list(dict.fromkeys(items))
 
 
 def persist_run_manifest(config: SectorScoutConfig, result: RunManifestResult) -> None:
@@ -477,6 +502,10 @@ def _load_manifest(config: SectorScoutConfig, run_manifest_id: str) -> dict:
                 price_snapshot_rows_hash,
                 lifecycle_input_snapshot_id,
                 lifecycle_input_snapshot_rows_hash,
+                schema_version,
+                config_hash,
+                git_commit,
+                data_snapshot_id,
                 validation_warnings_json
             FROM run_manifests
             WHERE run_manifest_id = ?
@@ -494,6 +523,10 @@ def _load_manifest(config: SectorScoutConfig, run_manifest_id: str) -> dict:
         "price_snapshot_rows_hash",
         "lifecycle_input_snapshot_id",
         "lifecycle_input_snapshot_rows_hash",
+        "schema_version",
+        "config_hash",
+        "git_commit",
+        "data_snapshot_id",
         "validation_warnings_json",
     ]
     payload = dict(zip(columns, row, strict=True))
@@ -523,6 +556,16 @@ def validate_run_manifest(
         != manifest["lifecycle_input_snapshot_id"]
     ):
         errors.append(f"LIFECYCLE_INPUT_SNAPSHOT_ID_CHANGED: {run_manifest_id}")
+    if int(manifest["schema_version"]) != SCHEMA_VERSION:
+        warnings.append(
+            f"MANIFEST_SCHEMA_VERSION_DRIFT: stored={manifest['schema_version']} current={SCHEMA_VERSION}"
+        )
+    for field_name in ("config_hash", "git_commit", "data_snapshot_id"):
+        if manifest.get(field_name) != current_payload.get(field_name):
+            warnings.append(
+                f"MANIFEST_{field_name.upper()}_DRIFT: "
+                f"stored={manifest.get(field_name)} current={current_payload.get(field_name)}"
+            )
     _row_count, current_execution_hash = execution_decision_rows_hash(
         config,
         manifest["execution_run_id"],
@@ -568,8 +611,8 @@ def validate_run_manifest(
         lifecycle_run_id=manifest["lifecycle_run_id"],
         execution_run_id=manifest["execution_run_id"],
         validation_status=_validation_status(errors),
-        validation_errors=errors,
-        validation_warnings=sorted(set(warnings)),
+        validation_errors=_dedupe(errors),
+        validation_warnings=_dedupe(warnings),
         execution_decision_rows_hash=current_execution_hash,
         price_snapshot_rows_hash=current_price_hash,
         lifecycle_input_snapshot_rows_hash=current_input_hash,

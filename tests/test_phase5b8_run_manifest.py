@@ -44,7 +44,32 @@ def _price_rows() -> pd.DataFrame:
                 "adj_volume": 1000000,
                 "provider": "FMP",
                 "adjustment_warning": False,
-            }
+            },
+            {
+                "symbol": "MU",
+                "price_date": date(2024, 12, 3),
+                "adj_open": 102.0,
+                "adj_high": 103.0,
+                "adj_low": 101.0,
+                "adj_close": 102.5,
+                "adj_volume": 1000000,
+                "provider": "FMP",
+                "adjustment_warning": False,
+            },
+            *[
+                {
+                    "symbol": symbol,
+                    "price_date": date(2024, 12, 3),
+                    "adj_open": 500.0,
+                    "adj_high": 501.0,
+                    "adj_low": 499.0,
+                    "adj_close": 500.0,
+                    "adj_volume": 1000000,
+                    "provider": "FMP",
+                    "adjustment_warning": False,
+                }
+                for symbol in ("QQQ", "SMH", "SPY")
+            ],
         ],
         columns=PRICE_SNAPSHOT_COLUMNS,
     )
@@ -113,8 +138,8 @@ def _insert_price_snapshot(config: SectorScoutConfig) -> str:
                 git_commit, created_at_utc
             ) VALUES (
                 ?, DATE '2024-12-02', '["FMP", "yfinance", "fixture"]',
-                '{"FMP": 1}', 0, DATE '2024-12-02', DATE '2024-12-02',
-                1, 1, ?, 'price_hash', 'price_commit',
+                '{"FMP": 5}', 0, DATE '2024-12-02', DATE '2024-12-03',
+                5, 5, ?, 'price_hash', 'price_commit',
                 '2024-12-02T21:01:00+00:00'
             )
             """,
@@ -136,9 +161,9 @@ def _insert_price_snapshot(config: SectorScoutConfig) -> str:
                     row["adj_high"],
                     row["adj_low"],
                     row["adj_close"],
-                    row["adj_volume"],
+                    int(row["adj_volume"]),
                     row["provider"],
-                    row["adjustment_warning"],
+                    bool(row["adjustment_warning"]),
                 ],
             )
     return rows_hash
@@ -149,6 +174,7 @@ def _insert_execution_and_lifecycle(
     *,
     price_snapshot_id: str | None = PRICE_SNAPSHOT_ID,
     lifecycle_input_snapshot_id: str | None = INPUT_SNAPSHOT_ID,
+    insert_execution_decision: bool = True,
 ) -> None:
     with connect_database(config.database.path) as connection:
         connection.execute(
@@ -172,9 +198,10 @@ def _insert_execution_and_lifecycle(
             """,
             [EXECUTION_RUN_ID, price_snapshot_id],
         )
-        connection.execute(
-            """
-            INSERT INTO execution_decisions (
+        if insert_execution_decision:
+            connection.execute(
+                """
+                INSERT INTO execution_decisions (
                 execution_run_id, asof_date, symbol, theme_id, setup_type,
                 execution_model, decision, reject_reason, signal_entry_trigger,
                 signal_stop_loss, next_session_date, chosen_provider,
@@ -201,9 +228,9 @@ def _insert_execution_and_lifecycle(
                 'execution_hash', 'execution_commit', 'execution_snapshot',
                 ?
             )
-            """,
-            [EXECUTION_RUN_ID, price_snapshot_id],
-        )
+                """,
+                [EXECUTION_RUN_ID, price_snapshot_id],
+            )
         connection.execute(
             """
             INSERT INTO lifecycle_runs (
@@ -362,6 +389,170 @@ def test_phase5b8_validate_manifest_catches_execution_rowset_tamper(
 
     assert result["validation_status"] == "FAIL"
     assert any("EXECUTION_DECISION_ROWSET_HASH_MISMATCH" in error for error in result["validation_errors"])
+
+
+def test_phase5b8_validate_manifest_hashes_all_execution_decision_columns(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    _complete_manifest_fixture(config)
+    manifest = generate_run_manifest(config, LIFECYCLE_RUN_ID).to_dict()
+    with connect_database(config.database.path) as connection:
+        connection.execute(
+            """
+            UPDATE execution_decisions
+            SET max_entry_extension_pct = 0.99
+            WHERE execution_run_id = ?
+            """,
+            [EXECUTION_RUN_ID],
+        )
+
+    result = validate_run_manifest(config, manifest["run_manifest_id"]).to_dict()
+
+    assert result["validation_status"] == "FAIL"
+    assert any(
+        "EXECUTION_DECISION_ROWSET_HASH_MISMATCH" in error
+        for error in result["validation_errors"]
+    )
+
+
+def test_phase5b8_manifest_fails_when_price_snapshot_undercovered(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    rows = pd.DataFrame([_price_rows().iloc[0].to_dict()], columns=PRICE_SNAPSHOT_COLUMNS)
+    rows_hash = snapshot_rows_hash(rows)
+    with connect_database(config.database.path) as connection:
+        connection.execute(
+            """
+            INSERT INTO price_snapshot_runs (
+                price_snapshot_id, asof_date, provider_priority_json,
+                provider_mix_json, duplicate_provider_rows_dropped,
+                min_price_date, max_price_date, raw_row_count,
+                chosen_row_count, snapshot_rows_hash, config_hash,
+                git_commit, created_at_utc
+            ) VALUES (
+                ?, DATE '2024-12-02', '["FMP", "yfinance", "fixture"]',
+                '{"FMP": 1}', 0, DATE '2024-12-02', DATE '2024-12-02',
+                1, 1, ?, 'price_hash', 'price_commit',
+                '2024-12-02T21:01:00+00:00'
+            )
+            """,
+            [PRICE_SNAPSHOT_ID, rows_hash],
+        )
+        row = rows.iloc[0]
+        connection.execute(
+            """
+            INSERT INTO price_snapshot_rows (
+                price_snapshot_id, symbol, price_date, adj_open, adj_high,
+                adj_low, adj_close, adj_volume, provider, adjustment_warning
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                PRICE_SNAPSHOT_ID,
+                row["symbol"],
+                row["price_date"],
+                row["adj_open"],
+                row["adj_high"],
+                row["adj_low"],
+                row["adj_close"],
+                int(row["adj_volume"]),
+                row["provider"],
+                bool(row["adjustment_warning"]),
+            ],
+        )
+    _insert_lifecycle_input_snapshot(config)
+    _insert_execution_and_lifecycle(config)
+
+    result = generate_run_manifest(config, LIFECYCLE_RUN_ID, persist=False).to_dict()
+
+    assert result["validation_status"] == "FAIL"
+    assert any("PRICE_SNAPSHOT_UNDERCOVERED" in error for error in result["validation_errors"])
+
+
+def test_phase5b8_manifest_fails_when_execution_parent_missing(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    _insert_price_snapshot(config)
+    _insert_lifecycle_input_snapshot(config)
+    with connect_database(config.database.path) as connection:
+        connection.execute(
+            """
+            INSERT INTO lifecycle_runs (
+                lifecycle_run_id, execution_run_id, through_date,
+                lifecycle_generated_at_utc, lifecycle_config_hash,
+                lifecycle_git_commit, lifecycle_data_snapshot_id,
+                price_snapshot_id, lifecycle_input_snapshot_id, created_at_utc
+            ) VALUES (
+                ?, 'missing-execution-run', DATE '2024-12-03',
+                '2024-12-03T21:01:00+00:00', 'lifecycle_hash',
+                'lifecycle_commit', 'lifecycle_snapshot', ?, ?,
+                '2024-12-03T21:01:00+00:00'
+            )
+            """,
+            [LIFECYCLE_RUN_ID, PRICE_SNAPSHOT_ID, INPUT_SNAPSHOT_ID],
+        )
+
+    result = generate_run_manifest(config, LIFECYCLE_RUN_ID, persist=False).to_dict()
+
+    assert result["validation_status"] == "FAIL"
+    assert "MISSING_EXECUTION_RUN" in result["validation_errors"]
+
+
+def test_phase5b8_manifest_fails_on_empty_execution_decision_rowset(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    _insert_price_snapshot(config)
+    _insert_lifecycle_input_snapshot(config)
+    _insert_execution_and_lifecycle(config, insert_execution_decision=False)
+
+    result = generate_run_manifest(config, LIFECYCLE_RUN_ID, persist=False).to_dict()
+
+    assert result["validation_status"] == "FAIL"
+    assert "MISSING_EXECUTION_DECISIONS" in result["validation_errors"]
+
+
+def test_phase5b8_manifest_fails_on_price_snapshot_id_mismatch(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    _complete_manifest_fixture(config)
+    with connect_database(config.database.path) as connection:
+        connection.execute(
+            """
+            UPDATE lifecycle_runs
+            SET price_snapshot_id = 'different-price-snapshot'
+            WHERE lifecycle_run_id = ?
+            """,
+            [LIFECYCLE_RUN_ID],
+        )
+
+    result = generate_run_manifest(config, LIFECYCLE_RUN_ID, persist=False).to_dict()
+
+    assert result["validation_status"] == "FAIL"
+    assert any(
+        "PRICE_SNAPSHOT_ID_MISMATCH" in error for error in result["validation_errors"]
+    )
+
+
+def test_phase5b8_validate_manifest_warns_on_manifest_metadata_drift(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    _complete_manifest_fixture(config)
+    manifest = generate_run_manifest(config, LIFECYCLE_RUN_ID).to_dict()
+    with connect_database(config.database.path) as connection:
+        connection.execute(
+            """
+            UPDATE run_manifests
+            SET config_hash = 'older-config-hash'
+            WHERE run_manifest_id = ?
+            """,
+            [manifest["run_manifest_id"]],
+        )
+
+    result = validate_run_manifest(config, manifest["run_manifest_id"]).to_dict()
+
+    assert result["validation_status"] == "PASS"
+    assert any("MANIFEST_CONFIG_HASH_DRIFT" in warning for warning in result["validation_warnings"])
 
 
 def test_phase5b8_validate_manifest_catches_price_snapshot_tamper(
