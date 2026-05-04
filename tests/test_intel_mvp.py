@@ -617,6 +617,48 @@ def test_research_queue_prioritizes_review_items_and_follow_ups(tmp_path: Path) 
     assert summary["follow_ups_due"] == 1
 
 
+def test_research_queue_defers_items_until_follow_up_date(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    view_id = insert_trade_view(
+        config,
+        raw_item_id=None,
+        draft=_draft(symbols=["QQQ"], direction="unknown", requires_review=True, user_confirmed=False),
+    )
+    before_review = build_research_queue(config, asof_date=date(2026, 4, 28))
+    assert any(item["object_type"] == "intel_view" and item["object_id"] == view_id for item in before_review)
+
+    insert_review_mark(
+        config,
+        object_type="intel_view",
+        object_id=view_id,
+        review_status="needs_more_data",
+        follow_up_date="2026-05-05",
+    )
+    deferred = build_research_queue(config, asof_date=date(2026, 4, 28))
+    assert not any(item["object_type"] == "intel_view" and item["object_id"] == view_id for item in deferred)
+
+    due = build_research_queue(config, asof_date=date(2026, 5, 5))
+    assert any(item["bucket"] == "due_follow_up" and item["object_id"] == view_id for item in due)
+    assert any(item["object_type"] == "intel_view" and item["object_id"] == view_id for item in due)
+
+
+def test_research_queue_expired_review_dismisses_item(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    view_id = insert_trade_view(
+        config,
+        raw_item_id=None,
+        draft=_draft(symbols=["QQQ"], direction="unknown", requires_review=True, user_confirmed=False),
+    )
+    insert_review_mark(
+        config,
+        object_type="intel_view",
+        object_id=view_id,
+        review_status="expired",
+    )
+    queue = build_research_queue(config, asof_date=date(2026, 4, 28))
+    assert not any(item["object_type"] == "intel_view" and item["object_id"] == view_id for item in queue)
+
+
 def test_notes_are_saved_without_scoring(tmp_path: Path) -> None:
     config = _config(tmp_path)
     note_id = insert_note(

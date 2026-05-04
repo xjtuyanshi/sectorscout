@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+from datetime import date
+
 import pandas as pd
 import streamlit as st
 
+from sectorscout.intel.report import generate_intel_daily_report
+from sectorscout.intel.storage import insert_review_mark
 from sectorscout.intel.workflow import build_research_queue, workflow_summary
 from sectorscout.ui.data import UIContext
 
@@ -33,11 +37,51 @@ def render(ctx: UIContext) -> None:
     if pages:
         df = df[df["page"].isin(pages)]
     df = df[df["priority"] <= max_priority]
-    st.dataframe(
-        df[["priority", "bucket", "symbol", "source", "page", "reason", "next_step", "object_type", "object_id"]],
-        use_container_width=True,
-        hide_index=True,
-    )
+    if df.empty:
+        st.info("No queue items match the current filters.")
+    else:
+        st.dataframe(
+            df[["priority", "bucket", "symbol", "source", "page", "reason", "next_step", "object_type", "object_id"]],
+            use_container_width=True,
+            hide_index=True,
+        )
+
+        st.subheader("Review Selected Item")
+        option_rows = df.to_dict("records")
+        labels = [
+            f"P{row['priority']} {row['bucket']} {row.get('symbol') or row['object_id']} - {row['reason'][:90]}"
+            for row in option_rows
+        ]
+        selected_label = st.selectbox("Queue item", labels)
+        selected = option_rows[labels.index(selected_label)]
+        st.caption(f"Object: {selected['object_type']} / {selected['object_id']}")
+        with st.form("workflow_review_form"):
+            review_status = st.selectbox(
+                "Review status",
+                ["needs_more_data", "unclear", "not_triggered", "triggered", "worked", "failed", "expired"],
+            )
+            notes = st.text_area("Review note", value=selected["next_step"])
+            plan = st.text_area("Research plan")
+            follow_up = st.text_input("Follow-up date", placeholder="YYYY-MM-DD")
+            submitted = st.form_submit_button("Save review mark")
+        if submitted:
+            insert_review_mark(
+                ctx.config,
+                object_type=str(selected["object_type"]),
+                object_id=str(selected["object_id"]),
+                review_status=review_status,
+                notes=notes or None,
+                personal_plan=plan or None,
+                follow_up_date=follow_up or None,
+            )
+            st.success("Saved review mark. Future follow-up dates defer this item until due.")
+            st.rerun()
+
+    st.subheader("Daily Report")
+    report_date = ctx.asof_date or date.today()
+    if st.button(f"Generate daily report for {report_date.isoformat()}"):
+        path = generate_intel_daily_report(ctx.config, report_date)
+        st.success(f"Generated {path}")
 
     st.subheader("Workflow Notes")
     st.write(

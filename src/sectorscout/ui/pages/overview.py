@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from datetime import date
+
 import pandas as pd
 import streamlit as st
 
+from sectorscout.intel.report import generate_intel_daily_report
 from sectorscout.intel.workflow import build_research_queue, workflow_summary
 from sectorscout.ui.data import UIContext, filtered_count, latest_rows, row_count, table_df
 
@@ -66,6 +69,10 @@ def render(ctx: UIContext) -> None:
         )
     else:
         st.success("No open workflow items. Capture new context or generate the daily report.")
+    report_date = ctx.asof_date or date.today()
+    if st.button(f"Generate daily report for {report_date.isoformat()}"):
+        path = generate_intel_daily_report(ctx.config, report_date)
+        st.success(f"Generated {path}")
 
     st.subheader("What To Review Next")
     col1, col2 = st.columns(2)
