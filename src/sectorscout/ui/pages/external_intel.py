@@ -8,7 +8,7 @@ import streamlit as st
 from sectorscout.intel.x_collector import collect_x_recent_search, load_x_sources, x_api_status
 from sectorscout.intel.storage import set_trade_view_confirmed
 from sectorscout.ui.data import UIContext, parse_json_list, table_df
-from sectorscout.ui.workbench import render_symbol_focus_control, render_ticker_inspector, set_selected_symbol
+from sectorscout.ui.workbench import render_ticker_inspector, set_selected_symbol
 
 
 def _display_symbols(value: object) -> str:
@@ -25,9 +25,43 @@ def _review_label(row: pd.Series) -> str:
     return "Stored overlay context"
 
 
+def _short_label(row: pd.Series) -> str:
+    symbols = _display_symbols(row.get("canonical_symbols_json")) or "context"
+    summary = str(row.get("summary") or "").replace("\n", " ")
+    if len(summary) > 72:
+        summary = summary[:69].rstrip() + "..."
+    return f"{row.get('source_id')} | {symbols} | {row.get('direction')} | {summary}"
+
+
+def _render_intel_table(views: pd.DataFrame) -> None:
+    columns = [
+        column
+        for column in [
+            "source_id",
+            "platform",
+            "direction",
+            "timeframe",
+            "summary",
+            "requires_review",
+            "user_confirmed",
+            "created_at",
+        ]
+        if column in views.columns
+    ]
+    st.dataframe(views[columns].head(80), use_container_width=True, hide_index=True)
+
+
 def render(ctx: UIContext) -> None:
     st.title("External Intel")
-    st.caption("External context is an overlay only. It does not change SectorScout base scores.")
+    st.markdown(
+        """
+        <div class="ss-page-note">
+          External context is an overlay only. It does not change SectorScout base scores,
+          setup candidates, execution QA, lifecycle QA, or ledger QA.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
     with st.expander("X API public collection", expanded=False):
         status = x_api_status()
         sources = load_x_sources()
@@ -91,32 +125,29 @@ def render(ctx: UIContext) -> None:
                 lambda value: wanted in [str(item).upper() for item in parse_json_list(value)]
             )
         ]
-    left, center, right = st.columns([1.05, 2.25, 1.25], gap="medium")
     sorted_views = views.sort_values("created_at", ascending=False)
-    with left:
-        st.markdown('<div class="ss-section-title"><span>Intel Tape</span><span>latest first</span></div>', unsafe_allow_html=True)
-        if sorted_views.empty:
-            st.info("No rows match the current filters.")
-            return
-        options = sorted_views["intel_view_id"].astype(str).tolist()
-        labels = {
-            str(row["intel_view_id"]): f"{row.get('source_id')} · {_display_symbols(row.get('canonical_symbols_json')) or 'context'} · {row.get('direction')}"
-            for _, row in sorted_views.iterrows()
-        }
-        selected_id = st.radio(
-            "Intel item",
-            options,
-            format_func=lambda value: labels.get(str(value), str(value)),
-            label_visibility="collapsed",
-        )
-        render_symbol_focus_control(ctx, label="Linked symbol")
+    st.markdown('<div class="ss-section-title"><span>Intel Table</span><span>latest first</span></div>', unsafe_allow_html=True)
+    if sorted_views.empty:
+        st.info("No rows match the current filters.")
+        return
+    _render_intel_table(sorted_views)
+
+    options = sorted_views["intel_view_id"].astype(str).tolist()
+    labels = {str(row["intel_view_id"]): _short_label(row) for _, row in sorted_views.iterrows()}
+    selected_id = st.selectbox(
+        "Selected context",
+        options,
+        format_func=lambda value: labels.get(str(value), str(value)),
+    )
     selected_row = sorted_views[sorted_views["intel_view_id"].astype(str) == str(selected_id)].iloc[0]
     symbols = parse_json_list(selected_row.get("canonical_symbols_json"))
     if symbols:
         set_selected_symbol(str(symbols[0]))
-    with center:
+
+    detail_col, inspector_col = st.columns([2.2, 1], gap="large")
+    with detail_col:
         _render_view_detail(ctx, selected_row)
-    with right:
+    with inspector_col:
         render_ticker_inspector(ctx)
 
 
@@ -132,11 +163,11 @@ def _render_view_detail(ctx: UIContext, row: pd.Series) -> None:
         )
         st.code(str(row.get("intel_view_id")), language=None)
         st.write(row.get("summary"))
-        cols = st.columns(3)
+        cols = st.columns(2)
         cols[0].write(f"Tickers: {_display_symbols(row.get('canonical_symbols_json')) or 'none'}")
         cols[1].write(f"Timeframe: {row.get('timeframe')}")
-        cols[2].write(f"Direction/context: {row.get('direction')}")
-        st.write(f"Key levels: {_display_symbols(row.get('key_levels_json')) or 'none'}")
+        cols[0].write(f"Direction/context: {row.get('direction')}")
+        cols[1].write(f"Key levels: {_display_symbols(row.get('key_levels_json')) or 'none'}")
         if row.get("trigger_condition"):
             st.write(f"Trigger condition: {row.get('trigger_condition')}")
         if row.get("invalidation_condition"):

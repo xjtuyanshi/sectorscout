@@ -47,8 +47,8 @@ def inject_tradingview_styles() -> None:
           color: var(--ss-text);
         }
         .block-container {
-          max-width: 1680px;
-          padding-top: 1.05rem;
+          max-width: 1440px;
+          padding-top: 2.25rem;
           padding-bottom: 2rem;
         }
         [data-testid="stSidebar"] {
@@ -88,7 +88,7 @@ def inject_tradingview_styles() -> None:
           color: var(--ss-text);
         }
         h1 {
-          font-size: 1.55rem;
+          font-size: 1.45rem;
           line-height: 1.2;
           margin-bottom: .25rem;
         }
@@ -198,6 +198,47 @@ def inject_tradingview_styles() -> None:
           padding: 12px;
           box-shadow: none;
         }
+        .ss-focus-strip {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+          border: 1px solid var(--ss-border);
+          background: var(--ss-panel);
+          border-radius: 8px;
+          padding: 10px 12px;
+          margin: 2px 0 12px;
+        }
+        .ss-focus-title {
+          min-width: 0;
+          font-size: .84rem;
+          font-weight: 720;
+          color: var(--ss-text);
+        }
+        .ss-focus-meta {
+          display: flex;
+          flex-wrap: wrap;
+          justify-content: flex-end;
+          gap: 6px;
+        }
+        .ss-page-note {
+          border: 1px solid #bfdbfe;
+          background: #eff6ff;
+          color: #174ea6;
+          border-radius: 8px;
+          padding: 9px 11px;
+          font-size: .8rem;
+          line-height: 1.35;
+          margin-bottom: 12px;
+        }
+        .ss-empty-note {
+          border: 1px dashed var(--ss-border);
+          background: var(--ss-panel-soft);
+          color: var(--ss-muted);
+          border-radius: 8px;
+          padding: 12px;
+          font-size: .82rem;
+        }
         .ss-symbol-row {
           display: grid;
           grid-template-columns: minmax(58px, .8fr) minmax(70px, 1fr) minmax(64px, .8fr);
@@ -241,6 +282,9 @@ def inject_tradingview_styles() -> None:
         .stDataFrame, [data-testid="stDataFrame"] {
           border-radius: 8px;
           overflow: hidden;
+        }
+        [data-testid="stDataFrame"] div {
+          color: var(--ss-text);
         }
         button[kind="primary"], .stButton > button {
           border-radius: 7px !important;
@@ -369,6 +413,23 @@ def build_symbol_rows(ctx: UIContext) -> list[SymbolRow]:
             )
         )
     return sorted(rows, key=lambda row: (row.internal_score is None, -(row.internal_score or 0), row.symbol))
+
+
+def symbol_rows_dataframe(ctx: UIContext) -> pd.DataFrame:
+    rows = build_symbol_rows(ctx)
+    return pd.DataFrame(
+        [
+            {
+                "symbol": row.symbol,
+                "overlap": row.overlap_label,
+                "internal_score": row.internal_score,
+                "internal_status": row.internal_status,
+                "external_views": row.external_count,
+                "theme": row.theme or "-",
+            }
+            for row in rows
+        ]
+    )
 
 
 def render_symbol_rail(ctx: UIContext, *, max_rows: int = 18) -> str | None:
