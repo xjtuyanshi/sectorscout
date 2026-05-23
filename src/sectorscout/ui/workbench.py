@@ -420,12 +420,12 @@ def symbol_rows_dataframe(ctx: UIContext) -> pd.DataFrame:
     return pd.DataFrame(
         [
             {
-                "symbol": row.symbol,
-                "overlap": row.overlap_label,
-                "internal_score": row.internal_score,
-                "internal_status": row.internal_status,
-                "external_views": row.external_count,
-                "theme": row.theme or "-",
+                "Symbol": row.symbol,
+                "Research status": friendly_overlap_label(row.overlap_label),
+                "SectorScout score": row.internal_score,
+                "SectorScout status": row.internal_status,
+                "External notes": row.external_count,
+                "Theme": row.theme or "-",
             }
             for row in rows
         ]
@@ -445,11 +445,11 @@ def render_symbol_rail(ctx: UIContext, *, max_rows: int = 18) -> str | None:
         st.markdown(
             f"""
             <div class="ss-symbol-row">
-              <div>
-                <div class="ss-symbol">{row.symbol}</div>
-                <div class="ss-mini">{row.theme or row.internal_status}</div>
-              </div>
-              <div>{_pill("", row.overlap_label, tone)}</div>
+                <div>
+                  <div class="ss-symbol">{row.symbol}</div>
+                  <div class="ss-mini">{row.theme or row.internal_status}</div>
+                </div>
+              <div>{_pill("", friendly_overlap_label(row.overlap_label), tone)}</div>
               <div class="ss-muted">score {score}<br>{row.external_count} ctx</div>
             </div>
             """,
@@ -467,6 +467,17 @@ def _overlap_tone(label: str) -> str:
         "WATCH_ONLY": "amber",
         "NEEDS_REVIEW": "purple",
     }.get(label, "")
+
+
+def friendly_overlap_label(label: str) -> str:
+    return {
+        "CONFIRMED": "Internal and external agree",
+        "CONFLICT": "Possible disagreement",
+        "EXTERNAL_ONLY": "Only external sources mention it",
+        "INTERNAL_ONLY": "Only SectorScout has it",
+        "WATCH_ONLY": "Watch only",
+        "NEEDS_REVIEW": "Needs review",
+    }.get(label, label.replace("_", " ").title())
 
 
 def _filter_views_for_symbol(views: pd.DataFrame, symbol: str) -> pd.DataFrame:
@@ -503,7 +514,7 @@ def render_ticker_inspector(ctx: UIContext, symbol: str | None = None) -> None:
         f"""
         <div class="ss-panel">
           <div class="ss-inspector-symbol">{symbol}</div>
-          <div>{_pill("overlap", label, _overlap_tone(label))}</div>
+          <div>{_pill("status", friendly_overlap_label(label), _overlap_tone(label))}</div>
           <div class="ss-kv">
             <div>Theme</div><div>{stock.get("theme_id") or setup.get("theme_id") or "-"}</div>
             <div>Score</div><div>{_format_value(stock.get("stock_opportunity_score"))}</div>

@@ -110,6 +110,37 @@ def latest_rows(config: SectorScoutConfig, table: str, date_column: str = "asof_
         return table_df(config, table)
 
 
+def data_freshness_status(asof_date: date | None) -> dict[str, Any]:
+    today = date.today()
+    if asof_date is None:
+        return {
+            "today": today,
+            "status": "No local snapshot",
+            "age_days": None,
+            "message": f"Today is {today.isoformat()}, but no local SectorScout data date was found.",
+        }
+    age_days = (today - asof_date).days
+    if age_days < 0:
+        status = "Future-dated local snapshot"
+        message = f"Today is {today.isoformat()}, but the local data date is {asof_date.isoformat()}."
+    elif age_days == 0:
+        status = "Current local snapshot"
+        message = f"Today is {today.isoformat()}; the local data date is also {asof_date.isoformat()}."
+    elif age_days <= 7:
+        status = "Recent local snapshot"
+        message = (
+            f"Today is {today.isoformat()}; the local data date is {asof_date.isoformat()} "
+            f"({age_days} day{'s' if age_days != 1 else ''} old)."
+        )
+    else:
+        status = "Stale local snapshot"
+        message = (
+            f"Today is {today.isoformat()}; the local data date is {asof_date.isoformat()} "
+            f"({age_days} days old). Update market data before treating this as a current research view."
+        )
+    return {"today": today, "status": status, "age_days": age_days, "message": message}
+
+
 def parse_json_list(value: Any) -> list:
     if value is None or (isinstance(value, float) and pd.isna(value)):
         return []

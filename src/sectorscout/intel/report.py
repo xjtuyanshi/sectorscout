@@ -7,7 +7,7 @@ from sectorscout.config import SectorScoutConfig, config_hash
 from sectorscout.db import connect_database
 from sectorscout.intel.overlap import compute_overlap
 from sectorscout.intel.storage import ensure_intel_tables
-from sectorscout.intel.workflow import build_research_queue, workflow_summary
+from sectorscout.intel.workflow import build_research_queue, friendly_bucket_label, workflow_summary
 from sectorscout.metadata import get_git_commit
 
 
@@ -53,6 +53,17 @@ def _count_where(config: SectorScoutConfig, table: str, where_clause: str, param
         return 0
     with connect_database(config.database.path) as connection:
         return int(connection.execute(f"SELECT COUNT(*) FROM {table} WHERE {where_clause}", params or []).fetchone()[0])
+
+
+def _friendly_overlap_label(label: str) -> str:
+    return {
+        "CONFIRMED": "Internal and external agree",
+        "CONFLICT": "Possible disagreement",
+        "EXTERNAL_ONLY": "Only external sources mention it",
+        "INTERNAL_ONLY": "Only SectorScout has it",
+        "WATCH_ONLY": "Watch only",
+        "NEEDS_REVIEW": "Needs review",
+    }.get(label, label.replace("_", " ").title())
 
 
 def _top_rows(
@@ -299,7 +310,10 @@ def generate_intel_daily_report(
     lines.extend(["", "## Internal vs External Overlap"])
     lines.extend(
         [
-            f"- {row['symbol']}: {row['overlap_label']} internal={row['internal_status']} external={row['external_bias']}"
+            (
+                f"- {row['symbol']}: {_friendly_overlap_label(row['overlap_label'])}. "
+                f"SectorScout context: {row['internal_status']}; external context: {row['external_bias']}."
+            )
             for row in overlap[:20]
         ]
         or ["- No overlap rows available."]
@@ -315,7 +329,7 @@ def generate_intel_daily_report(
     )
     lines.extend(
         [
-            f"- P{row['priority']} {row['bucket']} {row.get('symbol') or ''} page={row['page']}: {row['reason']}"
+            f"- P{row['priority']} {friendly_bucket_label(row['bucket'])} {row.get('symbol') or ''}: {row['reason']}"
             for row in queue[:20]
         ]
         or ["- No open workflow items."]

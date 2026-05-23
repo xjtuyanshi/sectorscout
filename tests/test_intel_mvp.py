@@ -29,7 +29,7 @@ from sectorscout.intel.storage import (
 from sectorscout.intel.symbol_normalize import normalize_symbols, related_symbols
 from sectorscout.intel.text_extract import extract_trade_view
 from sectorscout.intel.vision_extract import extract_image_observation
-from sectorscout.intel.workflow import build_research_queue, workflow_summary
+from sectorscout.intel.workflow import build_research_queue, friendly_bucket_label, friendly_queue_rows, workflow_summary
 from sectorscout.intel.x_collector import (
     XSource,
     build_recent_search_query,
@@ -1024,6 +1024,26 @@ def test_workbench_symbol_rows_merge_internal_external_context(tmp_path: Path) -
     assert rows["QQQ"].overlap_label == "CONFIRMED"
 
 
+def test_friendly_research_queue_rows_are_plain_language() -> None:
+    queue = [
+        {
+            "priority": 40,
+            "bucket": "overlap_external_only",
+            "symbol": "ASTS",
+            "object_id": "ASTS",
+            "page": "Internal vs External Overlap",
+            "reason": "An external source mentioned this symbol, but SectorScout does not currently rank or watch it.",
+            "next_step": "Decide whether to add it to your watchlist seed or leave it as outside context.",
+        }
+    ]
+    row = friendly_queue_rows(queue)[0]
+    assert friendly_bucket_label("overlap_external_only") == "External mention not in SectorScout"
+    assert row["What this means"] == "External mention not in SectorScout"
+    assert row["Symbol or item"] == "ASTS"
+    assert "internal=" not in row["Why it matters"]
+    assert "external=" not in row["Why it matters"]
+
+
 def test_follow_up_date_validation_helpers() -> None:
     assert workflow_valid_follow_up("") == (True, None)
     assert workflow_valid_follow_up("2026-05-05") == (True, "2026-05-05")
@@ -1078,3 +1098,4 @@ def test_forbidden_dashboard_report_language() -> None:
 def test_ui_and_intel_modules_import() -> None:
     import sectorscout.intel.storage  # noqa: F401
     import sectorscout.ui.data  # noqa: F401
+    import sectorscout.ui.pages.historical_lab  # noqa: F401

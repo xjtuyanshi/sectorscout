@@ -3,8 +3,8 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from sectorscout.intel.workflow import build_research_queue, workflow_summary
-from sectorscout.ui.data import UIContext, filtered_count, latest_rows, row_count, table_df
+from sectorscout.intel.workflow import build_research_queue, friendly_queue_rows, workflow_summary
+from sectorscout.ui.data import UIContext, data_freshness_status, filtered_count, latest_rows, row_count, table_df
 from sectorscout.ui.report_panel import render_daily_report_panel
 from sectorscout.ui.workbench import (
     get_selected_symbol,
@@ -43,14 +43,19 @@ def _render_focus_strip(ctx: UIContext, selected_symbol: str | None, workflow: d
 
 
 def _render_review_queue(ctx: UIContext) -> None:
-    st.markdown('<div class="ss-section-title"><span>Review Queue</span><span>highest priority first</span></div>', unsafe_allow_html=True)
+    st.markdown('<div class="ss-section-title"><span>Research Checklist</span><span>highest priority first</span></div>', unsafe_allow_html=True)
     queue = build_research_queue(ctx.config, asof_date=ctx.asof_date)
     if not queue:
         st.success("No open workflow items.")
         return
-    queue_df = pd.DataFrame(queue)
-    columns = _visible_columns(queue_df, ["priority", "bucket", "symbol", "page", "reason", "next_step"])
-    st.dataframe(queue_df[columns].sort_values("priority").head(30), use_container_width=True, hide_index=True)
+    queue_df = pd.DataFrame(friendly_queue_rows(queue))
+    st.dataframe(queue_df.head(30), use_container_width=True, hide_index=True)
+    top = queue_df.iloc[0]
+    with st.container(border=True):
+        st.markdown("**Top item in plain English**")
+        st.write(f"**{top['What this means']}** for **{top['Symbol or item']}**")
+        st.write(top["Why it matters"])
+        st.write(f"Next: {top['Suggested next step']}")
 
 
 def _render_watchlist(ctx: UIContext) -> None:
@@ -161,15 +166,15 @@ def render(ctx: UIContext) -> None:
     market = latest_rows(ctx.config, "market_regime")
     risk_state = market.iloc[0]["risk_state"] if not market.empty and "risk_state" in market else "unknown"
     workflow = workflow_summary(ctx.config, asof_date=ctx.asof_date)
+    freshness = data_freshness_status(ctx.asof_date)
     metrics = [
-        ("As-of date", ctx.asof_date.isoformat() if ctx.asof_date else "fixture/seed"),
+        ("Local data date", ctx.asof_date.isoformat() if ctx.asof_date else "fixture/seed"),
+        ("Today", freshness["today"].isoformat()),
+        ("Data freshness", freshness["status"]),
         ("Market regime", risk_state),
-        ("Workflow queue", workflow["total"]),
-        ("Urgent review items", workflow["urgent"]),
+        ("Open review items", workflow["total"]),
+        ("Highest priority items", workflow["urgent"]),
         ("Universe rows", row_count(ctx.config, "symbols")),
-        ("Theme score rows", row_count(ctx.config, "theme_scores")),
-        ("Stock score rows", row_count(ctx.config, "stock_scores")),
-        ("Setup candidate rows", row_count(ctx.config, "signals")),
         ("External views", row_count(ctx.config, "intel_trade_views")),
         ("Media captures", row_count(ctx.config, "intel_media_items")),
         ("Pending image review", filtered_count(ctx.config, "intel_image_observations", "requires_review = true")),
@@ -179,6 +184,10 @@ def render(ctx: UIContext) -> None:
         ("Data quality rows", row_count(ctx.config, "data_quality_daily")),
     ]
     _metric_grid(metrics[:8])
+    if freshness["status"] == "Stale local snapshot":
+        st.warning(freshness["message"])
+    else:
+        st.info(freshness["message"])
 
     selector_col, focus_col = st.columns([1, 3], gap="medium")
     with selector_col:
@@ -186,7 +195,7 @@ def render(ctx: UIContext) -> None:
     with focus_col:
         _render_focus_strip(ctx, selected_symbol or get_selected_symbol(ctx), workflow)
 
-    tabs = st.tabs(["Review Queue", "Watchlist", "Market Board", "External Context", "Ticker Detail", "Report"])
+    tabs = st.tabs(["Checklist", "Watchlist", "Market Board", "External Context", "Ticker Detail", "Report"])
     with tabs[0]:
         _render_review_queue(ctx)
     with tabs[1]:

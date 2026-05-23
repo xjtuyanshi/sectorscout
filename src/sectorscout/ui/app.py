@@ -9,6 +9,7 @@ from sectorscout.ui.data import load_ui_context
 from sectorscout.ui.pages import (
     capture_inbox,
     external_intel,
+    historical_lab,
     notes_review,
     overview,
     overlap,
@@ -22,12 +23,13 @@ from sectorscout.ui.workbench import inject_tradingview_styles, render_top_bar
 
 PAGES = {
     "Overview": overview.render,
-    "Research Workflow": workflow.render,
+    "Research Checklist": workflow.render,
     "External Intel": external_intel.render,
     "Capture Inbox": capture_inbox.render,
     "Vision Review": vision_review.render,
     "Internal vs External Overlap": overlap.render,
     "Ticker Detail": ticker_detail.render,
+    "Historical Research Lab": historical_lab.render,
     "Notes / Review": notes_review.render,
     "Settings / Source Status": settings.render,
 }

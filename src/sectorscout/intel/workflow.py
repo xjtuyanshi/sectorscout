@@ -28,6 +28,37 @@ class ResearchQueueItem:
         return asdict(self)
 
 
+QUEUE_LABELS = {
+    "due_follow_up": "Follow-up due",
+    "image_review": "Review captured chart/image",
+    "external_view_review": "Confirm external note",
+    "overlap_conflict": "Possible disagreement",
+    "overlap_needs_review": "Unclear overlap",
+    "overlap_external_only": "External mention not in SectorScout",
+    "overlap_internal_only": "SectorScout item needs outside context",
+}
+
+
+def friendly_bucket_label(bucket: str) -> str:
+    return QUEUE_LABELS.get(bucket, bucket.replace("_", " ").title())
+
+
+def friendly_queue_rows(queue: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for item in queue:
+        rows.append(
+            {
+                "Review order": item.get("priority"),
+                "What this means": friendly_bucket_label(str(item.get("bucket") or "")),
+                "Symbol or item": item.get("symbol") or item.get("object_id") or "-",
+                "Where to review": item.get("page") or "-",
+                "Why it matters": item.get("reason") or "-",
+                "Suggested next step": item.get("next_step") or "-",
+            }
+        )
+    return rows
+
+
 def _table_exists(config: SectorScoutConfig, table: str) -> bool:
     with connect_database(config.database.path) as connection:
         row = connection.execute(
@@ -152,8 +183,11 @@ def _external_view_items(
                 symbol=symbols,
                 source=str(row.get("source_id") or ""),
                 page="External Intel",
-                reason=f"External view needs user confirmation: {row.get('direction')} / {row.get('timeframe')}",
-                next_step="Open the source excerpt, verify symbols/levels/conditions, then confirm or add a review note.",
+                reason=(
+                    "An external note was captured, but it has not been reviewed by you yet. "
+                    f"Context: {row.get('direction')} / {row.get('timeframe')}."
+                ),
+                next_step="Open the excerpt, check the symbols, levels, and conditions, then confirm or write a note.",
             )
         )
     return items
@@ -187,11 +221,11 @@ def _image_review_items(
             continue
         status = str(row.get("extraction_status") or "needs_review")
         if status == "pending_vision_consent":
-            next_step = "Either keep the image local and annotate it manually, or explicitly allow provider processing."
+            next_step = "Keep the image local and annotate it manually, or explicitly allow vision processing."
         elif status == "pending_vision_provider":
             next_step = "Review the image manually because no vision provider is configured."
         else:
-            next_step = "Check the extracted fields, edit anything unclear, then save a confirmed image-derived view."
+            next_step = "Check the extracted fields, edit anything unclear, then save the image-derived view."
         items.append(
             ResearchQueueItem(
                 priority=10,
@@ -201,7 +235,10 @@ def _image_review_items(
                 symbol=_symbols_from_json(row.get("symbols_json")),
                 source=str(row.get("source_id") or ""),
                 page="Vision Review",
-                reason=f"Image observation requires review; status={status}, provider={row.get('extraction_provider')}",
+                reason=(
+                    "A chart or screenshot is waiting for human review. "
+                    f"Status: {status}; provider: {row.get('extraction_provider')}."
+                ),
                 next_step=next_step,
             )
         )
@@ -226,16 +263,24 @@ def _overlap_items(
         label = str(row.get("overlap_label") or "")
         if label == "CONFLICT":
             priority = 5
-            next_step = "Compare internal setup context against external risk context and write a manual review note."
+            reason = (
+                "SectorScout has internal context for this symbol, but external intel points to a different or riskier view."
+            )
+            next_step = "Compare the internal setup context with the external risk note, then write your review."
         elif label == "NEEDS_REVIEW":
             priority = 15
-            next_step = "Resolve ambiguous extraction or unconfirmed image context before relying on this overlay."
+            reason = "This overlap is unclear because the extraction is ambiguous or image-derived context is not confirmed."
+            next_step = "Review the source or image, then clarify the symbol, direction/context, and timeframe."
         elif label == "EXTERNAL_ONLY":
             priority = 40
-            next_step = "Decide whether this belongs on the watchlist seed or should remain external-only context."
+            reason = (
+                "An external source mentioned this symbol, but SectorScout does not currently rank or watch it for this data date."
+            )
+            next_step = "Decide whether to add it to your watchlist seed or leave it as outside context."
         elif label == "INTERNAL_ONLY":
             priority = 60
-            next_step = "Optional: look for external context only if the internal candidate is important today."
+            reason = "SectorScout has this symbol internally, but no captured external source mentions it yet."
+            next_step = "Optional: look for outside context if this internal item matters for today’s review."
         else:
             continue
         items.append(
@@ -247,7 +292,7 @@ def _overlap_items(
                 symbol=object_id,
                 source=str(row.get("external_sources") or ""),
                 page="Internal vs External Overlap",
-                reason=f"{label}: internal={row.get('internal_status')} external={row.get('external_bias')}",
+                reason=reason,
                 next_step=next_step,
             )
         )
@@ -284,7 +329,7 @@ def _due_follow_up_items(config: SectorScoutConfig, asof_date: date | None) -> l
                 symbol=str(row.get("object_id") or "") if row.get("object_type") == "ticker" else None,
                 source=None,
                 page="Notes / Review",
-                reason=f"Follow-up due {row.get('follow_up_date')} for {row.get('review_status')}",
+                reason=f"You scheduled a follow-up for {row.get('follow_up_date')} with status {row.get('review_status')}.",
                 next_step="Update the review status, add what changed, or set the next follow-up date.",
             )
         )
