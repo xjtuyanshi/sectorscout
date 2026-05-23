@@ -4,6 +4,7 @@ import streamlit as st
 
 from sectorscout.demo import DEMO_ASOF_DATE, demo_readiness
 from sectorscout.intel.public_sources import load_public_sources
+from sectorscout.intel.x_collector import load_x_sources, x_api_status
 from sectorscout.ui.data import UIContext, row_count, system_status, table_df, table_exists
 
 
@@ -43,12 +44,13 @@ def render(ctx: UIContext) -> None:
     st.subheader("SectorScout")
     st.json(status)
     st.subheader("Source Status")
+    x_status = x_api_status()
     st.write(
         {
             "public_web": "enabled",
             "manual_capture": "enabled",
             "vision_provider": "configured" if status["openai_vision_provider"] else "missing",
-            "x_api": status["x_api_status"],
+            "x_api": x_status,
             "discord_manual_capture": "enabled",
             "discord_official_bot": "not implemented in MVP",
             "compliance": [
@@ -71,6 +73,8 @@ def render(ctx: UIContext) -> None:
         st.dataframe([source.to_dict() for source in sources], use_container_width=True)
     else:
         st.write("No public source registry found.")
+    st.subheader("Configured X Sources")
+    st.dataframe([source.to_dict() for source in load_x_sources()], use_container_width=True)
     st.subheader("Data Quality")
     dq = table_df(ctx.config, "data_quality_daily", limit=100)
     if dq.empty:

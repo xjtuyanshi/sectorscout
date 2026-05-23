@@ -33,6 +33,7 @@ from sectorscout.intel.public_sources import DEFAULT_PUBLIC_SOURCES_PATH, collec
 from sectorscout.intel.public_web import collect_public_url
 from sectorscout.intel.report import generate_intel_daily_report
 from sectorscout.intel.storage import ensure_intel_tables
+from sectorscout.intel.x_collector import DEFAULT_X_SOURCES_PATH, collect_x_recent_search, load_x_sources, x_api_status
 from sectorscout.ledger import generate_trade_ledger_qa
 from sectorscout.lifecycle import generate_position_lifecycle
 from sectorscout.market_regime import compute_market_regime
@@ -48,9 +49,11 @@ app = typer.Typer(help="SectorScout research system CLI.")
 intel_capture_app = typer.Typer(help="Human-in-the-loop external intel capture.")
 intel_report_app = typer.Typer(help="External intel report commands.")
 intel_sources_app = typer.Typer(help="Configured public intel sources.")
+intel_x_app = typer.Typer(help="Official X API external intel collection.")
 app.add_typer(intel_capture_app, name="intel-capture")
 app.add_typer(intel_report_app, name="intel-report")
 app.add_typer(intel_sources_app, name="intel-sources")
+app.add_typer(intel_x_app, name="intel-x")
 
 
 def _load(config: Path):
@@ -581,6 +584,56 @@ def intel_sources_collect(
     ensure_intel_tables(loaded)
     results = collect_public_sources(loaded, sources_path=sources_file, source_id=source_id)
     typer.echo(json.dumps([result.__dict__ for result in results], indent=2))
+
+
+@intel_x_app.command("status")
+def intel_x_status(
+    sources_file: Path = typer.Option(DEFAULT_X_SOURCES_PATH, "--sources-file"),
+) -> None:
+    """Show X API configuration status without making network requests."""
+    typer.echo(
+        json.dumps(
+            {
+                **x_api_status(),
+                "sources": [source.to_dict() for source in load_x_sources(sources_file)],
+                "compliance": [
+                    "official X API only",
+                    "public posts only",
+                    "no browser-login scraping",
+                    "no cookie/session scraping",
+                ],
+            },
+            indent=2,
+            sort_keys=True,
+        )
+    )
+
+
+@intel_x_app.command("collect")
+def intel_x_collect(
+    handles: str | None = typer.Option(None, "--handles", help="Comma-separated X handles. Defaults to data/intel/x_sources.yaml."),
+    max_results: int = typer.Option(50, "--max-results", min=10, max=100),
+    include_replies: bool = typer.Option(False, "--include-replies/--no-include-replies"),
+    include_retweets: bool = typer.Option(False, "--include-retweets/--no-include-retweets"),
+    sources_file: Path = typer.Option(DEFAULT_X_SOURCES_PATH, "--sources-file"),
+    date_: str | None = typer.Option(None, "--date"),
+    config: Path = typer.Option(Path("config.yaml"), "--config"),
+) -> None:
+    """Collect recent public X posts using the official X Recent Search API."""
+    loaded = _load(config)
+    ensure_intel_tables(loaded)
+    parsed_date = _parse_iso_date(date_)
+    selected_handles = [item.strip() for item in handles.split(",") if item.strip()] if handles else None
+    result = collect_x_recent_search(
+        loaded,
+        handles=selected_handles,
+        sources_path=sources_file,
+        asof_date=parsed_date,
+        max_results=max_results,
+        include_replies=include_replies,
+        include_retweets=include_retweets,
+    )
+    typer.echo(json.dumps(result.to_dict(), indent=2, sort_keys=True))
 
 
 @app.command("intel-extract")

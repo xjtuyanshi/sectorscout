@@ -1,0 +1,16 @@
+sources:
+  - id: x_optionflys
+    type: x_account
+    handle: optionflys
+    enabled: true
+    tags: [market_structure, options, spx, qqq]
+  - id: x_rbswingtrader
+    type: x_account
+    handle: rbswingtrader
+    enabled: true
+    tags: [swing, indexes, watchlist]
+  - id: x_chandler
+    type: x_account
+    handle: ChandlerTrading
+    enabled: true
+    tags: [supply_demand, nq, es, weekly_prep]

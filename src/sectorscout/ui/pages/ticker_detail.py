@@ -5,6 +5,7 @@ import streamlit as st
 
 from sectorscout.intel.storage import insert_note
 from sectorscout.ui.data import UIContext, latest_rows, parse_json_list, table_df
+from sectorscout.ui.workbench import get_selected_symbol, render_ticker_inspector, set_selected_symbol
 
 
 def _symbols_from_views(views: pd.DataFrame) -> set[str]:
@@ -29,18 +30,26 @@ def render(ctx: UIContext) -> None:
     if not symbols:
         st.info("No ticker data available yet.")
         return
-    symbol = st.selectbox("Symbol", sorted(symbols))
-    st.subheader("Internal")
-    if not stock_scores.empty:
-        st.dataframe(stock_scores[stock_scores["symbol"].astype(str).str.upper() == symbol], use_container_width=True)
-    if not signals.empty:
-        st.dataframe(signals[signals["symbol"].astype(str).str.upper() == symbol], use_container_width=True)
-    st.subheader("External")
-    if views.empty:
-        st.write("No external views.")
-    else:
-        mask = views["canonical_symbols_json"].apply(lambda value: symbol in [str(item).upper() for item in parse_json_list(value)])
-        st.dataframe(views[mask], use_container_width=True)
+    sorted_symbols = sorted(symbols)
+    current = get_selected_symbol(ctx)
+    index = sorted_symbols.index(current) if current in sorted_symbols else 0
+    symbol = st.selectbox("Symbol", sorted_symbols, index=index)
+    set_selected_symbol(symbol)
+    left, right = st.columns([2.2, 1.1], gap="medium")
+    with left:
+        st.subheader("Internal")
+        if not stock_scores.empty:
+            st.dataframe(stock_scores[stock_scores["symbol"].astype(str).str.upper() == symbol], use_container_width=True)
+        if not signals.empty:
+            st.dataframe(signals[signals["symbol"].astype(str).str.upper() == symbol], use_container_width=True)
+        st.subheader("External")
+        if views.empty:
+            st.write("No external views.")
+        else:
+            mask = views["canonical_symbols_json"].apply(lambda value: symbol in [str(item).upper() for item in parse_json_list(value)])
+            st.dataframe(views[mask], use_container_width=True)
+    with right:
+        render_ticker_inspector(ctx, symbol)
 
     st.subheader("Research Notes")
     with st.form(f"note_form_{symbol}"):

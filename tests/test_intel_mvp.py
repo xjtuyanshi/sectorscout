@@ -30,7 +30,15 @@ from sectorscout.intel.symbol_normalize import normalize_symbols, related_symbol
 from sectorscout.intel.text_extract import extract_trade_view
 from sectorscout.intel.vision_extract import extract_image_observation
 from sectorscout.intel.workflow import build_research_queue, workflow_summary
+from sectorscout.intel.x_collector import (
+    XSource,
+    build_recent_search_query,
+    collect_x_recent_search,
+    load_x_sources,
+    x_api_status,
+)
 from sectorscout.ui.data import latest_asof_date
+from sectorscout.ui.workbench import build_symbol_rows
 from sectorscout.ui.pages.capture_inbox import _validate_upload_file
 from sectorscout.ui.pages.notes_review import _valid_follow_up as notes_valid_follow_up
 from sectorscout.ui.pages.workflow import _valid_follow_up as workflow_valid_follow_up
@@ -642,6 +650,94 @@ sources:
     assert "27300" in view[2]
 
 
+def test_x_source_registry_and_query_builder(tmp_path: Path) -> None:
+    sources_file = tmp_path / "x_sources.yaml"
+    sources_file.write_text(
+        """
+sources:
+  - id: x_optionflys
+    type: x_account
+    handle: optionflys
+    enabled: true
+    tags: [spx]
+  - id: ignored
+    type: website
+    handle: not_used
+""",
+        encoding="utf-8",
+    )
+    sources = load_x_sources(sources_file)
+    assert sources == [XSource(handle="optionflys", source_id="x_optionflys", enabled=True, tags=("spx",))]
+    assert [source.source_id for source in load_x_sources(tmp_path / "missing.yaml")] == [
+        "x_optionflys",
+        "x_rbswingtrader",
+        "x_chandler",
+    ]
+    query = build_recent_search_query(["@optionflys", "rbswingtrader"])
+    assert query == "(from:optionflys OR from:rbswingtrader) -is:retweet -is:reply"
+    assert "not_a_real_cookie" not in query
+
+
+def test_x_collection_skips_without_bearer_token(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("X_BEARER_TOKEN", raising=False)
+    config = _config(tmp_path)
+    result = collect_x_recent_search(config, handles=["optionflys"])
+    assert result.status == "SKIPPED"
+    assert "X_BEARER_TOKEN" in str(result.reason)
+    assert x_api_status()["status"] == "skipped_missing_X_BEARER_TOKEN"
+    with connect_database(config.database.path) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM intel_raw_items").fetchone()[0] == 0
+
+
+def test_x_collection_uses_official_recent_search_and_stores_views(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _config(tmp_path)
+    requested: dict[str, object] = {}
+
+    def fake_request(*, query: str, bearer_token: str, max_results: int) -> dict:
+        requested.update({"query": query, "bearer_token": bearer_token, "max_results": max_results})
+        return {
+            "data": [
+                {
+                    "id": "123",
+                    "author_id": "42",
+                    "created_at": "2026-05-22T18:30:00.000Z",
+                    "text": "$NVDA reclaim watch. NQ demand around 27300; wait for bullish reaction.",
+                    "public_metrics": {"like_count": 10},
+                    "lang": "en",
+                    "conversation_id": "123",
+                }
+            ],
+            "includes": {"users": [{"id": "42", "username": "optionflys", "name": "OptionFlys"}]},
+        }
+
+    monkeypatch.setattr("sectorscout.intel.x_collector._request_recent_search", fake_request)
+    result = collect_x_recent_search(config, handles=["optionflys"], bearer_token="test-token", max_results=25)
+    assert result.status == "COLLECTED"
+    assert result.posts_seen == 1
+    assert result.raw_items == 1
+    assert result.trade_views == 1
+    assert requested["query"] == "(from:optionflys) -is:retweet -is:reply"
+    assert requested["bearer_token"] == "test-token"
+    with connect_database(config.database.path) as connection:
+        raw = connection.execute(
+            "SELECT source_id, platform, url, collection_method, rights_scope FROM intel_raw_items"
+        ).fetchone()
+        view = connection.execute(
+            """
+            SELECT source_id, canonical_symbols_json, key_levels_json, requires_review, extraction_method
+            FROM intel_trade_views
+            """
+        ).fetchone()
+    assert raw == ("x_optionflys", "x", "https://x.com/optionflys/status/123", "x_api_recent_search", "public")
+    assert "NVDA" in view[1]
+    assert "NQ" in view[1]
+    assert "27300" in view[2]
+    assert view[3:] == (True, "x_api_recent_search_v1")
+
+
 def test_symbol_normalization_required_aliases() -> None:
     assert related_symbols("ES") == ["ES", "SPX", "SPY"]
     assert related_symbols("NQ") == ["NQ", "NDX", "QQQ"]
@@ -900,6 +996,34 @@ def test_notes_are_saved_without_scoring(tmp_path: Path) -> None:
     assert row == ("NQ", "Review only; condition still needs confirmation.")
 
 
+def test_workbench_symbol_rows_merge_internal_external_context(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    with connect_database(config.database.path) as connection:
+        connection.execute(
+            """
+            INSERT INTO stock_scores (
+                asof_date, symbol, theme_id, stock_opportunity_score, theme_score,
+                rs_percentile, fundamental_acceleration, setup_quality,
+                volume_accumulation, risk_reward, liquidity, component_coverage_pct,
+                state, signal_generated_at_utc, config_hash, git_commit,
+                data_snapshot_id, universe_version, theme_version
+            ) VALUES
+                ('2026-04-27', 'QQQ', 'indexes', 80, 75, 90, 0, 0, 0, 0, 1, 1,
+                 'watch', current_timestamp, 'cfg', 'git', 'snap', 'u', 't')
+            """
+        )
+    insert_trade_view(
+        config,
+        raw_item_id=None,
+        draft=_draft(symbols=["QQQ"], direction="bullish", user_confirmed=True),
+    )
+    ctx = type("Ctx", (), {"config": config, "asof_date": date(2026, 4, 27)})()
+    rows = {row.symbol: row for row in build_symbol_rows(ctx)}
+    assert rows["QQQ"].internal_score == 80
+    assert rows["QQQ"].external_count == 1
+    assert rows["QQQ"].overlap_label == "CONFIRMED"
+
+
 def test_follow_up_date_validation_helpers() -> None:
     assert workflow_valid_follow_up("") == (True, None)
     assert workflow_valid_follow_up("2026-05-05") == (True, "2026-05-05")
@@ -919,7 +1043,14 @@ def test_capture_upload_validation_helper() -> None:
 
 def test_forbidden_automation_modes_are_not_configured() -> None:
     source = "\n".join(path.read_text(encoding="utf-8") for path in Path("src/sectorscout/intel").glob("*.py"))
-    forbidden = ["self_bot_mode", "personal_discord_token", "discord_cookie", "private_channel_crawler"]
+    forbidden = [
+        "self_bot_mode",
+        "personal_discord_token",
+        "discord_cookie",
+        "private_channel_crawler",
+        "browser_cookie",
+        "session_scraper",
+    ]
     for term in forbidden:
         assert term not in source
 

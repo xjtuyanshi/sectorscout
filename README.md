@@ -49,13 +49,16 @@ Implemented so far:
   manual capture inbox, public web collection for public URLs, image storage and
   vision-provider fallback, vision review workflow, internal-vs-external overlap
   labels, notes/review storage, and daily Markdown intel reports.
+- Intel UI 2.0 / X MVP: TradingView-style research workbench shell with linked
+  watchlist, market board, ticker inspector, external intel tape, and optional
+  official X Recent Search collection for configured public accounts.
 
 Not implemented yet:
 
 - Formal Phase 5 backtesting: full baselines, ablation, rolling/expanding
   validation, performance metrics, or performance conclusions.
-- Full X ingestion, automatic Discord group collection, official Discord bot
-  ingestion, browser-login collection, or private-channel crawling.
+- Full X archive ingestion, automatic Discord group collection, official Discord
+  bot ingestion, browser-login collection, or private-channel crawling.
 - Phase 6 documentation polish, CI, and GitHub-ready demo workflow.
 - Live data providers. Current ingestion is CSV/fixture based.
 
@@ -99,6 +102,9 @@ Current limitations:
   is not yet persisted as a frozen price snapshot table.
 - External intel is an overlay only. It does not modify SectorScout scores,
   setup detection, execution QA, lifecycle QA, or ledger QA.
+- X collection uses the official X API Recent Search endpoint only. It requires
+  `X_BEARER_TOKEN`, reads public posts only, and is skipped when the token is
+  missing.
 - Vision-provider processing is optional. Non-public images stay local unless
   the user explicitly allows the configured provider to process that image.
 
@@ -175,6 +181,8 @@ The same dashboard can also be opened with:
 External intel MVP commands:
 
 ```bash
+.venv/bin/sectorscout intel-x status
+.venv/bin/sectorscout intel-x collect --config config.yaml
 .venv/bin/sectorscout intel-extract --date 2026-04-26 --config config.yaml
 .venv/bin/sectorscout intel-capture add-file data/intel/fixtures/chandler_2026_04_26.md --config config.yaml
 .venv/bin/sectorscout intel-capture add-url https://example.com/public-post --config config.yaml
@@ -183,6 +191,11 @@ External intel MVP commands:
 .venv/bin/sectorscout intel-sources collect --source all --config config.yaml
 .venv/bin/sectorscout intel-report daily --date 2026-04-26 --config config.yaml
 ```
+
+To enable X collection, set `X_BEARER_TOKEN` in your shell or local environment.
+Configured handles live in `data/intel/x_sources.yaml`. Without the token,
+SectorScout still works with Chandler fixtures, public URLs, screenshots, and
+manual captures.
 
 The sample fixture price data is intentionally tiny, so the fixture report is
 expected to be sparse. The setup detector is tested with synthetic 260-session

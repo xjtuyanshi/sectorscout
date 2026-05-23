@@ -12,6 +12,7 @@ import pandas as pd
 from sectorscout.config import SectorScoutConfig, config_hash, load_config
 from sectorscout.db import connect_database
 from sectorscout.intel.storage import ensure_intel_dirs, ensure_intel_tables
+from sectorscout.intel.x_collector import x_api_status
 from sectorscout.metadata import get_git_commit
 
 
@@ -122,6 +123,7 @@ def parse_json_list(value: Any) -> list:
 
 
 def system_status(config: SectorScoutConfig) -> dict[str, Any]:
+    x_status = x_api_status()
     return {
         "duckdb_path": str(config.database.path),
         "git_commit": get_git_commit(),
@@ -130,5 +132,6 @@ def system_status(config: SectorScoutConfig) -> dict[str, Any]:
         "universe_version": config.reproducibility.universe_version,
         "theme_version": config.reproducibility.theme_version,
         "openai_vision_provider": bool(os.environ.get("OPENAI_API_KEY")),
-        "x_api_status": "not_implemented_in_mvp_token_not_required",
+        "x_api_status": x_status["status"],
+        "x_api_endpoint": x_status["endpoint"],
     }

@@ -17,6 +17,7 @@ from sectorscout.ui.pages import (
     vision_review,
     workflow,
 )
+from sectorscout.ui.workbench import inject_tradingview_styles, render_top_bar
 
 
 PAGES = {
@@ -42,31 +43,13 @@ def _parse_args() -> argparse.Namespace:
 def main() -> None:
     args = _parse_args()
     st.set_page_config(page_title="SectorScout Intel", layout="wide", initial_sidebar_state="collapsed")
-    st.markdown(
-        """
-        <style>
-        .block-container { padding-top: 1.6rem; }
-        [data-testid="stSidebarNav"],
-        [data-testid="stSidebarNavItems"] {
-            display: none !important;
-            height: 0 !important;
-            overflow: hidden !important;
-        }
-        div[data-testid="stMetric"] {
-            border: 1px solid rgba(49, 51, 63, .14);
-            padding: .75rem .85rem;
-            border-radius: 8px;
-            background: rgba(250, 250, 252, .75);
-        }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
+    inject_tradingview_styles()
     with st.sidebar:
         st.title("SectorScout")
         config_path = st.text_input("Config path", value=str(args.config))
         selected = st.radio("Page", list(PAGES), label_visibility="collapsed")
     ctx = load_ui_context(Path(config_path))
+    render_top_bar(ctx, page=selected)
     PAGES[selected](ctx)
 
 
