@@ -21,6 +21,11 @@ from sectorscout.hindsight import (
 )
 from sectorscout.intel.storage import insert_review_mark
 from sectorscout.ui.data import UIContext, row_count, table_exists
+from sectorscout.ui.hindsight_presenter import (
+    build_case_readiness_rows,
+    build_gate_review_rows,
+    build_status_summary_rows,
+)
 
 
 HISTORICAL_TABLES = [
@@ -137,6 +142,7 @@ def render(ctx: UIContext) -> None:
         st.info("No gate explain rows yet. Build gates after seeding the event ledger.")
     else:
         st.caption("DATA GAP is not a failure. It means the required evidence or price rows are not available yet.")
+        _render_hindsight_review_board(events, gates)
         st.dataframe(_display_gates_frame(gates), use_container_width=True, hide_index=True)
 
     st.subheader("Latest scan results")
@@ -187,6 +193,35 @@ def render(ctx: UIContext) -> None:
         use_container_width=True,
         hide_index=True,
     )
+
+
+def _render_hindsight_review_board(events: pd.DataFrame, gates: pd.DataFrame) -> None:
+    st.markdown("#### Case Readiness")
+    st.write(
+        "This board translates the audit gates into plain review states: what can be interpreted now, "
+        "what is blocked, and what data should be fixed next."
+    )
+    readiness_rows = build_case_readiness_rows(events, gates)
+    if readiness_rows:
+        st.dataframe(readiness_rows, use_container_width=True, hide_index=True)
+
+    status_rows = build_status_summary_rows(gates)
+    if status_rows:
+        st.markdown("#### Status Guide")
+        st.dataframe(status_rows, use_container_width=True, hide_index=True)
+
+    review_rows = build_gate_review_rows(gates)
+    if not review_rows:
+        return
+    st.markdown("#### Gate Review Guide")
+    symbols = ["All"] + sorted({str(row["Symbol"]) for row in review_rows})
+    selected_symbol = st.selectbox("Gate guide symbol", symbols)
+    filtered_rows = (
+        review_rows
+        if selected_symbol == "All"
+        else [row for row in review_rows if str(row["Symbol"]) == selected_symbol]
+    )
+    st.dataframe(filtered_rows, use_container_width=True, hide_index=True)
 
 
 def _table_meaning(table: str) -> str:

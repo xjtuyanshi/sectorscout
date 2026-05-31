@@ -52,6 +52,7 @@ from sectorscout.intel.x_collector import (
     x_api_status,
 )
 from sectorscout.ui.data import latest_asof_date
+from sectorscout.ui.hindsight_presenter import build_case_readiness_rows, build_gate_review_rows
 from sectorscout.ui.workbench import build_symbol_rows
 from sectorscout.ui.pages.capture_inbox import _validate_upload_file
 from sectorscout.ui.pages.notes_review import _valid_follow_up as notes_valid_follow_up
@@ -1334,6 +1335,28 @@ def test_default_hindsight_events_use_official_timing_seeds(tmp_path: Path) -> N
     first_tradable_gates = [gate for gate in gates if gate.gate_name == "First tradable date resolved"]
     assert len(first_tradable_gates) == 4
     assert {gate.gate_status for gate in first_tradable_gates} == {"PASS"}
+
+
+def test_hindsight_presenter_translates_gate_data_gaps(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    seed_hindsight_events(config, tmp_path / "leader_cases.csv")
+    build_hindsight_replay_gates(config, path=tmp_path / "leader_cases.csv", persist=True)
+
+    events = latest_hindsight_events(config)
+    gates = latest_hindsight_replay_gates(config)
+    review_rows = build_gate_review_rows(gates)
+    assert review_rows
+
+    benchmark_gap = next(row for row in review_rows if row["Question"].startswith("Can we compare"))
+    assert benchmark_gap["Status"] == "DATA GAP - missing required evidence"
+    assert "not a failed pattern" in benchmark_gap["Meaning"]
+    assert "do not switch" in benchmark_gap["Next action"]
+    assert benchmark_gap["Blocked conclusion"] == "Relative-strength claims are blocked."
+
+    readiness = build_case_readiness_rows(events, gates)
+    assert readiness
+    assert any(row["Ready to interpret"].startswith("Blocked") for row in readiness)
+    assert any("Load pre-event OHLCV" in row["Next action"] for row in readiness)
 
 
 def test_first_tradable_date_resolver_respects_market_session() -> None:

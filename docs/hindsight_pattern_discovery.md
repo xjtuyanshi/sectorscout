@@ -124,6 +124,20 @@ Every gate stores formula, threshold, computed value, data used, required rows,
 available rows, missing detail, source, and reason. Benchmark relative strength
 uses a fixed primary benchmark and does not silently fall back to another index.
 
+The UI adds a reviewer layer above the raw gate table:
+
+- `Case Readiness`: one row per historical leader showing whether event timing,
+  pre-event setup evidence, and first-tradable data are readable or blocked.
+- `Status Guide`: plain-language definitions for `PASS`, `FAIL`, `DATA_GAP`,
+  and `PENDING`.
+- `Gate Review Guide`: each gate is phrased as a reviewer question, with next
+  action and blocked conclusion. A `DATA_GAP` row is never counted as either
+  support or rejection.
+
+Every visible gate should let the reviewer answer five questions without leaving
+the page: what is the claim, what evidence supports it, when was it knowable,
+what gate status was assigned, and why that status was assigned.
+
 ## Current Commands
 
 ```bash
