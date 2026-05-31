@@ -13,6 +13,7 @@ from sectorscout.hindsight import (
     latest_hindsight_hypothesis_case_results,
     latest_hindsight_replay_gates,
 )
+from sectorscout.hindsight_sec_metadata import build_hindsight_sec_filing_metadata
 from sectorscout.hindsight_source_audit import build_hindsight_source_audit
 from sectorscout.hindsight_source_snapshot import DEFAULT_SOURCE_SNAPSHOT_DIR
 from sectorscout.metadata import get_git_commit
@@ -63,6 +64,7 @@ def build_hindsight_pattern_playbook_markdown(
     pattern_rows = build_pattern_insight_rows(hypotheses, case_results)
     case_rows = build_case_pattern_map_rows(events, evidence, gates, hypotheses, case_results)
     source_audit = build_hindsight_source_audit(config)
+    sec_metadata = build_hindsight_sec_filing_metadata(config)
     summary_cards = build_hindsight_readout_summary_cards(pattern_rows, case_rows)
     pattern_cards = build_pattern_story_cards(pattern_rows)
     case_cards = build_case_story_cards(case_rows)
@@ -120,6 +122,8 @@ def build_hindsight_pattern_playbook_markdown(
             lines.extend(_case_card_lines(card))
         lines.extend(["## Official Source Audit", ""])
         lines.extend(_source_audit_lines(source_audit))
+        lines.extend(["## SEC Filing Metadata", ""])
+        lines.extend(_sec_metadata_lines(sec_metadata))
         lines.extend(["## Source Snapshots", ""])
         lines.extend(_source_snapshot_lines(source_snapshot_dir))
         lines.extend(["## Research Queue", ""])
@@ -228,6 +232,33 @@ def _source_snapshot_lines(source_snapshot_dir: Path) -> list[str]:
                     _md(snapshot.get("title") or "-"),
                     _md(snapshot.get("local_path") or "-"),
                     f"{_md(snapshot.get('excerpt') or snapshot.get('error') or '-')} |",
+                ]
+            )
+        )
+    lines.append("")
+    return lines
+
+
+def _sec_metadata_lines(items: list[Any]) -> list[str]:
+    if not items:
+        return ["No SEC filing metadata rows are available yet.", ""]
+    lines = [
+        "| Symbol | Event type | CIK | Accession | Status | Form | Filing date | Accepted at | Document |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+    ]
+    for item in items:
+        lines.append(
+            " | ".join(
+                [
+                    f"| {_md(item.symbol)}",
+                    _md(item.event_type),
+                    _md(item.cik),
+                    _md(item.accession_number),
+                    _md(item.metadata_status),
+                    _md(item.form or "-"),
+                    _md(item.filing_date or "-"),
+                    _md(item.acceptance_datetime or item.seed_published_at_utc or "-"),
+                    f"{_md(item.primary_document or item.document or '-')} |",
                 ]
             )
         )

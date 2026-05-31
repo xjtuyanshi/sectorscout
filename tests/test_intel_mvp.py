@@ -35,6 +35,11 @@ from sectorscout.hindsight_playbook import (
     build_hindsight_pattern_playbook_markdown,
     generate_hindsight_pattern_playbook,
 )
+from sectorscout.hindsight_sec_metadata import (
+    build_hindsight_sec_filing_metadata,
+    parse_sec_archive_url,
+    sec_submissions_url,
+)
 from sectorscout.hindsight_source_audit import build_hindsight_source_audit, source_audit_summary
 from sectorscout.hindsight_source_snapshot import fetch_hindsight_source_snapshots
 from sectorscout.hindsight_workflow import run_hindsight_refresh
@@ -1469,6 +1474,8 @@ def test_hindsight_pattern_playbook_exports_markdown(tmp_path: Path) -> None:
     assert "NVDA - Anchor leader" in markdown
     assert "SNDK" in markdown
     assert "## Official Source Audit" in markdown
+    assert "## SEC Filing Metadata" in markdown
+    assert "1045810" in markdown
     assert "## Source Snapshots" in markdown
     assert "No source snapshot manifest" in markdown
     assert "official_company_release" in markdown
@@ -1489,6 +1496,49 @@ def test_hindsight_pattern_playbook_exports_markdown(tmp_path: Path) -> None:
     assert "H2 - Downstream revenue conversion" in written
 
 
+def test_hindsight_sec_metadata_parses_archive_urls_and_matches_submission_json(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reference = parse_sec_archive_url(
+        "https://www.sec.gov/Archives/edgar/data/1045810/000104581024000028/0001045810-24-000028-index.htm"
+    )
+    assert reference is not None
+    assert reference.cik == 1045810
+    assert reference.accession_number == "0001045810-24-000028"
+    assert reference.accession_number_nodashes == "000104581024000028"
+    assert sec_submissions_url(reference.cik).endswith("CIK0001045810.json")
+
+    config = _config(tmp_path)
+    seed_hindsight_events(config, tmp_path / "leader_cases.csv")
+
+    def fake_sec_submission_json(cik: int, *, timeout: int) -> dict:
+        return {
+            "name": "NVIDIA CORP" if cik == 1045810 else "Other issuer",
+            "filings": {
+                "recent": {
+                    "accessionNumber": ["0001045810-24-000028"],
+                    "form": ["8-K"],
+                    "filingDate": ["2024-02-21"],
+                    "reportDate": ["2024-02-21"],
+                    "acceptanceDateTime": ["2024-02-21T21:22:09.000Z"],
+                    "primaryDocument": ["nvda-20240128.htm"],
+                }
+            },
+        }
+
+    monkeypatch.setattr("sectorscout.hindsight_sec_metadata._fetch_sec_submission_json", fake_sec_submission_json)
+    rows = build_hindsight_sec_filing_metadata(config, fetch_remote=True)
+    assert rows
+    nvda = next(row for row in rows if row.symbol == "NVDA")
+    assert nvda.metadata_status == "ACCESSION_MATCHED"
+    assert nvda.company_name == "NVIDIA CORP"
+    assert nvda.form == "8-K"
+    assert nvda.acceptance_datetime == "2024-02-21T21:22:09.000Z"
+    sndk = next(row for row in rows if row.symbol == "SNDK")
+    assert sndk.metadata_status == "ACCESSION_NOT_FOUND"
+
+
 def test_hindsight_refresh_runs_pipeline_without_network(tmp_path: Path) -> None:
     config = _config(tmp_path)
     result = run_hindsight_refresh(
@@ -1507,9 +1557,12 @@ def test_hindsight_refresh_runs_pipeline_without_network(tmp_path: Path) -> None
     steps = {str(step["step"]): step for step in payload["steps"]}
     assert steps["public_price_history"]["status"] == "SKIPPED"
     assert steps["source_audit"]["rows"] >= 5
+    assert steps["sec_filing_metadata"]["rows"] == 4
     assert steps["source_snapshots"]["status"] == "SKIPPED"
     assert steps["hypothesis_registry"]["rows"] == 28
     assert payload["source_snapshots"] == []
+    assert payload["sec_filing_metadata_summary"]["parsed_only_filings"] == 4
+    assert any(row["symbol"] == "NVDA" and row["cik"] == 1045810 for row in payload["sec_filing_metadata"])
     assert payload["source_audit_summary"]["pit_usable_sources"] >= 4
     assert any("NVIDIA" in row["source_url"] or "nvidia" in row["source_url"] for row in payload["source_audit"])
     assert result.row_counts["hindsight_hypotheses"] == 4

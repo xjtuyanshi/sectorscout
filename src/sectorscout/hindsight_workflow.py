@@ -21,6 +21,7 @@ from sectorscout.hindsight import (
     write_default_hindsight_cases,
 )
 from sectorscout.hindsight_playbook import generate_hindsight_pattern_playbook
+from sectorscout.hindsight_sec_metadata import build_hindsight_sec_filing_metadata, sec_filing_metadata_summary
 from sectorscout.hindsight_source_audit import build_hindsight_source_audit, source_audit_summary
 from sectorscout.hindsight_source_snapshot import (
     DEFAULT_SOURCE_SNAPSHOT_DIR,
@@ -70,6 +71,8 @@ class HindsightRefreshResult:
     source_audit: list[dict[str, object]]
     source_audit_summary: dict[str, object]
     source_snapshots: list[dict[str, object]]
+    sec_filing_metadata: list[dict[str, object]]
+    sec_filing_metadata_summary: dict[str, object]
 
     def to_dict(self) -> dict[str, object]:
         payload = asdict(self)
@@ -89,6 +92,7 @@ def run_hindsight_refresh(
     include_benchmarks: bool = True,
     continue_on_price_error: bool = True,
     check_sources: bool = False,
+    fetch_sec_metadata: bool = False,
     snapshot_sources: bool = False,
     source_snapshot_dir: Path = DEFAULT_SOURCE_SNAPSHOT_DIR,
 ) -> HindsightRefreshResult:
@@ -195,6 +199,17 @@ def run_hindsight_refresh(
         )
     )
 
+    sec_metadata = build_hindsight_sec_filing_metadata(config, fetch_remote=fetch_sec_metadata)
+    sec_summary = sec_filing_metadata_summary(sec_metadata)
+    steps.append(
+        HindsightRefreshStep(
+            "sec_filing_metadata",
+            "OK",
+            "Built SEC filing metadata from event source URLs and optional submissions API data.",
+            len(sec_metadata),
+        )
+    )
+
     source_snapshots: list[dict[str, object]] = []
     if snapshot_sources:
         snapshots = fetch_hindsight_source_snapshots(config, output_dir=source_snapshot_dir)
@@ -241,6 +256,8 @@ def run_hindsight_refresh(
         source_audit=[item.to_dict() for item in source_audit],
         source_audit_summary=source_summary,
         source_snapshots=source_snapshots,
+        sec_filing_metadata=[item.to_dict() for item in sec_metadata],
+        sec_filing_metadata_summary=sec_summary,
     )
 
 

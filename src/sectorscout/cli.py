@@ -534,6 +534,7 @@ def hindsight_refresh(
     lookback_days: int = typer.Option(320, "--lookback-days", min=0),
     include_benchmarks: bool = typer.Option(True, "--include-benchmarks/--no-include-benchmarks"),
     check_sources: bool = typer.Option(False, "--check-sources/--no-check-sources"),
+    fetch_sec_metadata: bool = typer.Option(False, "--fetch-sec-metadata/--no-fetch-sec-metadata"),
     snapshot_sources: bool = typer.Option(False, "--snapshot-sources/--no-snapshot-sources"),
     source_snapshot_dir: Path = typer.Option(Path("data/hindsight/sources"), "--source-snapshot-dir"),
     strict_price_fetch: bool = typer.Option(False, "--strict-price-fetch/--no-strict-price-fetch"),
@@ -554,10 +555,24 @@ def hindsight_refresh(
         include_benchmarks=include_benchmarks,
         continue_on_price_error=not strict_price_fetch,
         check_sources=check_sources,
+        fetch_sec_metadata=fetch_sec_metadata,
         snapshot_sources=snapshot_sources,
         source_snapshot_dir=source_snapshot_dir,
     )
     typer.echo(json.dumps(result.to_dict(), indent=2, sort_keys=True))
+
+
+@hindsight_app.command("sec-metadata")
+def hindsight_sec_metadata(
+    fetch_remote: bool = typer.Option(False, "--fetch-remote/--no-fetch-remote"),
+    config: Path = typer.Option(Path("config.yaml"), "--config"),
+) -> None:
+    """Build SEC filing metadata rows for hindsight event source URLs."""
+    from sectorscout.hindsight_sec_metadata import build_hindsight_sec_filing_metadata
+
+    loaded = _load(config)
+    rows = build_hindsight_sec_filing_metadata(loaded, fetch_remote=fetch_remote)
+    typer.echo(json.dumps([row.to_dict() for row in rows], indent=2, sort_keys=True))
 
 
 @hindsight_app.command("snapshot-sources")

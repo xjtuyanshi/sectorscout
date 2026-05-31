@@ -29,6 +29,7 @@ from sectorscout.hindsight import (
     seed_hindsight_cases,
 )
 from sectorscout.hindsight_playbook import generate_hindsight_pattern_playbook
+from sectorscout.hindsight_sec_metadata import build_hindsight_sec_filing_metadata
 from sectorscout.hindsight_source_audit import build_hindsight_source_audit_rows
 from sectorscout.hindsight_source_snapshot import fetch_hindsight_source_snapshots
 from sectorscout.hindsight_workflow import run_hindsight_refresh
@@ -289,6 +290,7 @@ def _render_lab_refresh(ctx: UIContext) -> None:
         lookback_days = controls[2].number_input("Lookback days", min_value=0, max_value=1200, value=320, step=20)
         refresh_asof = controls[3].date_input("Refresh as-of", value=date.today())
         check_sources = st.checkbox("Check official source URLs", value=False)
+        fetch_sec_metadata = st.checkbox("Fetch SEC submissions metadata", value=False)
         snapshot_sources = st.checkbox("Snapshot public source text", value=False)
         if st.button("Run full historical refresh", use_container_width=True):
             with st.spinner("Refreshing historical lab artifacts..."):
@@ -299,6 +301,7 @@ def _render_lab_refresh(ctx: UIContext) -> None:
                     include_benchmarks=include_benchmarks,
                     lookback_days=int(lookback_days),
                     check_sources=check_sources,
+                    fetch_sec_metadata=fetch_sec_metadata,
                     snapshot_sources=snapshot_sources,
                 )
             st.success(f"Refresh complete. Playbook: {result.playbook_path}")
@@ -306,6 +309,9 @@ def _render_lab_refresh(ctx: UIContext) -> None:
             if result.source_audit:
                 st.markdown("#### Official Source Audit")
                 st.dataframe(_display_source_audit_rows(result.source_audit), use_container_width=True, hide_index=True)
+            if result.sec_filing_metadata:
+                st.markdown("#### SEC Filing Metadata")
+                st.dataframe(_display_sec_metadata_rows(result.sec_filing_metadata), use_container_width=True, hide_index=True)
             if result.source_snapshots:
                 st.markdown("#### Source Snapshots")
                 st.dataframe(_display_source_snapshot_rows(result.source_snapshots), use_container_width=True, hide_index=True)
@@ -323,6 +329,11 @@ def _render_source_audit(ctx: UIContext) -> None:
         st.info("No source audit rows yet. Seed event and evidence ledgers first.")
         return
     st.dataframe(_display_source_audit_rows(rows), use_container_width=True, hide_index=True)
+    st.markdown("#### SEC Filing Metadata")
+    fetch_sec_metadata = st.checkbox("Fetch SEC submissions metadata now", value=False)
+    sec_rows = build_hindsight_sec_filing_metadata(ctx.config, fetch_remote=fetch_sec_metadata)
+    if sec_rows:
+        st.dataframe(_display_sec_metadata_rows([row.to_dict() for row in sec_rows]), use_container_width=True, hide_index=True)
     if st.button("Snapshot public source text", use_container_width=True):
         with st.spinner("Fetching public source snapshots..."):
             snapshots = fetch_hindsight_source_snapshots(ctx.config)
@@ -593,6 +604,26 @@ def _display_source_snapshot_rows(rows: list[dict[str, object]]) -> pd.DataFrame
                 "Excerpt": row.get("excerpt") or row.get("error") or "-",
                 "Local path": row.get("local_path") or "-",
                 "Source URL": row.get("source_url"),
+            }
+            for row in rows
+        ]
+    )
+
+
+def _display_sec_metadata_rows(rows: list[dict[str, object]]) -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {
+                "Symbol": row.get("symbol"),
+                "Event type": _friendly_text(row.get("event_type")),
+                "CIK": row.get("cik") or "-",
+                "Accession": row.get("accession_number") or "-",
+                "Metadata status": row.get("metadata_status"),
+                "Form": row.get("form") or "-",
+                "Filing date": row.get("filing_date") or "-",
+                "Accepted at": row.get("acceptance_datetime") or row.get("seed_published_at_utc") or "-",
+                "Primary document": row.get("primary_document") or row.get("document") or "-",
+                "Error": row.get("error") or "-",
             }
             for row in rows
         ]

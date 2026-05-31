@@ -224,6 +224,7 @@ or a computed replay gate link.
 .venv/bin/sectorscout hindsight build-hypotheses
 .venv/bin/sectorscout hindsight playbook
 .venv/bin/sectorscout hindsight refresh --asof 2026-05-31
+.venv/bin/sectorscout hindsight sec-metadata
 .venv/bin/sectorscout hindsight snapshot-sources
 ```
 
@@ -240,6 +241,13 @@ The refresh also builds an official source audit from event and evidence
 ledgers. By default this is offline metadata only. Add `--check-sources` when
 you want a public URL availability check; the checker does not use login,
 cookies, sessions, private pages, or paywall bypass.
+
+SEC filing metadata is also built from official SEC archive URLs. By default it
+parses CIK, accession number, and document path locally. Add
+`--fetch-sec-metadata` to `refresh`, or run `hindsight sec-metadata
+--fetch-remote`, to query the public `data.sec.gov/submissions/CIK##########.json`
+API and match the accession number. This uses public SEC APIs only and should
+respect SEC fair-access guidance.
 
 Use `snapshot-sources` or `refresh --snapshot-sources` to save local public
 source text snapshots under `data/hindsight/sources/`. This is for audit
@@ -264,6 +272,8 @@ After `scan`, review:
   exported research playbook.
 - the `Official Source Audit` UI/playbook section for SEC filing, official
   company release, future-only, and source-review status.
+- the `SEC Filing Metadata` UI/playbook section for parsed CIK/accession data
+  and optional SEC submissions metadata.
 
 Observation links keep promotion discipline visible. Industry/theme observations
 must link to usable point-in-time evidence. Technical/OHLCV observations must
