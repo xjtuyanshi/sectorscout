@@ -31,6 +31,43 @@ Technical:
 - Volume expansion proxy
 - Setup quality improving after theme confirmation
 
+## Methodology Anchors
+
+This module follows a research-log design, not a validation design:
+
+- Event-study discipline: define the case window and event context separately
+  from what happened afterward. See MacKinlay's event-study framework:
+  https://www.bu.edu/econ/files/2011/01/MacKinlay-1996-Event-Studies-in-Economics-and-Finance.pdf
+- Industry taxonomy discipline: keep a stable classification layer and do not
+  rewrite history with only today's narrative. GICS is the reference framework:
+  https://www.spglobal.com/spdji/en/landing/topic/gics/
+- Fundamental data discipline: use filing-time-aware facts where possible. SEC
+  EDGAR company facts and submissions APIs are the preferred public baseline:
+  https://www.sec.gov/edgar/sec-api-documentation
+- Relative-strength discipline: momentum/relative strength is a hypothesis
+  feature with known academic precedent, but SectorScout still treats it as a
+  candidate observation requiring later validation.
+
+## Pattern Observation Model
+
+The lab writes `hindsight_pattern_observations` alongside scan results. These
+rows are intentionally split into three groups:
+
+- `industry`: theme taxonomy and industry-cluster hypotheses.
+- `technical`: daily OHLCV-derived observations such as RS near case start,
+  trend proxy, new-high proxy, and volume expansion proxy.
+- `manual_or_llm_required`: catalyst narrative and point-in-time theme
+  discoverability checks that should not be inferred from prices alone.
+
+Observation statuses are not validation outcomes. Current statuses include:
+
+- `hypothesis_seed`
+- `observed_hypothesis_feature`
+- `not_observed_in_case_window`
+- `needs_historical_data`
+- `needs_manual_review`
+- `outcome_only_not_predictive`
+
 ## Current Commands
 
 ```bash
@@ -41,6 +78,12 @@ Technical:
 ```
 
 `fetch-prices` defaults to the public Yahoo chart JSON endpoint for case-study diagnostics. Stooq remains available with `--provider stooq_public` when `STOOQ_API_KEY` is configured. Corporate-action adjustment status is marked with a warning in stored price rows, so split-sensitive cases still need provider-quality review before any formal validation.
+
+After `scan`, review:
+
+- `hindsight_scan_results` for case-level coverage and path diagnostics;
+- `hindsight_pattern_observations` for the actual industry, technical, and
+  manual-review hypothesis observations.
 
 ## Safety Rules
 

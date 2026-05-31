@@ -10,9 +10,11 @@ from sectorscout.config import SectorScoutConfig
 from sectorscout.db import connect_database, initialize_database
 from sectorscout.demo import demo_readiness, run_demo_init
 from sectorscout.hindsight import (
+    build_hindsight_pattern_observations,
     default_hindsight_cases,
     fetch_hindsight_prices,
     historical_pattern_summary,
+    latest_hindsight_pattern_observations,
     scan_hindsight_cases,
     seed_hindsight_cases,
 )
@@ -1177,6 +1179,76 @@ def test_hindsight_scan_scores_loaded_price_path(tmp_path: Path) -> None:
     assert result.data_quality == "ok"
     assert result.max_gain_pct is not None and result.max_gain_pct > 100
     assert result.hindsight_score > 0
+
+
+def test_hindsight_pattern_observations_split_industry_technical_and_manual(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    case_file = tmp_path / "cases.csv"
+    case_file.write_text(
+        "\n".join(
+            [
+                "symbol,label,start_date,end_date,theme,hindsight_reason,anchor_event,source_url",
+                "NVDA,NVDA test,2024-01-02,2024-04-30,AI semiconductors,Study test case,AI accelerator demand,https://example.com",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    start = date(2024, 1, 2)
+    rows = []
+    for offset in range(90):
+        current = start + timedelta(days=offset)
+        close = 10.0 + (offset * 0.2)
+        volume = 1_000_000 if offset < 50 else 1_500_000
+        rows.append(
+            [
+                "NVDA",
+                current,
+                close,
+                close,
+                close,
+                close,
+                volume,
+                close,
+                close,
+                close,
+                close,
+                volume,
+                "fixture",
+                True,
+                False,
+                datetime.now(timezone.utc),
+            ]
+        )
+    with connect_database(config.database.path) as connection:
+        connection.executemany(
+            """
+            INSERT INTO daily_prices (
+                symbol, price_date, open, high, low, close, volume,
+                adj_open, adj_high, adj_low, adj_close, adj_volume,
+                provider, is_adjusted, adjustment_warning, ingested_at_utc
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            rows,
+        )
+    results = scan_hindsight_cases(config, path=case_file, persist=True)
+    observations = build_hindsight_pattern_observations(
+        [
+            case
+            for case in default_hindsight_cases()
+            if case.symbol == "NVDA"
+        ],
+        results,
+    )
+    assert {"industry", "technical", "manual_or_llm_required"}.issubset(
+        {observation.observation_group for observation in observations}
+    )
+    latest = latest_hindsight_pattern_observations(config)
+    assert not latest.empty
+    assert "Stage 2 trend proxy" in set(latest["pattern_name"])
+    assert "Catalyst narrative" in set(latest["pattern_name"])
+    manual = latest[latest["observation_group"] == "manual_or_llm_required"]
+    assert manual["requires_review"].all()
+    assert "outcome_only_not_predictive" in set(latest["status"])
 
 
 def test_historical_pattern_summary_separates_industry_and_technical_patterns(tmp_path: Path) -> None:

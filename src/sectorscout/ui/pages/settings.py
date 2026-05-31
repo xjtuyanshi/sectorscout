@@ -28,6 +28,7 @@ TABLES = [
     "intel_notes",
     "hindsight_case_studies",
     "hindsight_scan_results",
+    "hindsight_pattern_observations",
 ]
 
 

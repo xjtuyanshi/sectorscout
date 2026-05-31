@@ -9,6 +9,7 @@ from sectorscout.hindsight import (
     fetch_hindsight_prices,
     historical_pattern_summary,
     load_hindsight_cases,
+    latest_hindsight_pattern_observations,
     latest_hindsight_results,
     scan_hindsight_cases,
     seed_hindsight_cases,
@@ -30,6 +31,7 @@ HISTORICAL_TABLES = [
     "lifecycle_qa",
     "hindsight_case_studies",
     "hindsight_scan_results",
+    "hindsight_pattern_observations",
 ]
 
 
@@ -110,6 +112,16 @@ def render(ctx: UIContext) -> None:
     st.dataframe(summary["industry_patterns"], use_container_width=True, hide_index=True)
     st.dataframe(summary["technical_patterns"], use_container_width=True, hide_index=True)
 
+    st.subheader("Pattern observations")
+    observations = latest_hindsight_pattern_observations(ctx.config)
+    if observations.empty:
+        st.info("No pattern observations yet. Run a scan to create industry, technical, and manual-review observations.")
+    else:
+        st.caption(
+            "These rows are hypothesis observations. Industry and catalyst fields require review; daily OHLCV fields are rule-derived."
+        )
+        st.dataframe(_display_observations_frame(observations), use_container_width=True, hide_index=True)
+
     st.subheader("Next implementation steps")
     st.dataframe(
         [
@@ -168,6 +180,43 @@ def _display_result(row: dict) -> dict:
 
 def _display_results_frame(frame: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame([_display_result(row.to_dict()) for _, row in frame.iterrows()])
+
+
+def _display_observations_frame(frame: pd.DataFrame) -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {
+                "Symbol": row.get("symbol"),
+                "Pattern lane": _friendly_observation_group(row.get("observation_group")),
+                "Observation": row.get("pattern_name"),
+                "Observed value": row.get("observation_value"),
+                "Review status": _friendly_observation_status(row.get("status")),
+                "Needs review": bool(row.get("requires_review")),
+                "Evidence": row.get("evidence"),
+                "Source": row.get("source"),
+            }
+            for _, row in frame.iterrows()
+        ]
+    )
+
+
+def _friendly_observation_group(value: object) -> str:
+    return {
+        "industry": "Industry / theme",
+        "technical": "Technical / OHLCV",
+        "manual_or_llm_required": "Manual or LLM review",
+    }.get(str(value or ""), str(value or "-").replace("_", " ").title())
+
+
+def _friendly_observation_status(value: object) -> str:
+    return {
+        "hypothesis_seed": "Hypothesis seed",
+        "observed_hypothesis_feature": "Observed in case window",
+        "not_observed_in_case_window": "Not observed in case window",
+        "needs_historical_data": "Needs historical data",
+        "needs_manual_review": "Needs manual review",
+        "outcome_only_not_predictive": "Outcome descriptor only",
+    }.get(str(value or ""), str(value or "-").replace("_", " ").title())
 
 
 def _round_or_none(value: object) -> float | None:

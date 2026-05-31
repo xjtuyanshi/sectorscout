@@ -68,6 +68,25 @@ class HindsightResult:
         return payload
 
 
+@dataclass(frozen=True)
+class HindsightPatternObservation:
+    observation_id: str
+    scan_id: str
+    symbol: str
+    label: str
+    observation_group: str
+    pattern_name: str
+    observation_value: str
+    status: str
+    evidence: str
+    source: str
+    extraction_method: str
+    requires_review: bool
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
 def default_hindsight_cases() -> list[HindsightCase]:
     return [
         HindsightCase(
@@ -158,6 +177,31 @@ def ensure_hindsight_tables(config: SectorScoutConfig) -> None:
                 universe_version VARCHAR NOT NULL,
                 theme_version VARCHAR NOT NULL,
                 PRIMARY KEY (scan_id, symbol, label)
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS hindsight_pattern_observations (
+                observation_id VARCHAR NOT NULL,
+                scan_id VARCHAR NOT NULL,
+                symbol VARCHAR NOT NULL,
+                label VARCHAR NOT NULL,
+                observation_group VARCHAR NOT NULL,
+                pattern_name VARCHAR NOT NULL,
+                observation_value VARCHAR NOT NULL,
+                status VARCHAR NOT NULL,
+                evidence VARCHAR NOT NULL,
+                source VARCHAR NOT NULL,
+                extraction_method VARCHAR NOT NULL,
+                requires_review BOOLEAN NOT NULL,
+                generated_at_utc TIMESTAMPTZ NOT NULL,
+                config_hash VARCHAR NOT NULL,
+                git_commit VARCHAR NOT NULL,
+                data_snapshot_id VARCHAR NOT NULL,
+                universe_version VARCHAR NOT NULL,
+                theme_version VARCHAR NOT NULL,
+                PRIMARY KEY (observation_id)
             )
             """
         )
@@ -344,6 +388,7 @@ def scan_hindsight_cases(
     results = [_scan_case(config, case, scan_id=scan_id) for case in cases]
     if persist:
         _persist_results(config, results)
+        _persist_pattern_observations(config, build_hindsight_pattern_observations(cases, results))
     return results
 
 
@@ -401,6 +446,36 @@ def latest_hindsight_results(config: SectorScoutConfig, *, limit: int = 100) -> 
             """,
             [limit],
         ).fetchdf()
+
+
+def latest_hindsight_pattern_observations(config: SectorScoutConfig, *, limit: int = 500) -> pd.DataFrame:
+    ensure_hindsight_tables(config)
+    with connect_database(config.database.path) as connection:
+        return connection.execute(
+            """
+            SELECT *
+            FROM hindsight_pattern_observations
+            QUALIFY dense_rank() OVER (ORDER BY generated_at_utc DESC, scan_id DESC) = 1
+            LIMIT ?
+            """,
+            [limit],
+        ).fetchdf()
+
+
+def build_hindsight_pattern_observations(
+    cases: list[HindsightCase],
+    results: list[HindsightResult] | pd.DataFrame,
+) -> list[HindsightPatternObservation]:
+    result_rows = _normalize_result_rows(results)
+    result_by_symbol = {str(row["symbol"]).upper(): row for row in result_rows}
+    observations: list[HindsightPatternObservation] = []
+    for case in cases:
+        row = result_by_symbol.get(case.symbol)
+        scan_id = str(row.get("scan_id") if row else "unscanned")
+        observations.extend(_industry_observations(case, scan_id=scan_id))
+        observations.extend(_manual_required_observations(case, scan_id=scan_id))
+        observations.extend(_technical_observations(case, row, scan_id=scan_id))
+    return observations
 
 
 def historical_pattern_summary(
@@ -519,6 +594,243 @@ def _flags_from_row(row: dict[str, Any]) -> dict[str, Any]:
     return parsed if isinstance(parsed, dict) else {}
 
 
+def _industry_observations(case: HindsightCase, *, scan_id: str) -> list[HindsightPatternObservation]:
+    cluster = _industry_cluster(case.theme)
+    return [
+        _observation(
+            scan_id=scan_id,
+            case=case,
+            observation_group="industry",
+            pattern_name="Theme taxonomy seed",
+            observation_value=case.theme,
+            status="hypothesis_seed",
+            evidence="Case metadata theme. Review whether this theme label was knowable at the study date.",
+            source=case.source_url,
+            extraction_method="case_metadata_manual",
+            requires_review=True,
+        ),
+        _observation(
+            scan_id=scan_id,
+            case=case,
+            observation_group="industry",
+            pattern_name="Industry cluster",
+            observation_value=cluster,
+            status="hypothesis_seed",
+            evidence=f"Theme '{case.theme}' mapped to cluster '{cluster}'.",
+            source=case.source_url,
+            extraction_method="keyword_theme_mapping_v1",
+            requires_review=True,
+        ),
+    ]
+
+
+def _manual_required_observations(case: HindsightCase, *, scan_id: str) -> list[HindsightPatternObservation]:
+    return [
+        _observation(
+            scan_id=scan_id,
+            case=case,
+            observation_group="manual_or_llm_required",
+            pattern_name="Catalyst narrative",
+            observation_value=case.anchor_event,
+            status="needs_manual_review",
+            evidence="Catalyst context is narrative and source-dependent; it should not be inferred from OHLCV alone.",
+            source=case.source_url,
+            extraction_method="case_metadata_manual",
+            requires_review=True,
+        ),
+        _observation(
+            scan_id=scan_id,
+            case=case,
+            observation_group="manual_or_llm_required",
+            pattern_name="Point-in-time theme discoverability",
+            observation_value="unknown_until_reviewed",
+            status="needs_manual_review",
+            evidence="Reviewer must decide whether the theme was discoverable from public information before or during the case window.",
+            source=case.source_url,
+            extraction_method="review_required",
+            requires_review=True,
+        ),
+    ]
+
+
+def _technical_observations(
+    case: HindsightCase,
+    row: dict[str, Any] | None,
+    *,
+    scan_id: str,
+) -> list[HindsightPatternObservation]:
+    flags = _flags_from_row(row or {})
+    if not row or row.get("data_quality") == "missing_price_history":
+        return [
+            _observation(
+                scan_id=scan_id,
+                case=case,
+                observation_group="technical",
+                pattern_name="OHLCV coverage",
+                observation_value="missing",
+                status="needs_historical_data",
+                evidence="No price rows are loaded for the case window.",
+                source="daily_prices",
+                extraction_method="ohlcv_coverage_check",
+                requires_review=False,
+            )
+        ]
+    enough_history = bool(flags.get("enough_history_60d"))
+    return [
+        _technical_flag_observation(
+            case,
+            row,
+            scan_id=scan_id,
+            pattern_name="Relative strength near case start",
+            flag_name="rs_80_at_start",
+            observed_value=_format_metric(row.get("rs_percentile_start"), suffix=" percentile"),
+            observed_evidence="Latest technical indicator before or at the case start has RS percentile >= 80.",
+            missing_evidence="RS percentile is missing or below the study threshold near case start.",
+            requires_review=row.get("rs_percentile_start") is None,
+        ),
+        _technical_flag_observation(
+            case,
+            row,
+            scan_id=scan_id,
+            pattern_name="Stage 2 trend proxy",
+            flag_name="stage2_proxy",
+            observed_value=str(flags.get("stage2_days_last_30", 0)) + " of last 30 sessions",
+            observed_evidence="Close was above both 50-day and 200-day moving averages during the final 30 sessions of the case window.",
+            missing_evidence="Trend proxy was not observed, or price history is too thin for this check.",
+            force_needs_data=not enough_history,
+        ),
+        _technical_flag_observation(
+            case,
+            row,
+            scan_id=scan_id,
+            pattern_name="New-high / breakout proxy",
+            flag_name="breakout_proxy",
+            observed_value=str(flags.get("breakout_days", 0)) + " breakout proxy days",
+            observed_evidence="Close exceeded the prior 20-session high at least once after the initial 20 sessions.",
+            missing_evidence="No prior-20-session closing high proxy was observed in the loaded window.",
+            force_needs_data=not flags.get("has_price_history"),
+        ),
+        _technical_flag_observation(
+            case,
+            row,
+            scan_id=scan_id,
+            pattern_name="Volume expansion proxy",
+            flag_name="volume_expansion_proxy",
+            observed_value=str(flags.get("volume_expansion_days", 0)) + " expansion proxy days",
+            observed_evidence="Volume exceeded 1.3x its 50-session average at least once after the initial window.",
+            missing_evidence="No volume expansion proxy was observed in the loaded window.",
+            force_needs_data=not enough_history,
+        ),
+        _observation(
+            scan_id=scan_id,
+            case=case,
+            observation_group="technical",
+            pattern_name="Case-window outcome descriptor",
+            observation_value=_format_metric(row.get("max_gain_pct"), suffix="% largest advance"),
+            status="outcome_only_not_predictive",
+            evidence="This describes what happened inside the selected case window. It is not a screening rule.",
+            source="daily_prices",
+            extraction_method="case_window_path_summary",
+            requires_review=True,
+        ),
+    ]
+
+
+def _technical_flag_observation(
+    case: HindsightCase,
+    row: dict[str, Any],
+    *,
+    scan_id: str,
+    pattern_name: str,
+    flag_name: str,
+    observed_value: str,
+    observed_evidence: str,
+    missing_evidence: str,
+    force_needs_data: bool = False,
+    requires_review: bool = False,
+) -> HindsightPatternObservation:
+    flags = _flags_from_row(row)
+    if force_needs_data:
+        status = "needs_historical_data"
+        value = "insufficient_history"
+        evidence = missing_evidence
+    elif flags.get(flag_name):
+        status = "observed_hypothesis_feature"
+        value = observed_value
+        evidence = observed_evidence
+    else:
+        status = "not_observed_in_case_window"
+        value = "not_observed"
+        evidence = missing_evidence
+    return _observation(
+        scan_id=scan_id,
+        case=case,
+        observation_group="technical",
+        pattern_name=pattern_name,
+        observation_value=value,
+        status=status,
+        evidence=evidence,
+        source="daily_prices",
+        extraction_method="daily_ohlcv_rule_v1",
+        requires_review=requires_review,
+    )
+
+
+def _observation(
+    *,
+    scan_id: str,
+    case: HindsightCase,
+    observation_group: str,
+    pattern_name: str,
+    observation_value: str,
+    status: str,
+    evidence: str,
+    source: str,
+    extraction_method: str,
+    requires_review: bool,
+) -> HindsightPatternObservation:
+    observation_key = "|".join([scan_id, case.symbol, observation_group, pattern_name])
+    return HindsightPatternObservation(
+        observation_id=str(uuid.uuid5(uuid.NAMESPACE_URL, observation_key)),
+        scan_id=scan_id,
+        symbol=case.symbol,
+        label=case.label,
+        observation_group=observation_group,
+        pattern_name=pattern_name,
+        observation_value=observation_value,
+        status=status,
+        evidence=evidence,
+        source=source,
+        extraction_method=extraction_method,
+        requires_review=requires_review,
+    )
+
+
+def _industry_cluster(theme: str) -> str:
+    lowered = theme.lower()
+    if "memory" in lowered or "hbm" in lowered:
+        return "AI infrastructure / memory and HBM"
+    if "storage" in lowered or "nand" in lowered:
+        return "AI infrastructure / storage and NAND"
+    if "optical" in lowered or "network" in lowered:
+        return "AI infrastructure / optical networking"
+    if "semiconductor" in lowered or "chip" in lowered:
+        return "AI infrastructure / semiconductors"
+    if "ai" in lowered:
+        return "AI infrastructure / other"
+    return "Other industry theme"
+
+
+def _format_metric(value: object, *, suffix: str = "") -> str:
+    if value is None or pd.isna(value):
+        return "missing"
+    try:
+        text = f"{float(value):.2f}"
+    except Exception:
+        text = str(value)
+    return text + suffix
+
+
 def _price_rows(config: SectorScoutConfig, case: HindsightCase) -> pd.DataFrame:
     with connect_database(config.database.path) as connection:
         try:
@@ -561,9 +873,16 @@ def _case_flags(prices: pd.DataFrame, *, max_gain_pct: float | None, rs_percenti
     sma50 = close.rolling(50, min_periods=20).mean()
     sma200 = close.rolling(200, min_periods=80).mean()
     high20 = close.rolling(20, min_periods=10).max()
-    stage2_proxy = bool(((close > sma50) & (close > sma200)).tail(30).any()) if len(prices) >= 80 else False
-    breakout_proxy = bool((close > high20.shift(1)).tail(max(len(close) - 20, 1)).any()) if len(prices) >= 20 else False
-    volume_expansion_proxy = bool((volume > volume.rolling(50, min_periods=20).mean() * 1.3).tail(max(len(volume) - 20, 1)).any()) if len(prices) >= 20 else False
+    stage2_series = (close > sma50) & (close > sma200)
+    breakout_series = close > high20.shift(1)
+    volume_expansion_series = volume > volume.rolling(50, min_periods=20).mean() * 1.3
+    stage2_days_last_30 = int(stage2_series.tail(30).sum()) if len(prices) >= 80 else 0
+    breakout_days = int(breakout_series.tail(max(len(close) - 20, 1)).sum()) if len(prices) >= 20 else 0
+    volume_expansion_days = int(volume_expansion_series.tail(max(len(volume) - 20, 1)).sum()) if len(prices) >= 20 else 0
+    stage2_proxy = bool(stage2_days_last_30 > 0)
+    breakout_proxy = bool(breakout_days > 0)
+    volume_expansion_proxy = bool(volume_expansion_days > 0)
+    above_50d_pct = float(stage2_series.fillna(False).sum() / len(stage2_series) * 100) if len(prices) else 0.0
     return {
         "has_price_history": True,
         "enough_history_60d": len(prices) >= 60,
@@ -574,6 +893,10 @@ def _case_flags(prices: pd.DataFrame, *, max_gain_pct: float | None, rs_percenti
         "stage2_proxy": stage2_proxy,
         "breakout_proxy": breakout_proxy,
         "volume_expansion_proxy": volume_expansion_proxy,
+        "stage2_days_last_30": stage2_days_last_30,
+        "breakout_days": breakout_days,
+        "volume_expansion_days": volume_expansion_days,
+        "above_50d_and_200d_pct": round(above_50d_pct, 2),
     }
 
 
@@ -641,6 +964,47 @@ def _persist_results(config: SectorScoutConfig, results: list[HindsightResult]) 
                     json.dumps(result.flags, sort_keys=True),
                     result.data_quality,
                     result.notes,
+                    now,
+                    cfg_hash,
+                    git_commit,
+                    config.reproducibility.data_snapshot_id,
+                    config.reproducibility.universe_version,
+                    config.reproducibility.theme_version,
+                ],
+            )
+
+
+def _persist_pattern_observations(config: SectorScoutConfig, observations: list[HindsightPatternObservation]) -> None:
+    if not observations:
+        return
+    now = datetime.now(timezone.utc)
+    git_commit = get_git_commit()
+    cfg_hash = config_hash(config)
+    with connect_database(config.database.path) as connection:
+        for observation in observations:
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO hindsight_pattern_observations (
+                    observation_id, scan_id, symbol, label, observation_group,
+                    pattern_name, observation_value, status, evidence, source,
+                    extraction_method, requires_review, generated_at_utc,
+                    config_hash, git_commit, data_snapshot_id, universe_version,
+                    theme_version
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    observation.observation_id,
+                    observation.scan_id,
+                    observation.symbol,
+                    observation.label,
+                    observation.observation_group,
+                    observation.pattern_name,
+                    observation.observation_value,
+                    observation.status,
+                    observation.evidence,
+                    observation.source,
+                    observation.extraction_method,
+                    observation.requires_review,
                     now,
                     cfg_hash,
                     git_commit,
