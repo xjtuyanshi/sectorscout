@@ -507,6 +507,7 @@ def hindsight_fetch_prices(
 @hindsight_app.command("playbook")
 def hindsight_playbook(
     output_dir: Path = typer.Option(Path("data/hindsight/reports"), "--output-dir"),
+    source_snapshot_dir: Path = typer.Option(Path("data/hindsight/sources"), "--source-snapshot-dir"),
     asof: str | None = typer.Option(None, "--asof"),
     config: Path = typer.Option(Path("config.yaml"), "--config"),
 ) -> None:
@@ -514,7 +515,12 @@ def hindsight_playbook(
     from sectorscout.hindsight_playbook import generate_hindsight_pattern_playbook
 
     loaded = _load(config)
-    path = generate_hindsight_pattern_playbook(loaded, output_dir=output_dir, asof_date=_parse_iso_date(asof))
+    path = generate_hindsight_pattern_playbook(
+        loaded,
+        output_dir=output_dir,
+        asof_date=_parse_iso_date(asof),
+        source_snapshot_dir=source_snapshot_dir,
+    )
     typer.echo(str(path))
 
 
@@ -528,6 +534,8 @@ def hindsight_refresh(
     lookback_days: int = typer.Option(320, "--lookback-days", min=0),
     include_benchmarks: bool = typer.Option(True, "--include-benchmarks/--no-include-benchmarks"),
     check_sources: bool = typer.Option(False, "--check-sources/--no-check-sources"),
+    snapshot_sources: bool = typer.Option(False, "--snapshot-sources/--no-snapshot-sources"),
+    source_snapshot_dir: Path = typer.Option(Path("data/hindsight/sources"), "--source-snapshot-dir"),
     strict_price_fetch: bool = typer.Option(False, "--strict-price-fetch/--no-strict-price-fetch"),
     config: Path = typer.Option(Path("config.yaml"), "--config"),
 ) -> None:
@@ -546,8 +554,31 @@ def hindsight_refresh(
         include_benchmarks=include_benchmarks,
         continue_on_price_error=not strict_price_fetch,
         check_sources=check_sources,
+        snapshot_sources=snapshot_sources,
+        source_snapshot_dir=source_snapshot_dir,
     )
     typer.echo(json.dumps(result.to_dict(), indent=2, sort_keys=True))
+
+
+@hindsight_app.command("snapshot-sources")
+def hindsight_snapshot_sources(
+    output_dir: Path = typer.Option(Path("data/hindsight/sources"), "--output-dir"),
+    include_review_required: bool = typer.Option(
+        True,
+        "--include-review-required/--no-include-review-required",
+    ),
+    config: Path = typer.Option(Path("config.yaml"), "--config"),
+) -> None:
+    """Fetch public official-source snapshots for hindsight evidence review."""
+    from sectorscout.hindsight_source_snapshot import fetch_hindsight_source_snapshots
+
+    loaded = _load(config)
+    snapshots = fetch_hindsight_source_snapshots(
+        loaded,
+        output_dir=output_dir,
+        include_review_required=include_review_required,
+    )
+    typer.echo(json.dumps([snapshot.to_dict() for snapshot in snapshots], indent=2, sort_keys=True))
 
 
 @app.command("execution-decisions")

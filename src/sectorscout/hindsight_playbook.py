@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -13,6 +14,7 @@ from sectorscout.hindsight import (
     latest_hindsight_replay_gates,
 )
 from sectorscout.hindsight_source_audit import build_hindsight_source_audit
+from sectorscout.hindsight_source_snapshot import DEFAULT_SOURCE_SNAPSHOT_DIR
 from sectorscout.metadata import get_git_commit
 from sectorscout.ui.hindsight_presenter import (
     build_case_pattern_map_rows,
@@ -29,11 +31,19 @@ def generate_hindsight_pattern_playbook(
     *,
     output_dir: Path = Path("data/hindsight/reports"),
     asof_date: date | None = None,
+    source_snapshot_dir: Path = DEFAULT_SOURCE_SNAPSHOT_DIR,
 ) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
     generated_for = asof_date or date.today()
     path = output_dir / f"hindsight_pattern_playbook_{generated_for.isoformat()}.md"
-    path.write_text(build_hindsight_pattern_playbook_markdown(config, asof_date=generated_for), encoding="utf-8")
+    path.write_text(
+        build_hindsight_pattern_playbook_markdown(
+            config,
+            asof_date=generated_for,
+            source_snapshot_dir=source_snapshot_dir,
+        ),
+        encoding="utf-8",
+    )
     return path
 
 
@@ -41,6 +51,7 @@ def build_hindsight_pattern_playbook_markdown(
     config: SectorScoutConfig,
     *,
     asof_date: date | None = None,
+    source_snapshot_dir: Path = DEFAULT_SOURCE_SNAPSHOT_DIR,
 ) -> str:
     generated_for = asof_date or date.today()
     generated_at = datetime.now(timezone.utc).isoformat()
@@ -109,6 +120,8 @@ def build_hindsight_pattern_playbook_markdown(
             lines.extend(_case_card_lines(card))
         lines.extend(["## Official Source Audit", ""])
         lines.extend(_source_audit_lines(source_audit))
+        lines.extend(["## Source Snapshots", ""])
+        lines.extend(_source_snapshot_lines(source_snapshot_dir))
         lines.extend(["## Research Queue", ""])
         for item in _playbook_research_queue(pattern_cards, case_cards):
             lines.append(f"- {item}")
@@ -182,6 +195,39 @@ def _source_audit_lines(items: list[Any]) -> list[str]:
                     _md(item.remote_status),
                     _md(item.source_url),
                     f"{_md(item.reviewer_note)} |",
+                ]
+            )
+        )
+    lines.append("")
+    return lines
+
+
+def _source_snapshot_lines(source_snapshot_dir: Path) -> list[str]:
+    manifest_path = source_snapshot_dir / "source_snapshots_manifest.json"
+    if not manifest_path.exists():
+        return [
+            f"No source snapshot manifest found at `{_md(manifest_path)}`.",
+            "Run `.venv/bin/sectorscout hindsight snapshot-sources` after reviewing the source list.",
+            "",
+        ]
+    try:
+        snapshots = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return [f"Source snapshot manifest at `{_md(manifest_path)}` is not valid JSON.", ""]
+    lines = [
+        "| Symbols | Source type | Fetch status | Title | Local path | Excerpt |",
+        "| --- | --- | --- | --- | --- | --- |",
+    ]
+    for snapshot in snapshots:
+        lines.append(
+            " | ".join(
+                [
+                    f"| {_md(', '.join(snapshot.get('symbols') or []))}",
+                    _md(snapshot.get("source_type")),
+                    _md(snapshot.get("fetch_status")),
+                    _md(snapshot.get("title") or "-"),
+                    _md(snapshot.get("local_path") or "-"),
+                    f"{_md(snapshot.get('excerpt') or snapshot.get('error') or '-')} |",
                 ]
             )
         )

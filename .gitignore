@@ -22,3 +22,6 @@ data/intel/reports/*
 
 data/hindsight/reports/*
 !data/hindsight/reports/.gitkeep
+
+data/hindsight/sources/*
+!data/hindsight/sources/.gitkeep

@@ -22,6 +22,10 @@ from sectorscout.hindsight import (
 )
 from sectorscout.hindsight_playbook import generate_hindsight_pattern_playbook
 from sectorscout.hindsight_source_audit import build_hindsight_source_audit, source_audit_summary
+from sectorscout.hindsight_source_snapshot import (
+    DEFAULT_SOURCE_SNAPSHOT_DIR,
+    fetch_hindsight_source_snapshots,
+)
 from sectorscout.metadata import get_git_commit
 
 
@@ -65,6 +69,7 @@ class HindsightRefreshResult:
     price_summary: list[dict[str, Any]]
     source_audit: list[dict[str, object]]
     source_audit_summary: dict[str, object]
+    source_snapshots: list[dict[str, object]]
 
     def to_dict(self) -> dict[str, object]:
         payload = asdict(self)
@@ -84,6 +89,8 @@ def run_hindsight_refresh(
     include_benchmarks: bool = True,
     continue_on_price_error: bool = True,
     check_sources: bool = False,
+    snapshot_sources: bool = False,
+    source_snapshot_dir: Path = DEFAULT_SOURCE_SNAPSHOT_DIR,
 ) -> HindsightRefreshResult:
     """Run the complete historical-pattern lab refresh without changing live scores."""
 
@@ -188,7 +195,34 @@ def run_hindsight_refresh(
         )
     )
 
-    playbook_path = generate_hindsight_pattern_playbook(config, output_dir=output_dir, asof_date=effective_asof)
+    source_snapshots: list[dict[str, object]] = []
+    if snapshot_sources:
+        snapshots = fetch_hindsight_source_snapshots(config, output_dir=source_snapshot_dir)
+        source_snapshots = [snapshot.to_dict() for snapshot in snapshots]
+        steps.append(
+            HindsightRefreshStep(
+                "source_snapshots",
+                "OK",
+                f"Fetched public source snapshots into {source_snapshot_dir}.",
+                len(source_snapshots),
+            )
+        )
+    else:
+        steps.append(
+            HindsightRefreshStep(
+                "source_snapshots",
+                "SKIPPED",
+                "Public source snapshot fetch disabled.",
+                0,
+            )
+        )
+
+    playbook_path = generate_hindsight_pattern_playbook(
+        config,
+        output_dir=output_dir,
+        asof_date=effective_asof,
+        source_snapshot_dir=source_snapshot_dir,
+    )
     steps.append(HindsightRefreshStep("pattern_playbook", "OK", f"Generated research playbook at {playbook_path}.", 1))
 
     return HindsightRefreshResult(
@@ -206,6 +240,7 @@ def run_hindsight_refresh(
         price_summary=price_summary,
         source_audit=[item.to_dict() for item in source_audit],
         source_audit_summary=source_summary,
+        source_snapshots=source_snapshots,
     )
 
 

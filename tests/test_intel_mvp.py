@@ -36,6 +36,7 @@ from sectorscout.hindsight_playbook import (
     generate_hindsight_pattern_playbook,
 )
 from sectorscout.hindsight_source_audit import build_hindsight_source_audit, source_audit_summary
+from sectorscout.hindsight_source_snapshot import fetch_hindsight_source_snapshots
 from sectorscout.hindsight_workflow import run_hindsight_refresh
 from sectorscout.intel.chandler_seed import load_chandler_fixture, seed_chandler_fixture
 from sectorscout.intel.capture_inbox import capture_markdown_text
@@ -1468,6 +1469,8 @@ def test_hindsight_pattern_playbook_exports_markdown(tmp_path: Path) -> None:
     assert "NVDA - Anchor leader" in markdown
     assert "SNDK" in markdown
     assert "## Official Source Audit" in markdown
+    assert "## Source Snapshots" in markdown
+    assert "No source snapshot manifest" in markdown
     assert "official_company_release" in markdown
     assert "Control case" in markdown or "control" in markdown.lower()
     assert "## Promotion Boundary" in markdown
@@ -1494,6 +1497,7 @@ def test_hindsight_refresh_runs_pipeline_without_network(tmp_path: Path) -> None
         output_dir=tmp_path / "reports",
         asof_date=date(2026, 5, 31),
         fetch_prices=False,
+        snapshot_sources=False,
     )
     payload = result.to_dict()
     assert payload["asof_date"] == "2026-05-31"
@@ -1503,7 +1507,9 @@ def test_hindsight_refresh_runs_pipeline_without_network(tmp_path: Path) -> None
     steps = {str(step["step"]): step for step in payload["steps"]}
     assert steps["public_price_history"]["status"] == "SKIPPED"
     assert steps["source_audit"]["rows"] >= 5
+    assert steps["source_snapshots"]["status"] == "SKIPPED"
     assert steps["hypothesis_registry"]["rows"] == 28
+    assert payload["source_snapshots"] == []
     assert payload["source_audit_summary"]["pit_usable_sources"] >= 4
     assert any("NVIDIA" in row["source_url"] or "nvidia" in row["source_url"] for row in payload["source_audit"])
     assert result.row_counts["hindsight_hypotheses"] == 4
@@ -1626,6 +1632,49 @@ def test_hindsight_source_audit_classifies_official_and_future_only_sources(tmp_
     assert summary["sources"] == len(rows_by_url)
     assert int(summary["pit_usable_sources"]) >= 4
     assert int(summary["review_required_sources"]) >= 1
+
+
+def test_hindsight_source_snapshots_save_public_source_text(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _config(tmp_path)
+    seed_hindsight_events(config, tmp_path / "leader_cases.csv")
+    seed_hindsight_evidence(config, tmp_path / "leader_cases.csv")
+
+    def fake_read_public_url(url: str, *, max_bytes: int, timeout: int) -> dict[str, object]:
+        assert url.startswith("https://")
+        body = (
+            "<html><head><title>Official Source</title></head><body>"
+            "AI data center demand and official filing evidence."
+            "</body></html>"
+        ).encode("utf-8")
+        return {"status": 200, "content_type": "text/html; charset=utf-8", "body": body}
+
+    monkeypatch.setattr("sectorscout.hindsight_source_snapshot._read_public_url", fake_read_public_url)
+    snapshots = fetch_hindsight_source_snapshots(config, output_dir=tmp_path / "sources")
+    assert snapshots
+    fetched = [snapshot for snapshot in snapshots if snapshot.fetch_status == "FETCHED"]
+    assert fetched
+    assert all(snapshot.local_path for snapshot in fetched)
+    assert all(Path(str(snapshot.local_path)).exists() for snapshot in fetched)
+    assert any("AI data center demand" in snapshot.excerpt for snapshot in fetched)
+    manifest = tmp_path / "sources" / "source_snapshots_manifest.json"
+    assert manifest.exists()
+    manifest_payload = json.loads(manifest.read_text(encoding="utf-8"))
+    assert len(manifest_payload) == len(snapshots)
+    scan_hindsight_cases(config, path=tmp_path / "leader_cases.csv", persist=True)
+    build_hindsight_hypothesis_registry(config, path=tmp_path / "leader_cases.csv")
+    markdown = build_hindsight_pattern_playbook_markdown(
+        config,
+        asof_date=date(2026, 5, 31),
+        source_snapshot_dir=tmp_path / "sources",
+    )
+    assert "## Source Snapshots" in markdown
+    assert "Official Source" in markdown
+    assert "AI data center demand" in markdown
+    forbidden = ["buy signal", "sell signal", "win rate", "Sharpe", "CAGR", "profit factor", "strategy edge"]
+    assert not any(term.lower() in json.dumps(manifest_payload).lower() for term in forbidden)
 
 
 def test_hindsight_evidence_ledger_keeps_custom_narrative_blocked(tmp_path: Path) -> None:

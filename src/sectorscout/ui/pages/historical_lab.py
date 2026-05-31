@@ -30,6 +30,7 @@ from sectorscout.hindsight import (
 )
 from sectorscout.hindsight_playbook import generate_hindsight_pattern_playbook
 from sectorscout.hindsight_source_audit import build_hindsight_source_audit_rows
+from sectorscout.hindsight_source_snapshot import fetch_hindsight_source_snapshots
 from sectorscout.hindsight_workflow import run_hindsight_refresh
 from sectorscout.intel.storage import insert_review_mark
 from sectorscout.ui.data import UIContext, row_count, table_exists
@@ -288,6 +289,7 @@ def _render_lab_refresh(ctx: UIContext) -> None:
         lookback_days = controls[2].number_input("Lookback days", min_value=0, max_value=1200, value=320, step=20)
         refresh_asof = controls[3].date_input("Refresh as-of", value=date.today())
         check_sources = st.checkbox("Check official source URLs", value=False)
+        snapshot_sources = st.checkbox("Snapshot public source text", value=False)
         if st.button("Run full historical refresh", use_container_width=True):
             with st.spinner("Refreshing historical lab artifacts..."):
                 result = run_hindsight_refresh(
@@ -297,12 +299,16 @@ def _render_lab_refresh(ctx: UIContext) -> None:
                     include_benchmarks=include_benchmarks,
                     lookback_days=int(lookback_days),
                     check_sources=check_sources,
+                    snapshot_sources=snapshot_sources,
                 )
             st.success(f"Refresh complete. Playbook: {result.playbook_path}")
             st.dataframe([step.to_dict() for step in result.steps], use_container_width=True, hide_index=True)
             if result.source_audit:
                 st.markdown("#### Official Source Audit")
                 st.dataframe(_display_source_audit_rows(result.source_audit), use_container_width=True, hide_index=True)
+            if result.source_snapshots:
+                st.markdown("#### Source Snapshots")
+                st.dataframe(_display_source_snapshot_rows(result.source_snapshots), use_container_width=True, hide_index=True)
 
 
 def _render_source_audit(ctx: UIContext) -> None:
@@ -317,6 +323,11 @@ def _render_source_audit(ctx: UIContext) -> None:
         st.info("No source audit rows yet. Seed event and evidence ledgers first.")
         return
     st.dataframe(_display_source_audit_rows(rows), use_container_width=True, hide_index=True)
+    if st.button("Snapshot public source text", use_container_width=True):
+        with st.spinner("Fetching public source snapshots..."):
+            snapshots = fetch_hindsight_source_snapshots(ctx.config)
+        st.success(f"Saved {len(snapshots)} source snapshot rows.")
+        st.dataframe(_display_source_snapshot_rows([snapshot.to_dict() for snapshot in snapshots]), use_container_width=True, hide_index=True)
 
 
 def _render_observation_link_panel(ctx: UIContext) -> None:
@@ -563,6 +574,25 @@ def _display_source_audit_rows(rows: list[dict[str, object]]) -> pd.DataFrame:
                 "HTTP status": row.get("remote_status_code") or "-",
                 "Source URL": row.get("source_url"),
                 "Reviewer note": row.get("reviewer_note"),
+            }
+            for row in rows
+        ]
+    )
+
+
+def _display_source_snapshot_rows(rows: list[dict[str, object]]) -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {
+                "Symbols": _join_list(row.get("symbols")),
+                "Source type": _friendly_text(row.get("source_type")),
+                "PIT status": row.get("pit_status"),
+                "Fetch status": row.get("fetch_status"),
+                "HTTP status": row.get("http_status") or "-",
+                "Title": row.get("title") or "-",
+                "Excerpt": row.get("excerpt") or row.get("error") or "-",
+                "Local path": row.get("local_path") or "-",
+                "Source URL": row.get("source_url"),
             }
             for row in rows
         ]

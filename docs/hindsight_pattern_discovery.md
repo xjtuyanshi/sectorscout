@@ -224,6 +224,7 @@ or a computed replay gate link.
 .venv/bin/sectorscout hindsight build-hypotheses
 .venv/bin/sectorscout hindsight playbook
 .venv/bin/sectorscout hindsight refresh --asof 2026-05-31
+.venv/bin/sectorscout hindsight snapshot-sources
 ```
 
 `fetch-prices` defaults to the public Yahoo chart JSON endpoint for case-study diagnostics and fetches a 320-calendar-day pre-event lookback by default. That lookback is required for pre-event technical replay gates such as trend, relative strength, and price coverage. Stooq remains available with `--provider stooq_public` when `STOOQ_API_KEY` is configured. Corporate-action adjustment status is marked with a warning in stored price rows, so split-sensitive cases still need provider-quality review before any formal validation.
@@ -239,6 +240,13 @@ The refresh also builds an official source audit from event and evidence
 ledgers. By default this is offline metadata only. Add `--check-sources` when
 you want a public URL availability check; the checker does not use login,
 cookies, sessions, private pages, or paywall bypass.
+
+Use `snapshot-sources` or `refresh --snapshot-sources` to save local public
+source text snapshots under `data/hindsight/sources/`. This is for audit
+review only: it fetches public HTTP(S) URLs with no credentials, no cookies, no
+private-channel navigation, and no paywall bypass. SEC users can set
+`SECTORSCOUT_SOURCE_USER_AGENT` to a more specific contact string before
+fetching public filing pages.
 
 After `scan`, review:
 
