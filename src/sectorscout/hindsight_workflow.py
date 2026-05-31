@@ -22,6 +22,7 @@ from sectorscout.hindsight import (
 )
 from sectorscout.hindsight_companyfacts import build_hindsight_companyfacts, companyfacts_summary
 from sectorscout.hindsight_industry_profile import build_hindsight_industry_profiles, industry_profile_summary
+from sectorscout.hindsight_pattern_matrix import build_hindsight_pattern_matrix, pattern_matrix_summary
 from sectorscout.hindsight_playbook import generate_hindsight_pattern_playbook
 from sectorscout.hindsight_sec_metadata import build_hindsight_sec_filing_metadata, sec_filing_metadata_summary
 from sectorscout.hindsight_source_audit import build_hindsight_source_audit, source_audit_summary
@@ -80,6 +81,8 @@ class HindsightRefreshResult:
     companyfacts_summary: dict[str, object]
     industry_profiles: list[dict[str, object]]
     industry_profile_summary: dict[str, object]
+    pattern_matrix: list[dict[str, object]]
+    pattern_matrix_summary: dict[str, object]
 
     def to_dict(self) -> dict[str, object]:
         payload = asdict(self)
@@ -189,6 +192,17 @@ def run_hindsight_refresh(
     gates = build_hindsight_replay_gates(config, path=path, persist=True, asof_date=effective_asof)
     steps.append(HindsightRefreshStep("replay_gates", "OK", "Built timing, technical, and first-session replay gates.", len(gates)))
 
+    pattern_matrix = build_hindsight_pattern_matrix(config, path=path)
+    pattern_matrix_summary_payload = pattern_matrix_summary(pattern_matrix)
+    steps.append(
+        HindsightRefreshStep(
+            "pattern_matrix",
+            "OK",
+            "Built industry plus technical replay review matrix.",
+            len(pattern_matrix),
+        )
+    )
+
     links = build_hindsight_observation_links(config)
     steps.append(HindsightRefreshStep("observation_links", "OK", "Linked observations to evidence, gates, or blockers.", len(links)))
 
@@ -297,6 +311,8 @@ def run_hindsight_refresh(
         companyfacts_summary=companyfacts_summary_payload,
         industry_profiles=[item.to_dict() for item in industry_profiles],
         industry_profile_summary=industry_profile_summary_payload,
+        pattern_matrix=[item.to_dict() for item in pattern_matrix],
+        pattern_matrix_summary=pattern_matrix_summary_payload,
     )
 
 

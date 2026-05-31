@@ -463,6 +463,23 @@ def hindsight_industry_profiles(
     typer.echo(json.dumps(payload, indent=2, sort_keys=True))
 
 
+@hindsight_app.command("pattern-matrix")
+def hindsight_pattern_matrix(
+    path: Path = typer.Option(DEFAULT_HINDSIGHT_CASES_PATH, "--path"),
+    config: Path = typer.Option(Path("config.yaml"), "--config"),
+) -> None:
+    """Build the industry plus technical replay review matrix."""
+    from sectorscout.hindsight_pattern_matrix import build_hindsight_pattern_matrix, pattern_matrix_summary
+
+    loaded = _load(config)
+    rows = build_hindsight_pattern_matrix(loaded, path=path)
+    payload = {
+        "summary": pattern_matrix_summary(rows),
+        "rows": [row.to_dict() for row in rows],
+    }
+    typer.echo(json.dumps(payload, indent=2, sort_keys=True))
+
+
 @hindsight_app.command("build-observation-links")
 def hindsight_build_observation_links(
     config: Path = typer.Option(Path("config.yaml"), "--config"),

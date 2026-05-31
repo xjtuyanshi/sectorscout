@@ -223,6 +223,7 @@ or a computed replay gate link.
 .venv/bin/sectorscout hindsight seed-events
 .venv/bin/sectorscout hindsight seed-evidence
 .venv/bin/sectorscout hindsight industry-profiles
+.venv/bin/sectorscout hindsight pattern-matrix
 .venv/bin/sectorscout hindsight fetch-prices
 .venv/bin/sectorscout hindsight scan
 .venv/bin/sectorscout hindsight build-gates
@@ -280,6 +281,9 @@ After `scan`, review:
 - `hindsight_evidence_items` for point-in-time industry and fundamental evidence;
 - `hindsight industry-profiles` for a dynamic review layer that turns evidence
   rows into demand driver, chain-node, mechanism-tag, and PIT status summaries;
+- `hindsight pattern-matrix` for the industry plus technical review matrix that
+  combines industry profile status with pre-event price coverage, Stage 2 trend,
+  and fixed-benchmark relative strength gates;
 - `hindsight_replay_gates` for PASS / FAIL / DATA_GAP / PENDING explain rows;
 - `hindsight_observation_links` for the explicit connection from each pattern
   observation to official evidence, computed gates, or a review-required blocker;

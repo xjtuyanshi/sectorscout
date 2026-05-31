@@ -44,6 +44,7 @@ from sectorscout.hindsight_industry_profile import (
     build_hindsight_industry_profiles,
     industry_profile_summary,
 )
+from sectorscout.hindsight_pattern_matrix import build_hindsight_pattern_matrix, pattern_matrix_summary
 from sectorscout.hindsight_sec_metadata import (
     build_hindsight_sec_filing_metadata,
     parse_sec_archive_url,
@@ -1482,6 +1483,8 @@ def test_hindsight_pattern_playbook_exports_markdown(tmp_path: Path) -> None:
     assert "## Case Map" in markdown
     assert "## Industry Evidence Profiles" in markdown
     assert "AI data-center compute demand" in markdown
+    assert "## Industry + Technical Matrix" in markdown
+    assert "INDUSTRY_READY_TECHNICAL_DATA_GAP" in markdown
     assert "NVDA - Anchor leader" in markdown
     assert "SNDK" in markdown
     assert "## Official Source Audit" in markdown
@@ -1638,6 +1641,7 @@ def test_hindsight_refresh_runs_pipeline_without_network(tmp_path: Path) -> None
     steps = {str(step["step"]): step for step in payload["steps"]}
     assert steps["industry_profiles"]["rows"] == 7
     assert steps["public_price_history"]["status"] == "SKIPPED"
+    assert steps["pattern_matrix"]["rows"] == 7
     assert steps["source_audit"]["rows"] >= 5
     assert steps["sec_filing_metadata"]["rows"] == 4
     assert steps["sec_companyfacts"]["status"] == "SKIPPED"
@@ -1647,6 +1651,12 @@ def test_hindsight_refresh_runs_pipeline_without_network(tmp_path: Path) -> None
     assert payload["sec_filing_metadata_summary"]["parsed_only_filings"] == 4
     assert payload["industry_profile_summary"]["profiles"] == 7
     assert payload["industry_profile_summary"]["pit_ready_profiles"] == 4
+    assert payload["pattern_matrix_summary"]["rows"] == 7
+    assert payload["pattern_matrix_summary"]["control_review_rows"] == 3
+    assert any(
+        row["symbol"] == "NVDA" and row["alignment_label"] == "INDUSTRY_READY_TECHNICAL_DATA_GAP"
+        for row in payload["pattern_matrix"]
+    )
     assert any(
         row["symbol"] == "SNDK" and row["profile_status"] == "PIT_USABLE_WITH_FUTURE_CONTEXT"
         for row in payload["industry_profiles"]
@@ -1776,6 +1786,79 @@ def test_hindsight_industry_profiles_structure_drivers_and_pit_status(tmp_path: 
     assert summary["profiles"] == 7
     assert summary["pit_ready_profiles"] == 4
     assert summary["data_gap_profiles"] == 3
+
+
+def test_hindsight_pattern_matrix_combines_industry_and_technical_gates(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    seed_hindsight_events(config, tmp_path / "leader_cases.csv")
+    seed_hindsight_evidence(config, tmp_path / "leader_cases.csv")
+    build_hindsight_replay_gates(config, path=tmp_path / "leader_cases.csv", persist=True)
+
+    rows = build_hindsight_pattern_matrix(config, path=tmp_path / "leader_cases.csv")
+    assert len(rows) == 7
+    by_symbol = {row.symbol: row for row in rows}
+    assert by_symbol["NVDA"].industry_status == "PIT_USABLE"
+    assert by_symbol["NVDA"].technical_status == "TECHNICAL_DATA_GAP"
+    assert by_symbol["NVDA"].alignment_label == "INDUSTRY_READY_TECHNICAL_DATA_GAP"
+    assert by_symbol["SNDK"].alignment_label == "FUTURE_CONTEXT_REVIEW"
+    assert by_symbol["AMD"].alignment_label == "CONTROL_DATA_GAP"
+    summary = pattern_matrix_summary(rows)
+    assert summary["rows"] == 7
+    assert summary["industry_ready_technical_gap_rows"] >= 3
+    assert summary["control_review_rows"] == 3
+
+
+def test_hindsight_pattern_matrix_marks_industry_and_technical_alignment(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    rows = []
+    start = date(2023, 6, 1)
+    for offset in range(260):
+        current = start + timedelta(days=offset)
+        nvda_close = 100.0 + offset * 1.5
+        smh_close = 100.0 + offset * 0.2
+        for symbol, close in [("NVDA", nvda_close), ("SMH", smh_close)]:
+            rows.append(
+                [
+                    symbol,
+                    current,
+                    close,
+                    close,
+                    close,
+                    close,
+                    1_000_000 + offset,
+                    close,
+                    close,
+                    close,
+                    close,
+                    1_000_000 + offset,
+                    "fixture",
+                    True,
+                    False,
+                    datetime.now(timezone.utc),
+                ]
+            )
+    with connect_database(config.database.path) as connection:
+        connection.executemany(
+            """
+            INSERT INTO daily_prices (
+                symbol, price_date, open, high, low, close, volume,
+                adj_open, adj_high, adj_low, adj_close, adj_volume,
+                provider, is_adjusted, adjustment_warning, ingested_at_utc
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            rows,
+        )
+    seed_hindsight_events(config, tmp_path / "leader_cases.csv")
+    seed_hindsight_evidence(config, tmp_path / "leader_cases.csv")
+    build_hindsight_replay_gates(config, path=tmp_path / "leader_cases.csv", persist=True)
+
+    matrix = build_hindsight_pattern_matrix(config, path=tmp_path / "leader_cases.csv")
+    nvda = next(row for row in matrix if row.symbol == "NVDA")
+    assert nvda.price_coverage_status == "PASS"
+    assert nvda.stage2_status == "PASS"
+    assert nvda.benchmark_rs_status == "PASS"
+    assert nvda.technical_status == "TECHNICAL_PASS"
+    assert nvda.alignment_label == "INDUSTRY_AND_TECHNICAL_ALIGNED"
 
 
 def test_hindsight_source_audit_classifies_official_and_future_only_sources(tmp_path: Path) -> None:

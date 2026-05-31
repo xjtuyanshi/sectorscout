@@ -192,22 +192,164 @@
     <section class="grid grid-3">
       <div class="card">
         <div class="kicker">Current focus</div>
-        <div class="metric">Industry</div>
-        <div class="note">把 NVDA / MU / SNDK / LITE 的官方证据拆成需求驱动、链条节点、机制标签、PIT 状态。</div>
+        <div class="metric">Matrix</div>
+        <div class="note">把行业证据 profile 和技术 replay gates 合成二维 review matrix。</div>
       </div>
       <div class="card">
         <div class="kicker">Coverage impact</div>
-        <div class="metric">0 -> 7</div>
-        <div class="note">新增 7 个行业证据 profile：4 个 leader/downstream 节点，3 个 control 节点。</div>
+        <div class="metric">7 x gates</div>
+        <div class="note">每个案例同时显示行业状态、price coverage、Stage 2、benchmark RS、matrix label。</div>
       </div>
       <div class="card">
         <div class="kicker">Boundary</div>
         <div class="metric">overlay</div>
-        <div class="note">行业 profile 只解释历史证据，不写入 live scoring，也不把案例结论变成规则。</div>
+        <div class="note">矩阵 label 是 review bucket，不是验证结论，也不改变 live scoring。</div>
       </div>
     </section>
 
     <section class="timeline">
+      <article class="entry">
+        <div class="entry-head">
+          <div>
+            <div class="kicker">Update 2026-05-31</div>
+            <div class="entry-title">Industry + Technical Matrix</div>
+          </div>
+          <div class="entry-meta">
+            Source basis: industry profiles + pre-event replay gates<br>
+            Verification: targeted tests and full regression passed
+          </div>
+        </div>
+
+        <div class="grid grid-2">
+          <div>
+            <h2>1. 这一版做了什么功能</h2>
+            <table>
+              <thead>
+                <tr><th>Area</th><th>Change</th><th>Status</th></tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Matrix builder</td>
+                  <td>新增行业 + 技术矩阵，把每个 case 的行业 profile 和技术 gate 状态放在一行。</td>
+                  <td><span class="status green">new layer</span></td>
+                </tr>
+                <tr>
+                  <td>Technical side</td>
+                  <td>纳入 pre-event price coverage、Stage 2 trend、fixed benchmark RS。</td>
+                  <td><span class="status blue">gate based</span></td>
+                </tr>
+                <tr>
+                  <td>Review labels</td>
+                  <td>输出 aligned、industry ready + technical gap、future context、control data gap 等 label。</td>
+                  <td><span class="status green">reviewable</span></td>
+                </tr>
+                <tr>
+                  <td>UI / report</td>
+                  <td>Historical Lab、playbook、CLI 都能显示矩阵。</td>
+                  <td><span class="status green">visible</span></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div>
+            <h2>2. Performance 改进了多少</h2>
+            <table>
+              <thead>
+                <tr><th>Review capability</th><th>Before</th><th>After</th></tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Cross-lane visibility</td>
+                  <td>行业 profile 和技术 gates 分开看</td>
+                  <td>同一行显示行业状态 + 技术状态</td>
+                </tr>
+                <tr>
+                  <td>Candidate prioritization</td>
+                  <td>靠人工筛表</td>
+                  <td>矩阵 label 给出 review bucket</td>
+                </tr>
+                <tr>
+                  <td>Control handling</td>
+                  <td>控制组容易被忽略</td>
+                  <td>CONTROL_DATA_GAP / CONTROL_TECHNICAL_ONLY_REVIEW 单独暴露</td>
+                </tr>
+                <tr>
+                  <td>Leakage guardrail</td>
+                  <td>future context 在 profile 里</td>
+                  <td>FUTURE_CONTEXT_REVIEW 进入矩阵层，防止误用</td>
+                </tr>
+              </tbody>
+            </table>
+            <p class="note" style="margin-top:10px;">这里的 Performance 仍然是研究流程效率，不是策略表现。</p>
+          </div>
+        </div>
+
+        <div class="grid grid-2" style="margin-top:14px;">
+          <div>
+            <h2>3. 逻辑上哪里改变了</h2>
+            <div class="diagram" aria-label="Industry plus technical matrix workflow diagram">
+              <svg viewBox="0 0 820 230" role="img">
+                <defs>
+                  <marker id="arrow3" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+                    <path d="M0,0 L0,6 L9,3 z" fill="#5b6572"></path>
+                  </marker>
+                </defs>
+                <rect x="25" y="42" width="155" height="74" rx="8" fill="#ffffff" stroke="#d9dee7"></rect>
+                <text x="102" y="72" text-anchor="middle" font-weight="700" fill="#101418">Industry profile</text>
+                <text x="102" y="94" text-anchor="middle" font-size="12" fill="#5b6572">driver + PIT status</text>
+                <line x1="180" y1="79" x2="263" y2="79" stroke="#5b6572" stroke-width="2" marker-end="url(#arrow3)"></line>
+
+                <rect x="263" y="42" width="155" height="74" rx="8" fill="#ffffff" stroke="#d9dee7"></rect>
+                <text x="340" y="72" text-anchor="middle" font-weight="700" fill="#101418">Technical gates</text>
+                <text x="340" y="94" text-anchor="middle" font-size="12" fill="#5b6572">coverage + trend + RS</text>
+                <line x1="418" y1="79" x2="502" y2="79" stroke="#5b6572" stroke-width="2" marker-end="url(#arrow3)"></line>
+
+                <rect x="502" y="42" width="140" height="74" rx="8" fill="#ffffff" stroke="#d9dee7"></rect>
+                <text x="572" y="72" text-anchor="middle" font-weight="700" fill="#101418">Matrix label</text>
+                <text x="572" y="94" text-anchor="middle" font-size="12" fill="#5b6572">review bucket</text>
+                <line x1="642" y1="79" x2="720" y2="79" stroke="#5b6572" stroke-width="2" marker-end="url(#arrow3)"></line>
+
+                <rect x="720" y="42" width="80" height="74" rx="8" fill="#eff6ff" stroke="#bfdbfe"></rect>
+                <text x="760" y="72" text-anchor="middle" font-weight="700" fill="#174ea6">Review</text>
+                <text x="760" y="94" text-anchor="middle" font-size="12" fill="#5b6572">not rule</text>
+
+                <rect x="263" y="150" width="379" height="52" rx="8" fill="#fff7ed" stroke="#fed7aa"></rect>
+                <text x="452" y="181" text-anchor="middle" fill="#9a3412" font-weight="700">DATA_GAP remains missing evidence, not counter-evidence</text>
+                <line x1="572" y1="116" x2="572" y2="150" stroke="#b86e00" stroke-width="2" marker-end="url(#arrow3)"></line>
+              </svg>
+            </div>
+          </div>
+
+          <div>
+            <h2>4. Review checklist</h2>
+            <table>
+              <thead>
+                <tr><th>Question</th><th>Current answer</th></tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>矩阵 label 会不会变成规则？</td>
+                  <td>不会。label 是 review bucket，validation 仍然分离。</td>
+                </tr>
+                <tr>
+                  <td>技术面用哪些 gate？</td>
+                  <td>pre-event coverage、Stage 2 proxy、fixed benchmark RS。</td>
+                </tr>
+                <tr>
+                  <td>数据缺口怎么处理？</td>
+                  <td>DATA_GAP 继续保留为缺失证据，不当作失败。</td>
+                </tr>
+                <tr>
+                  <td>下一步最该做什么？</td>
+                  <td>扩充更多历史 case，然后看 matrix labels 在 leader/control 上是否区分得开。</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </article>
+
       <article class="entry">
         <div class="entry-head">
           <div>

@@ -15,6 +15,7 @@ from sectorscout.hindsight import (
 )
 from sectorscout.hindsight_companyfacts import build_hindsight_companyfacts, companyfacts_summary
 from sectorscout.hindsight_industry_profile import build_hindsight_industry_profiles, industry_profile_summary
+from sectorscout.hindsight_pattern_matrix import build_hindsight_pattern_matrix, pattern_matrix_summary
 from sectorscout.hindsight_sec_metadata import build_hindsight_sec_filing_metadata
 from sectorscout.hindsight_source_audit import build_hindsight_source_audit
 from sectorscout.hindsight_source_snapshot import DEFAULT_SOURCE_SNAPSHOT_DIR
@@ -67,6 +68,7 @@ def build_hindsight_pattern_playbook_markdown(
     case_rows = build_case_pattern_map_rows(events, evidence, gates, hypotheses, case_results)
     source_audit = build_hindsight_source_audit(config)
     industry_profiles = build_hindsight_industry_profiles(config)
+    pattern_matrix = build_hindsight_pattern_matrix(config)
     sec_metadata = build_hindsight_sec_filing_metadata(config)
     companyfacts, companyfacts_status = build_hindsight_companyfacts(config)
     summary_cards = build_hindsight_readout_summary_cards(pattern_rows, case_rows)
@@ -126,6 +128,8 @@ def build_hindsight_pattern_playbook_markdown(
             lines.extend(_case_card_lines(card))
         lines.extend(["## Industry Evidence Profiles", ""])
         lines.extend(_industry_profile_lines(industry_profiles))
+        lines.extend(["## Industry + Technical Matrix", ""])
+        lines.extend(_pattern_matrix_lines(pattern_matrix))
         lines.extend(["## Official Source Audit", ""])
         lines.extend(_source_audit_lines(source_audit))
         lines.extend(["## SEC Filing Metadata", ""])
@@ -242,6 +246,42 @@ def _industry_profile_lines(profiles: list[Any]) -> list[str]:
                     _md(profile.profile_status),
                     _md(", ".join(profile.mechanism_tags) or "-"),
                     f"{_md(profile.review_note)} |",
+                ]
+            )
+        )
+    lines.append("")
+    return lines
+
+
+def _pattern_matrix_lines(rows: list[Any]) -> list[str]:
+    summary = pattern_matrix_summary(rows)
+    lines = [
+        f"- Matrix rows: {_md(summary.get('rows'))}",
+        f"- Aligned rows: {_md(summary.get('aligned_rows'))}",
+        f"- Industry-ready but technical-gap rows: {_md(summary.get('industry_ready_technical_gap_rows'))}",
+        f"- Control review rows: {_md(summary.get('control_review_rows'))}",
+        "",
+    ]
+    if not rows:
+        return lines + ["No industry plus technical matrix rows are available yet.", ""]
+    lines.extend(
+        [
+            "| Symbol | Demand driver | Industry status | Stage 2 | Benchmark RS | Technical status | Matrix label | Review note |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- |",
+        ]
+    )
+    for row in rows:
+        lines.append(
+            " | ".join(
+                [
+                    f"| {_md(row.symbol)}",
+                    _md(row.demand_driver),
+                    _md(row.industry_status),
+                    _md(row.stage2_status),
+                    _md(row.benchmark_rs_status),
+                    _md(row.technical_status),
+                    _md(row.alignment_label),
+                    f"{_md(row.review_note)} |",
                 ]
             )
         )

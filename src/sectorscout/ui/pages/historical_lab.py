@@ -33,6 +33,7 @@ from sectorscout.hindsight_industry_profile import (
     build_hindsight_industry_profiles,
     industry_profiles_to_frame,
 )
+from sectorscout.hindsight_pattern_matrix import build_hindsight_pattern_matrix, pattern_matrix_to_frame
 from sectorscout.hindsight_playbook import generate_hindsight_pattern_playbook
 from sectorscout.hindsight_sec_metadata import build_hindsight_sec_filing_metadata
 from sectorscout.hindsight_source_audit import build_hindsight_source_audit_rows
@@ -194,6 +195,12 @@ def render(ctx: UIContext) -> None:
         )
         profiles = build_hindsight_industry_profiles(ctx.config)
         st.dataframe(industry_profiles_to_frame(profiles), use_container_width=True, hide_index=True)
+        st.markdown("#### Industry + Technical Matrix")
+        st.caption(
+            "This combines PIT industry evidence with required pre-event technical gates. Labels are review buckets, not validation results."
+        )
+        matrix = build_hindsight_pattern_matrix(ctx.config)
+        st.dataframe(pattern_matrix_to_frame(matrix), use_container_width=True, hide_index=True)
     _render_source_audit(ctx)
 
     st.subheader("Gate Explain Panel")
@@ -325,6 +332,9 @@ def _render_lab_refresh(ctx: UIContext) -> None:
             if result.industry_profiles:
                 st.markdown("#### Industry Evidence Profiles")
                 st.dataframe(pd.DataFrame(result.industry_profiles), use_container_width=True, hide_index=True)
+            if result.pattern_matrix:
+                st.markdown("#### Industry + Technical Matrix")
+                st.dataframe(pd.DataFrame(result.pattern_matrix), use_container_width=True, hide_index=True)
             if result.sec_filing_metadata:
                 st.markdown("#### SEC Filing Metadata")
                 st.dataframe(_display_sec_metadata_rows(result.sec_filing_metadata), use_container_width=True, hide_index=True)
