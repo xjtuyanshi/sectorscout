@@ -235,6 +235,34 @@ def inject_tradingview_styles() -> None:
           line-height: 1.35;
           margin-bottom: 12px;
         }
+        .ss-metric-grid {
+          display: grid;
+          grid-template-columns: repeat(4, minmax(0, 1fr));
+          gap: 10px;
+          margin: 10px 0 14px;
+        }
+        .ss-metric-card {
+          background: var(--ss-panel);
+          border: 1px solid var(--ss-border-soft);
+          border-radius: 8px;
+          min-height: 76px;
+          padding: 11px 12px;
+          min-width: 0;
+        }
+        .ss-metric-label {
+          color: var(--ss-muted);
+          font-size: .72rem;
+          font-weight: 650;
+          line-height: 1.25;
+          margin-bottom: 8px;
+        }
+        .ss-metric-value {
+          color: var(--ss-text);
+          font-size: 1.05rem;
+          font-weight: 740;
+          line-height: 1.2;
+          overflow-wrap: anywhere;
+        }
         .ss-hindsight-summary {
           display: grid;
           grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -377,11 +405,15 @@ def inject_tradingview_styles() -> None:
           .ss-topbar-meta { justify-content: flex-start; }
           .ss-focus-strip { align-items: flex-start; flex-direction: column; }
           .ss-focus-meta { justify-content: flex-start; }
+          .ss-metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
           .ss-hindsight-summary,
           .ss-research-card-grid,
           .ss-case-card-grid {
             grid-template-columns: 1fr;
           }
+        }
+        @media (max-width: 560px) {
+          .ss-metric-grid { grid-template-columns: 1fr; }
         }
         </style>
         """,

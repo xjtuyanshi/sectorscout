@@ -22,7 +22,12 @@ from sectorscout.hindsight import (
 )
 from sectorscout.hindsight_companyfacts import build_hindsight_companyfacts, companyfacts_summary
 from sectorscout.hindsight_industry_profile import build_hindsight_industry_profiles, industry_profile_summary
-from sectorscout.hindsight_pattern_matrix import build_hindsight_pattern_matrix, pattern_matrix_summary
+from sectorscout.hindsight_pattern_matrix import (
+    build_hindsight_pattern_diagnostics,
+    build_hindsight_pattern_matrix,
+    pattern_diagnostics_summary,
+    pattern_matrix_summary,
+)
 from sectorscout.hindsight_playbook import generate_hindsight_pattern_playbook
 from sectorscout.hindsight_sec_metadata import build_hindsight_sec_filing_metadata, sec_filing_metadata_summary
 from sectorscout.hindsight_source_audit import build_hindsight_source_audit, source_audit_summary
@@ -83,6 +88,8 @@ class HindsightRefreshResult:
     industry_profile_summary: dict[str, object]
     pattern_matrix: list[dict[str, object]]
     pattern_matrix_summary: dict[str, object]
+    pattern_diagnostics: list[dict[str, object]]
+    pattern_diagnostics_summary: dict[str, object]
 
     def to_dict(self) -> dict[str, object]:
         payload = asdict(self)
@@ -194,12 +201,22 @@ def run_hindsight_refresh(
 
     pattern_matrix = build_hindsight_pattern_matrix(config, path=path)
     pattern_matrix_summary_payload = pattern_matrix_summary(pattern_matrix)
+    pattern_diagnostics = build_hindsight_pattern_diagnostics(pattern_matrix)
+    pattern_diagnostics_summary_payload = pattern_diagnostics_summary(pattern_diagnostics)
     steps.append(
         HindsightRefreshStep(
             "pattern_matrix",
             "OK",
             "Built industry plus technical replay review matrix.",
             len(pattern_matrix),
+        )
+    )
+    steps.append(
+        HindsightRefreshStep(
+            "pattern_diagnostics",
+            "OK",
+            "Built review diagnostics from the industry plus technical matrix.",
+            len(pattern_diagnostics),
         )
     )
 
@@ -313,6 +330,8 @@ def run_hindsight_refresh(
         industry_profile_summary=industry_profile_summary_payload,
         pattern_matrix=[item.to_dict() for item in pattern_matrix],
         pattern_matrix_summary=pattern_matrix_summary_payload,
+        pattern_diagnostics=[item.to_dict() for item in pattern_diagnostics],
+        pattern_diagnostics_summary=pattern_diagnostics_summary_payload,
     )
 
 

@@ -44,7 +44,12 @@ from sectorscout.hindsight_industry_profile import (
     build_hindsight_industry_profiles,
     industry_profile_summary,
 )
-from sectorscout.hindsight_pattern_matrix import build_hindsight_pattern_matrix, pattern_matrix_summary
+from sectorscout.hindsight_pattern_matrix import (
+    build_hindsight_pattern_diagnostics,
+    build_hindsight_pattern_matrix,
+    pattern_diagnostics_summary,
+    pattern_matrix_summary,
+)
 from sectorscout.hindsight_sec_metadata import (
     build_hindsight_sec_filing_metadata,
     parse_sec_archive_url,
@@ -497,6 +502,41 @@ def test_daily_report_filters_external_views_by_asof_date(tmp_path: Path) -> Non
     summary = build_report_inclusion_summary(config, date(2026, 4, 27))
     assert summary["included"]["external_views"] == 1
     assert summary["excluded"]["future_external_views"] == 1
+
+
+def test_daily_report_uses_plain_language_overlap_and_review_text(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    with connect_database(config.database.path) as connection:
+        connection.execute(
+            """
+            INSERT INTO theme_members (
+                theme_id, symbol, valid_from, valid_to, confidence, source, evidence, created_at_utc
+            ) VALUES ('ai', 'MU', '2026-04-01', NULL, 0.8, 'fixture', 'AI memory member', current_timestamp)
+            """
+        )
+    insert_trade_view(
+        config,
+        raw_item_id=None,
+        draft=_draft(
+            symbols=["ASTS"],
+            direction="conditional",
+            asof_date="2026-04-27",
+            summary="Outside source mentioned ASTS as context.",
+            requires_review=False,
+            user_confirmed=True,
+        ),
+    )
+
+    report_path = generate_intel_daily_report(config, date(2026, 4, 27), output_dir=tmp_path / "reports")
+    report = report_path.read_text(encoding="utf-8")
+
+    assert "Only outside sources mention it" in report
+    assert "Only SectorScout is watching it" in report
+    assert "not in snapshot" in report
+    assert "reviewed/ready for overlay" in report
+    assert "internal=none" not in report
+    assert "external=conditional" not in report
+    assert "needs_review=True" not in report
 
 
 def test_demo_init_creates_nonblank_local_state(tmp_path: Path) -> None:
@@ -1155,6 +1195,18 @@ def test_ui_and_intel_modules_import() -> None:
     import sectorscout.ui.pages.historical_lab  # noqa: F401
 
 
+def test_dashboard_uses_wrapping_metric_cards_and_diagnostic_cards() -> None:
+    overview_source = Path("src/sectorscout/ui/pages/overview.py").read_text(encoding="utf-8")
+    workbench_source = Path("src/sectorscout/ui/workbench.py").read_text(encoding="utf-8")
+    lab_source = Path("src/sectorscout/ui/pages/historical_lab.py").read_text(encoding="utf-8")
+
+    assert "ss-metric-grid" in overview_source
+    assert "ss-metric-value" in workbench_source
+    assert "overflow-wrap: anywhere" in workbench_source
+    assert "Controls need comparable evidence" in lab_source
+    assert "Diagnostic detail table" in lab_source
+
+
 def test_hindsight_default_cases_include_requested_symbols() -> None:
     symbols = {case.symbol for case in default_hindsight_cases()}
     assert {"NVDA", "MU", "SNDK", "LITE"}.issubset(symbols)
@@ -1487,6 +1539,9 @@ def test_hindsight_pattern_playbook_exports_markdown(tmp_path: Path) -> None:
     assert "INDUSTRY_READY_TECHNICAL_DATA_GAP" in markdown
     assert "NVDA - Anchor leader" in markdown
     assert "SNDK" in markdown
+    assert "## Matrix Diagnostics" in markdown
+    assert "Future-context guardrail" in markdown
+    assert "Control coverage" in markdown
     assert "## Official Source Audit" in markdown
     assert "## SEC Filing Metadata" in markdown
     assert "1045810" in markdown
@@ -1510,6 +1565,35 @@ def test_hindsight_pattern_playbook_exports_markdown(tmp_path: Path) -> None:
     written = path.read_text(encoding="utf-8")
     assert "# SectorScout Hindsight Pattern Playbook" in written
     assert "H2 - Downstream revenue conversion" in written
+
+
+def test_hindsight_pattern_diagnostics_turn_matrix_into_review_cards(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    scan_hindsight_cases(config, path=tmp_path / "leader_cases.csv", persist=True)
+    build_hindsight_hypothesis_registry(config, path=tmp_path / "leader_cases.csv")
+
+    diagnostics = build_hindsight_pattern_diagnostics(build_hindsight_pattern_matrix(config))
+    by_id = {diagnostic.diagnostic_id: diagnostic for diagnostic in diagnostics}
+
+    assert set(by_id) == {
+        "D1_ALIGNED_LEADER_CLUSTER",
+        "D2_FUTURE_CONTEXT_GUARDRAIL",
+        "D3_CONTROL_COVERAGE",
+        "D4_INDUSTRY_READY_TECHNICAL_GAP",
+        "D5_TECHNICAL_ONLY_RISK",
+    }
+    assert by_id["D2_FUTURE_CONTEXT_GUARDRAIL"].status == "GUARDRAIL_REVIEW"
+    assert by_id["D2_FUTURE_CONTEXT_GUARDRAIL"].symbols == ["SNDK"]
+    assert by_id["D3_CONTROL_COVERAGE"].status == "CONTROL_DATA_GAP"
+    assert by_id["D3_CONTROL_COVERAGE"].symbols == ["AMD", "INTC", "MRVL"]
+    assert by_id["D4_INDUSTRY_READY_TECHNICAL_GAP"].status == "DATA_TASK"
+    assert by_id["D4_INDUSTRY_READY_TECHNICAL_GAP"].symbols == ["NVDA", "MU", "LITE"]
+    assert "not a failed pattern" in by_id["D3_CONTROL_COVERAGE"].guardrail
+
+    summary = pattern_diagnostics_summary(diagnostics)
+    assert summary["diagnostics"] == 5
+    assert summary["high_review_items"] == 1
+    assert summary["data_tasks"] == 2
 
 
 def test_hindsight_sec_metadata_parses_archive_urls_and_matches_submission_json(
@@ -1642,6 +1726,7 @@ def test_hindsight_refresh_runs_pipeline_without_network(tmp_path: Path) -> None
     assert steps["industry_profiles"]["rows"] == 7
     assert steps["public_price_history"]["status"] == "SKIPPED"
     assert steps["pattern_matrix"]["rows"] == 7
+    assert steps["pattern_diagnostics"]["rows"] == 5
     assert steps["source_audit"]["rows"] >= 5
     assert steps["sec_filing_metadata"]["rows"] == 4
     assert steps["sec_companyfacts"]["status"] == "SKIPPED"
@@ -1653,6 +1738,11 @@ def test_hindsight_refresh_runs_pipeline_without_network(tmp_path: Path) -> None
     assert payload["industry_profile_summary"]["pit_ready_profiles"] == 4
     assert payload["pattern_matrix_summary"]["rows"] == 7
     assert payload["pattern_matrix_summary"]["control_review_rows"] == 3
+    assert payload["pattern_diagnostics_summary"]["diagnostics"] == 5
+    assert any(
+        row["diagnostic_id"] == "D2_FUTURE_CONTEXT_GUARDRAIL" and row["symbols"] == ["SNDK"]
+        for row in payload["pattern_diagnostics"]
+    )
     assert any(
         row["symbol"] == "NVDA" and row["alignment_label"] == "INDUSTRY_READY_TECHNICAL_DATA_GAP"
         for row in payload["pattern_matrix"]

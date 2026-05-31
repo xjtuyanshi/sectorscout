@@ -480,6 +480,28 @@ def hindsight_pattern_matrix(
     typer.echo(json.dumps(payload, indent=2, sort_keys=True))
 
 
+@hindsight_app.command("pattern-diagnostics")
+def hindsight_pattern_diagnostics(
+    path: Path = typer.Option(DEFAULT_HINDSIGHT_CASES_PATH, "--path"),
+    config: Path = typer.Option(Path("config.yaml"), "--config"),
+) -> None:
+    """Build review diagnostics from the industry plus technical matrix."""
+    from sectorscout.hindsight_pattern_matrix import (
+        build_hindsight_pattern_diagnostics,
+        build_hindsight_pattern_matrix,
+        pattern_diagnostics_summary,
+    )
+
+    loaded = _load(config)
+    matrix = build_hindsight_pattern_matrix(loaded, path=path)
+    diagnostics = build_hindsight_pattern_diagnostics(matrix)
+    payload = {
+        "summary": pattern_diagnostics_summary(diagnostics),
+        "diagnostics": [item.to_dict() for item in diagnostics],
+    }
+    typer.echo(json.dumps(payload, indent=2, sort_keys=True))
+
+
 @hindsight_app.command("build-observation-links")
 def hindsight_build_observation_links(
     config: Path = typer.Option(Path("config.yaml"), "--config"),

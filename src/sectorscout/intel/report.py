@@ -279,11 +279,29 @@ def generate_intel_daily_report(
         "",
         "## Top Themes / Sectors",
     ]
-    lines.extend([f"- {row[0]} score={row[1]} breadth={row[2]} members={row[3]}" for row in top_themes] or ["- No theme rows available."])
+    lines.extend(
+        [
+            f"- {row[0]}: theme score {row[1]}, breadth {row[2]}, members {row[3]}."
+            for row in top_themes
+        ]
+        or ["- No theme rows available."]
+    )
     lines.extend(["", "## Top Stock Candidates"])
-    lines.extend([f"- {row[0]} theme={row[1]} score={row[2]} state={row[3]}" for row in top_stocks] or ["- No stock candidate rows available."])
+    lines.extend(
+        [
+            f"- {row[0]}: {row[1]} candidate, score {row[2]}, status {str(row[3]).replace('_', ' ')}."
+            for row in top_stocks
+        ]
+        or ["- No stock candidate rows available."]
+    )
     lines.extend(["", "## Setup Candidates"])
-    lines.extend([f"- {row[0]} theme={row[1]} setup={row[2]} category={row[3]}" for row in setup_rows] or ["- No setup candidate rows available."])
+    lines.extend(
+        [
+            f"- {row[0]}: {row[2]} setup candidate in {row[1]}; review bucket {str(row[3]).replace('_', ' ')}."
+            for row in setup_rows
+        ]
+        or ["- No setup candidate rows available."]
+    )
     lines.extend(
         [
             "",
@@ -295,7 +313,10 @@ def generate_intel_daily_report(
     )
     lines.extend(
         [
-            f"- {row[0]} direction={row[1]} timeframe={row[2]} needs_review={row[4]}: {str(row[3])[:180]}"
+            (
+                f"- {row[0]}: {str(row[1]).replace('_', ' ')} context on {row[2]}; "
+                f"{'needs review' if row[4] else 'reviewed/ready for overlay'}. {str(row[3])[:180]}"
+            )
             for row in external_views
         ]
         or ["- No external views available."]
@@ -309,7 +330,10 @@ def generate_intel_daily_report(
     )
     lines.extend(
         [
-            f"- {row[0]} timeframe={row[1]} provider={row[2]} clarity={row[3]} needs_review={row[4]}"
+            (
+                f"- {row[0]}: {row[1]} image observation from {row[2]}; "
+                f"clarity {row[3]}; {'needs review' if row[4] else 'reviewed'}."
+            )
             for row in image_observations
         ]
         or ["- No image observations available."]
@@ -351,7 +375,7 @@ def generate_intel_daily_report(
     )
     lines.extend(
         [
-            f"- {row[0]} {row[1]} source={row[2]}: {str(row[3])[:180]}"
+            f"- {row[0]} {row[1]} from {row[2]}: {str(row[3])[:180]}"
             for row in needs_review
         ]
         or ["- No open needs-review items."]

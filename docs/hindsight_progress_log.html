@@ -192,22 +192,169 @@
     <section class="grid grid-3">
       <div class="card">
         <div class="kicker">Current focus</div>
-        <div class="metric">Matrix</div>
-        <div class="note">把行业证据 profile 和技术 replay gates 合成二维 review matrix。</div>
+        <div class="metric">UI cards</div>
+        <div class="note">把二维矩阵和首页状态进一步聚合成可读的 review cards / metric cards。</div>
       </div>
       <div class="card">
         <div class="kicker">Coverage impact</div>
-        <div class="metric">7 x gates</div>
-        <div class="note">每个案例同时显示行业状态、price coverage、Stage 2、benchmark RS、matrix label。</div>
+        <div class="metric">5 diagnostics</div>
+        <div class="note">新增 aligned cluster、future context、control coverage、technical gap、technical-only risk 五类诊断，并清理报告机器标签。</div>
       </div>
       <div class="card">
         <div class="kicker">Boundary</div>
         <div class="metric">overlay</div>
-        <div class="note">矩阵 label 是 review bucket，不是验证结论，也不改变 live scoring。</div>
+        <div class="note">诊断卡只排序 review 工作，不是验证结论，也不改变 live scoring。</div>
       </div>
     </section>
 
     <section class="timeline">
+      <article class="entry">
+        <div class="entry-head">
+          <div>
+            <div class="kicker">Update 2026-05-31</div>
+            <div class="entry-title">Matrix Diagnostics Cards + Plain-Language UI Pass</div>
+          </div>
+          <div class="entry-meta">
+            Source basis: industry + technical matrix<br>
+            Verification: targeted tests and full regression passed
+          </div>
+        </div>
+
+        <div class="grid grid-2">
+          <div>
+            <h2>1. 这一版做了什么功能</h2>
+            <table>
+              <thead>
+                <tr><th>Card</th><th>Purpose</th><th>Status</th></tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Aligned leader cluster</td>
+                  <td>把多个 leader/downstream aligned rows 聚成一个 review cluster。</td>
+                  <td><span class="status green">new</span></td>
+                </tr>
+                <tr>
+                  <td>Future-context guardrail</td>
+                  <td>单独暴露 SNDK 这类后续证据有用但不能进入原始 replay 的情况。</td>
+                  <td><span class="status amber">guardrail</span></td>
+                </tr>
+                <tr>
+                  <td>Control coverage</td>
+                  <td>把 AMD/INTC/MRVL 控制组是否可比直接呈现出来。</td>
+                  <td><span class="status blue">control</span></td>
+                </tr>
+                <tr>
+                  <td>Technical gap / technical-only</td>
+                  <td>分别显示技术数据缺口和只有技术面、缺少行业证据的风险。</td>
+                  <td><span class="status purple">review</span></td>
+                </tr>
+                <tr>
+                  <td>Overview / report wording</td>
+                  <td>首页指标改成可换行 metric cards；daily report 不再输出 internal=none / needs_review=True 这类机器字段。</td>
+                  <td><span class="status green">readability</span></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div>
+            <h2>2. Performance 改进了多少</h2>
+            <table>
+              <thead>
+                <tr><th>Review workflow</th><th>Before</th><th>After</th></tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Readability</td>
+                  <td>看 7 行 matrix 自己总结</td>
+                  <td>5 张 diagnostics cards 直接给 review focus</td>
+                </tr>
+                <tr>
+                  <td>Guardrail visibility</td>
+                  <td>future context 是一行 label</td>
+                  <td>future-context card 单独提示不能泄漏进 replay</td>
+                </tr>
+                <tr>
+                  <td>Controls</td>
+                  <td>控制组散在矩阵里</td>
+                  <td>control coverage card 明确显示 controls 仍缺可比证据</td>
+                </tr>
+                <tr>
+                  <td>Next action</td>
+                  <td>需要人工判断下一步</td>
+                  <td>每张 card 都有 next action 和 guardrail</td>
+                </tr>
+              </tbody>
+            </table>
+            <p class="note" style="margin-top:10px;">这里的 Performance 是 review 效率和可解释性，不是收益或策略验证。</p>
+          </div>
+        </div>
+
+        <div class="grid grid-2" style="margin-top:14px;">
+          <div>
+            <h2>3. 逻辑上哪里改变了</h2>
+            <div class="diagram" aria-label="Matrix diagnostics workflow diagram">
+              <svg viewBox="0 0 820 230" role="img">
+                <defs>
+                  <marker id="arrow4" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+                    <path d="M0,0 L0,6 L9,3 z" fill="#5b6572"></path>
+                  </marker>
+                </defs>
+                <rect x="30" y="42" width="150" height="74" rx="8" fill="#ffffff" stroke="#d9dee7"></rect>
+                <text x="105" y="72" text-anchor="middle" font-weight="700" fill="#101418">Matrix rows</text>
+                <text x="105" y="94" text-anchor="middle" font-size="12" fill="#5b6572">7 case labels</text>
+                <line x1="180" y1="79" x2="270" y2="79" stroke="#5b6572" stroke-width="2" marker-end="url(#arrow4)"></line>
+
+                <rect x="270" y="42" width="150" height="74" rx="8" fill="#ffffff" stroke="#d9dee7"></rect>
+                <text x="345" y="72" text-anchor="middle" font-weight="700" fill="#101418">Diagnostics</text>
+                <text x="345" y="94" text-anchor="middle" font-size="12" fill="#5b6572">cluster + gaps</text>
+                <line x1="420" y1="79" x2="510" y2="79" stroke="#5b6572" stroke-width="2" marker-end="url(#arrow4)"></line>
+
+                <rect x="510" y="42" width="150" height="74" rx="8" fill="#ffffff" stroke="#d9dee7"></rect>
+                <text x="585" y="72" text-anchor="middle" font-weight="700" fill="#101418">Review cards</text>
+                <text x="585" y="94" text-anchor="middle" font-size="12" fill="#5b6572">next action</text>
+                <line x1="660" y1="79" x2="735" y2="79" stroke="#5b6572" stroke-width="2" marker-end="url(#arrow4)"></line>
+
+                <rect x="735" y="42" width="65" height="74" rx="8" fill="#eff6ff" stroke="#bfdbfe"></rect>
+                <text x="767" y="72" text-anchor="middle" font-weight="700" fill="#174ea6">Human</text>
+                <text x="767" y="94" text-anchor="middle" font-size="12" fill="#5b6572">review</text>
+
+                <rect x="270" y="150" width="390" height="52" rx="8" fill="#fff7ed" stroke="#fed7aa"></rect>
+                <text x="465" y="181" text-anchor="middle" fill="#9a3412" font-weight="700">Cards prioritize research work; they do not validate rules</text>
+                <line x1="585" y1="116" x2="585" y2="150" stroke="#b86e00" stroke-width="2" marker-end="url(#arrow4)"></line>
+              </svg>
+            </div>
+          </div>
+
+          <div>
+            <h2>4. Review checklist</h2>
+            <table>
+              <thead>
+                <tr><th>Question</th><th>Current answer</th></tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>有没有开始找“规律”？</td>
+                  <td>有，但只到 review-cluster 层，还不是统计验证。</td>
+                </tr>
+                <tr>
+                  <td>下一步重点？</td>
+                  <td>扩展 case set，并补齐 controls 的 PIT 行业证据。</td>
+                </tr>
+                <tr>
+                  <td>有没有防止未来泄漏？</td>
+                  <td>future-context guardrail card 单独暴露。</td>
+                </tr>
+                <tr>
+                  <td>是不是会影响 live scores？</td>
+                  <td>不会，仍是 hindsight review overlay。</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </article>
+
       <article class="entry">
         <div class="entry-head">
           <div>

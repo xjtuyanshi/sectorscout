@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from html import escape
+
 import pandas as pd
 import streamlit as st
 
@@ -16,9 +18,15 @@ from sectorscout.ui.workbench import (
 
 
 def _metric_grid(items: list[tuple[str, object]]) -> None:
-    columns = st.columns(4)
-    for index, (label, value) in enumerate(items):
-        columns[index % 4].metric(label, value)
+    cells = []
+    for label, value in items:
+        cells.append(
+            "<div class=\"ss-metric-card\">"
+            f"<div class=\"ss-metric-label\">{escape(str(label))}</div>"
+            f"<div class=\"ss-metric-value\">{escape(str(value))}</div>"
+            "</div>"
+        )
+    st.markdown(f"<div class='ss-metric-grid'>{''.join(cells)}</div>", unsafe_allow_html=True)
 
 
 def _visible_columns(frame: pd.DataFrame, preferred: list[str]) -> list[str]:

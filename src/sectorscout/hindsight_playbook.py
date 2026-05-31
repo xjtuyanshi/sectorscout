@@ -15,7 +15,12 @@ from sectorscout.hindsight import (
 )
 from sectorscout.hindsight_companyfacts import build_hindsight_companyfacts, companyfacts_summary
 from sectorscout.hindsight_industry_profile import build_hindsight_industry_profiles, industry_profile_summary
-from sectorscout.hindsight_pattern_matrix import build_hindsight_pattern_matrix, pattern_matrix_summary
+from sectorscout.hindsight_pattern_matrix import (
+    build_hindsight_pattern_diagnostics,
+    build_hindsight_pattern_matrix,
+    pattern_diagnostics_summary,
+    pattern_matrix_summary,
+)
 from sectorscout.hindsight_sec_metadata import build_hindsight_sec_filing_metadata
 from sectorscout.hindsight_source_audit import build_hindsight_source_audit
 from sectorscout.hindsight_source_snapshot import DEFAULT_SOURCE_SNAPSHOT_DIR
@@ -69,6 +74,7 @@ def build_hindsight_pattern_playbook_markdown(
     source_audit = build_hindsight_source_audit(config)
     industry_profiles = build_hindsight_industry_profiles(config)
     pattern_matrix = build_hindsight_pattern_matrix(config)
+    pattern_diagnostics = build_hindsight_pattern_diagnostics(pattern_matrix)
     sec_metadata = build_hindsight_sec_filing_metadata(config)
     companyfacts, companyfacts_status = build_hindsight_companyfacts(config)
     summary_cards = build_hindsight_readout_summary_cards(pattern_rows, case_rows)
@@ -130,6 +136,8 @@ def build_hindsight_pattern_playbook_markdown(
         lines.extend(_industry_profile_lines(industry_profiles))
         lines.extend(["## Industry + Technical Matrix", ""])
         lines.extend(_pattern_matrix_lines(pattern_matrix))
+        lines.extend(["## Matrix Diagnostics", ""])
+        lines.extend(_pattern_diagnostic_lines(pattern_diagnostics))
         lines.extend(["## Official Source Audit", ""])
         lines.extend(_source_audit_lines(source_audit))
         lines.extend(["## SEC Filing Metadata", ""])
@@ -282,6 +290,39 @@ def _pattern_matrix_lines(rows: list[Any]) -> list[str]:
                     _md(row.technical_status),
                     _md(row.alignment_label),
                     f"{_md(row.review_note)} |",
+                ]
+            )
+        )
+    lines.append("")
+    return lines
+
+
+def _pattern_diagnostic_lines(items: list[Any]) -> list[str]:
+    summary = pattern_diagnostics_summary(items)
+    lines = [
+        f"- Diagnostics: {_md(summary.get('diagnostics'))}",
+        f"- High-review items: {_md(summary.get('high_review_items'))}",
+        f"- Data tasks: {_md(summary.get('data_tasks'))}",
+        "",
+    ]
+    if not items:
+        return lines + ["No matrix diagnostics are available yet.", ""]
+    lines.extend(
+        [
+            "| Diagnostic | Status | Symbols | Interpretation | Next action | Guardrail |",
+            "| --- | --- | --- | --- | --- | --- |",
+        ]
+    )
+    for item in items:
+        lines.append(
+            " | ".join(
+                [
+                    f"| {_md(item.title)}",
+                    _md(item.status),
+                    _md(", ".join(item.symbols) or "-"),
+                    _md(item.interpretation),
+                    _md(item.next_action),
+                    f"{_md(item.guardrail)} |",
                 ]
             )
         )

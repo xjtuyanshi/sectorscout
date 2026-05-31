@@ -224,6 +224,7 @@ or a computed replay gate link.
 .venv/bin/sectorscout hindsight seed-evidence
 .venv/bin/sectorscout hindsight industry-profiles
 .venv/bin/sectorscout hindsight pattern-matrix
+.venv/bin/sectorscout hindsight pattern-diagnostics
 .venv/bin/sectorscout hindsight fetch-prices
 .venv/bin/sectorscout hindsight scan
 .venv/bin/sectorscout hindsight build-gates
@@ -284,6 +285,11 @@ After `scan`, review:
 - `hindsight pattern-matrix` for the industry plus technical review matrix that
   combines industry profile status with pre-event price coverage, Stage 2 trend,
   and fixed-benchmark relative strength gates;
+- `hindsight pattern-diagnostics` for a plain-English review card layer over
+  the matrix, including aligned cluster, future-context guardrail, control
+  coverage, technical gap, and technical-only risk diagnostics;
+- the Historical Lab `Matrix Diagnostics` cards for the default human-readable
+  view; the raw diagnostic table stays behind a detail expander;
 - `hindsight_replay_gates` for PASS / FAIL / DATA_GAP / PENDING explain rows;
 - `hindsight_observation_links` for the explicit connection from each pattern
   observation to official evidence, computed gates, or a review-required blocker;

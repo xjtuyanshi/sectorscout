@@ -33,7 +33,12 @@ from sectorscout.hindsight_industry_profile import (
     build_hindsight_industry_profiles,
     industry_profiles_to_frame,
 )
-from sectorscout.hindsight_pattern_matrix import build_hindsight_pattern_matrix, pattern_matrix_to_frame
+from sectorscout.hindsight_pattern_matrix import (
+    build_hindsight_pattern_diagnostics,
+    build_hindsight_pattern_matrix,
+    pattern_diagnostics_to_frame,
+    pattern_matrix_to_frame,
+)
 from sectorscout.hindsight_playbook import generate_hindsight_pattern_playbook
 from sectorscout.hindsight_sec_metadata import build_hindsight_sec_filing_metadata
 from sectorscout.hindsight_source_audit import build_hindsight_source_audit_rows
@@ -201,6 +206,14 @@ def render(ctx: UIContext) -> None:
         )
         matrix = build_hindsight_pattern_matrix(ctx.config)
         st.dataframe(pattern_matrix_to_frame(matrix), use_container_width=True, hide_index=True)
+        st.markdown("#### Matrix Diagnostics")
+        st.caption(
+            "Diagnostics summarize review priorities from the matrix. They are not proof that a rule works."
+        )
+        diagnostics = build_hindsight_pattern_diagnostics(matrix)
+        _render_matrix_diagnostic_cards(diagnostics)
+        with st.expander("Diagnostic detail table", expanded=False):
+            st.dataframe(pattern_diagnostics_to_frame(diagnostics), use_container_width=True, hide_index=True)
     _render_source_audit(ctx)
 
     st.subheader("Gate Explain Panel")
@@ -335,6 +348,11 @@ def _render_lab_refresh(ctx: UIContext) -> None:
             if result.pattern_matrix:
                 st.markdown("#### Industry + Technical Matrix")
                 st.dataframe(pd.DataFrame(result.pattern_matrix), use_container_width=True, hide_index=True)
+            if result.pattern_diagnostics:
+                st.markdown("#### Matrix Diagnostics")
+                _render_matrix_diagnostic_cards(result.pattern_diagnostics)
+                with st.expander("Diagnostic detail table", expanded=False):
+                    st.dataframe(pd.DataFrame(result.pattern_diagnostics), use_container_width=True, hide_index=True)
             if result.sec_filing_metadata:
                 st.markdown("#### SEC Filing Metadata")
                 st.dataframe(_display_sec_metadata_rows(result.sec_filing_metadata), use_container_width=True, hide_index=True)
@@ -560,6 +578,63 @@ def _table_meaning(table: str) -> str:
         "hindsight_hypotheses": "Candidate replay mechanisms, not confirmed patterns.",
         "hindsight_hypothesis_case_results": "Per-case hypothesis support, blocker, and data-gap matrix.",
     }.get(table, "Supporting dataset.")
+
+
+def _render_matrix_diagnostic_cards(items: list[object]) -> None:
+    if not items:
+        st.info("No matrix diagnostics available yet.")
+        return
+    cards: list[str] = []
+    for item in items:
+        row = item.to_dict() if hasattr(item, "to_dict") else dict(item)
+        status = str(row.get("status") or "")
+        symbols = row.get("symbols") or []
+        if isinstance(symbols, str):
+            symbol_text = symbols
+        else:
+            symbol_text = ", ".join(str(symbol) for symbol in symbols) or "-"
+        cards.append(
+            f"""
+            <div class="ss-research-card ss-tone-{_diagnostic_tone(status)}">
+              <div class="ss-card-kicker">{escape(_friendly_diagnostic_type(row.get("diagnostic_type")))}</div>
+              <div class="ss-card-title">{escape(str(row.get("title") or "Diagnostic"))}</div>
+              <div class="ss-card-value">{escape(_friendly_diagnostic_status(status))}</div>
+              <div class="ss-card-body">{escape(str(row.get("interpretation") or ""))}</div>
+              <div class="ss-card-line"><span>Symbols</span><span>{escape(symbol_text)}</span></div>
+              <div class="ss-card-line"><span>Next</span><span>{escape(str(row.get("next_action") or ""))}</span></div>
+              <div class="ss-card-line"><span>Guardrail</span><span>{escape(str(row.get("guardrail") or ""))}</span></div>
+            </div>
+            """
+        )
+    st.markdown(f"<div class='ss-research-card-grid'>{''.join(cards)}</div>", unsafe_allow_html=True)
+
+
+def _friendly_diagnostic_type(value: object) -> str:
+    return str(value or "review").replace("_", " ").title()
+
+
+def _friendly_diagnostic_status(status: str) -> str:
+    return {
+        "REVIEW_CLUSTER": "Candidate cluster to review",
+        "GUARDRAIL_REVIEW": "Separate later evidence",
+        "CONTROL_DATA_GAP": "Controls need comparable evidence",
+        "DATA_TASK": "Load missing technical data",
+        "NO_CURRENT_GAP": "No current data task",
+        "NO_TECHNICAL_ONLY_ROWS": "No technical-only rows",
+        "CONTROL_COVERAGE_READY": "Controls ready for comparison",
+        "NEEDS_MORE_CASES": "Needs more cases",
+        "TECHNICAL_ONLY_REVIEW": "Technical-only review",
+    }.get(status, status.replace("_", " ").title())
+
+
+def _diagnostic_tone(status: str) -> str:
+    if status in {"REVIEW_CLUSTER", "CONTROL_COVERAGE_READY"}:
+        return "green"
+    if status in {"GUARDRAIL_REVIEW", "TECHNICAL_ONLY_REVIEW"}:
+        return "purple"
+    if status in {"CONTROL_DATA_GAP", "DATA_TASK", "NEEDS_MORE_CASES"}:
+        return "amber"
+    return "blue"
 
 
 def _display_result(row: dict) -> dict:
