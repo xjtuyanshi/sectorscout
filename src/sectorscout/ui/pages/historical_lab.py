@@ -6,6 +6,7 @@ import pandas as pd
 import streamlit as st
 
 from sectorscout.hindsight import (
+    fetch_hindsight_prices,
     historical_pattern_summary,
     load_hindsight_cases,
     latest_hindsight_results,
@@ -86,11 +87,15 @@ def render(ctx: UIContext) -> None:
     if action_cols[0].button("Seed cases", use_container_width=True):
         count = seed_hindsight_cases(ctx.config)
         st.success(f"Seeded {count} hindsight cases.")
-    if action_cols[1].button("Run scan", use_container_width=True):
+    if action_cols[1].button("Fetch public prices", use_container_width=True):
+        fetched = fetch_hindsight_prices(ctx.config)
+        st.success(f"Fetched public price history for {len(fetched)} cases.")
+        st.dataframe(fetched, use_container_width=True, hide_index=True)
+    if action_cols[2].button("Run scan", use_container_width=True):
         results = scan_hindsight_cases(ctx.config)
         st.success(f"Scanned {len(results)} hindsight cases.")
         st.dataframe([_display_result(result.to_dict()) for result in results], use_container_width=True, hide_index=True)
-    action_cols[2].caption("Case-study diagnostics only. This does not validate a strategy or change SectorScout scores.")
+    st.caption("Case-study diagnostics only. This does not validate a strategy or change SectorScout scores.")
 
     st.subheader("Latest scan results")
     latest = latest_hindsight_results(ctx.config)
@@ -152,10 +157,10 @@ def _display_result(row: dict) -> dict:
         "Case": row.get("label"),
         "Window": f"{row.get('scan_start')} to {row.get('scan_end')}",
         "Price rows": row.get("price_rows"),
-        "Max gain %": _round_or_none(row.get("max_gain_pct")),
-        "Max drawdown %": _round_or_none(row.get("max_drawdown_pct")),
+        "Largest advance in case window %": _round_or_none(row.get("max_gain_pct")),
+        "Largest pullback in case window %": _round_or_none(row.get("max_drawdown_pct")),
         "RS near start": _round_or_none(row.get("rs_percentile_start")),
-        "Hindsight score": _round_or_none(row.get("hindsight_score")),
+        "Pattern flags score": _round_or_none(row.get("hindsight_score")),
         "Data quality": row.get("data_quality"),
         "Notes": row.get("notes"),
     }

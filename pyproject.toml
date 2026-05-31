@@ -10,12 +10,14 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
   "duckdb>=1.1",
-  "exchange-calendars>=4.5",
-  "pandas>=2.2",
+  "exchange-calendars>=4.5,<4.6",
+  "numpy>=1.26,<2",
+  "pandas>=2.2,<3",
   "pydantic>=2.7",
+  "protobuf>=4.25,<5",
   "pytz>=2024.1",
   "pyyaml>=6.0",
-  "streamlit>=1.35",
+  "streamlit>=1.35,<1.36",
   "typer>=0.12",
 ]
 

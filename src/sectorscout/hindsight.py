@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import csv
 import json
+import os
 import uuid
 from dataclasses import asdict, dataclass
-from datetime import date, datetime, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
 
 import pandas as pd
 
@@ -222,6 +225,113 @@ def seed_hindsight_cases(config: SectorScoutConfig, path: Path = DEFAULT_HINDSIG
     return len(cases)
 
 
+def fetch_hindsight_prices(
+    config: SectorScoutConfig,
+    *,
+    path: Path = DEFAULT_HINDSIGHT_CASES_PATH,
+    provider: str = "yahoo_chart_public",
+    timeout: int = 20,
+) -> list[dict[str, Any]]:
+    cases = load_hindsight_cases(path)
+    summaries: list[dict[str, Any]] = []
+    for case in cases:
+        if provider == "stooq_public":
+            rows = fetch_stooq_daily_rows(case.symbol, case.start_date, case.end_date, timeout=timeout)
+        elif provider == "yahoo_chart_public":
+            rows = fetch_yahoo_chart_daily_rows(case.symbol, case.start_date, case.end_date, timeout=timeout)
+        else:
+            raise ValueError(f"Unsupported hindsight price provider: {provider}")
+        inserted = _insert_price_rows(config, case.symbol, rows, provider=provider)
+        summaries.append(
+            {
+                "symbol": case.symbol,
+                "label": case.label,
+                "start_date": case.start_date.isoformat(),
+                "end_date": case.end_date.isoformat(),
+                "provider": provider,
+                "rows_fetched": len(rows),
+                "rows_inserted": inserted,
+                "data_quality_note": (
+                    "Public daily price rows loaded; corporate-action adjustment status is provider-dependent."
+                    if inserted
+                    else "No public daily price rows returned for this case window."
+                ),
+            }
+        )
+    return summaries
+
+
+def fetch_stooq_daily_rows(symbol: str, start: date, end: date, *, timeout: int = 20) -> list[dict[str, Any]]:
+    params = {
+        "s": f"{symbol.lower()}.us",
+        "d1": start.strftime("%Y%m%d"),
+        "d2": end.strftime("%Y%m%d"),
+        "i": "d",
+    }
+    if api_key := os.environ.get("STOOQ_API_KEY"):
+        params["apikey"] = api_key
+    query = urlencode(params)
+    url = f"https://stooq.com/q/d/l/?{query}"
+    with urlopen(url, timeout=timeout) as response:  # nosec B310 - public CSV endpoint, no credentials.
+        text = response.read().decode("utf-8")
+    lines = [line for line in text.splitlines() if line.strip()]
+    if len(lines) < 2 or lines[0].lower().startswith("no data"):
+        return []
+    parsed: list[dict[str, Any]] = []
+    for row in csv.DictReader(lines):
+        if not row.get("Date"):
+            continue
+        parsed.append(
+            {
+                "price_date": date.fromisoformat(row["Date"]),
+                "open": float(row["Open"]),
+                "high": float(row["High"]),
+                "low": float(row["Low"]),
+                "close": float(row["Close"]),
+                "volume": int(float(row["Volume"])),
+            }
+        )
+    return parsed
+
+
+def fetch_yahoo_chart_daily_rows(symbol: str, start: date, end: date, *, timeout: int = 20) -> list[dict[str, Any]]:
+    period1 = int(datetime.combine(start, time.min, tzinfo=timezone.utc).timestamp())
+    period2 = int(datetime.combine(end + timedelta(days=1), time.min, tzinfo=timezone.utc).timestamp())
+    query = urlencode({"period1": period1, "period2": period2, "interval": "1d", "events": "history"})
+    url = f"https://query2.finance.yahoo.com/v8/finance/chart/{symbol.upper()}?{query}"
+    request = Request(url, headers={"User-Agent": "Mozilla/5.0 SectorScout/0.1"})
+    with urlopen(request, timeout=timeout) as response:  # nosec B310 - public chart JSON endpoint, no credentials.
+        payload = json.loads(response.read().decode("utf-8"))
+    result = (payload.get("chart", {}).get("result") or [None])[0]
+    if not result:
+        return []
+    timestamps = result.get("timestamp") or []
+    quote = (result.get("indicators", {}).get("quote") or [{}])[0]
+    parsed: list[dict[str, Any]] = []
+    for index, timestamp in enumerate(timestamps):
+        try:
+            open_price = quote.get("open", [])[index]
+            high = quote.get("high", [])[index]
+            low = quote.get("low", [])[index]
+            close = quote.get("close", [])[index]
+            volume = quote.get("volume", [])[index]
+        except IndexError:
+            continue
+        if any(value is None for value in [open_price, high, low, close, volume]):
+            continue
+        parsed.append(
+            {
+                "price_date": datetime.fromtimestamp(int(timestamp), tz=timezone.utc).date(),
+                "open": float(open_price),
+                "high": float(high),
+                "low": float(low),
+                "close": float(close),
+                "volume": int(volume),
+            }
+        )
+    return parsed
+
+
 def scan_hindsight_cases(
     config: SectorScoutConfig,
     *,
@@ -235,6 +345,48 @@ def scan_hindsight_cases(
     if persist:
         _persist_results(config, results)
     return results
+
+
+def _insert_price_rows(
+    config: SectorScoutConfig,
+    symbol: str,
+    rows: list[dict[str, Any]],
+    *,
+    provider: str,
+) -> int:
+    if not rows:
+        return 0
+    now = datetime.now(timezone.utc)
+    with connect_database(config.database.path) as connection:
+        for row in rows:
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO daily_prices (
+                    symbol, price_date, open, high, low, close, volume,
+                    adj_open, adj_high, adj_low, adj_close, adj_volume,
+                    provider, is_adjusted, adjustment_warning, ingested_at_utc
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    symbol.upper(),
+                    row["price_date"],
+                    row["open"],
+                    row["high"],
+                    row["low"],
+                    row["close"],
+                    row["volume"],
+                    row["open"],
+                    row["high"],
+                    row["low"],
+                    row["close"],
+                    row["volume"],
+                    provider,
+                    False,
+                    True,
+                    now,
+                ],
+            )
+    return len(rows)
 
 
 def latest_hindsight_results(config: SectorScoutConfig, *, limit: int = 100) -> pd.DataFrame:

@@ -1,6 +1,8 @@
-# Hindsight Pattern Discovery
+# Historical Pattern Discovery
 
 This lab is for turning historical leaders into testable pattern hypotheses. It is not a daily action engine and it does not modify SectorScout scores.
+
+The goal is not to prove rules by looking backward. The goal is to study prior leaders with explicit missing-data flags, then separate industry conditions from technical conditions before any future validation work.
 
 ## Case Seed
 
@@ -28,6 +30,17 @@ Technical:
 - Breakout / new-high proxy
 - Volume expansion proxy
 - Setup quality improving after theme confirmation
+
+## Current Commands
+
+```bash
+.venv/bin/sectorscout hindsight write-default-cases
+.venv/bin/sectorscout hindsight seed
+.venv/bin/sectorscout hindsight fetch-prices
+.venv/bin/sectorscout hindsight scan
+```
+
+`fetch-prices` defaults to the public Yahoo chart JSON endpoint for case-study diagnostics. Stooq remains available with `--provider stooq_public` when `STOOQ_API_KEY` is configured. Corporate-action adjustment status is marked with a warning in stored price rows, so split-sensitive cases still need provider-quality review before any formal validation.
 
 ## Safety Rules
 

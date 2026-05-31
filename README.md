@@ -112,7 +112,7 @@ Current limitations:
 
 ```bash
 uv venv --python 3.12
-uv pip install '.[dev]'
+uv sync --extra dev --no-editable
 .venv/bin/python -m pytest
 ```
 

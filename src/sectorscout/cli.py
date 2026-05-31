@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from datetime import date
@@ -10,46 +11,11 @@ import typer
 
 from sectorscout import __version__
 from sectorscout.config import config_hash, load_config
-from sectorscout.data_quality import (
-    compute_data_quality,
-    compute_historical_data_quality,
-    persist_data_quality,
-)
-from sectorscout.db import initialize_database, persist_run_metadata
-from sectorscout.demo import DEMO_ASOF_DATE, demo_readiness, run_demo_init
-from sectorscout.execution import generate_execution_decisions
-from sectorscout.hindsight import (
-    DEFAULT_HINDSIGHT_CASES_PATH,
-    scan_hindsight_cases,
-    seed_hindsight_cases,
-    write_default_hindsight_cases,
-)
-from sectorscout.ingest import (
-    ingest_corporate_actions_csv,
-    ingest_fundamental_facts_csv,
-    ingest_prices_csv,
-    ingest_theme_members_csv,
-    ingest_themes_csv,
-    ingest_universe_csv,
-)
-from sectorscout.indicators import compute_technical_indicators
-from sectorscout.intel.capture_inbox import capture_image_file, capture_markdown_file, capture_text
-from sectorscout.intel.chandler_seed import seed_chandler_fixture
-from sectorscout.intel.public_sources import DEFAULT_PUBLIC_SOURCES_PATH, collect_public_sources, load_public_sources
-from sectorscout.intel.public_web import collect_public_url
-from sectorscout.intel.report import generate_intel_daily_report
-from sectorscout.intel.storage import ensure_intel_tables
-from sectorscout.intel.x_collector import DEFAULT_X_SOURCES_PATH, collect_x_recent_search, load_x_sources, x_api_status
-from sectorscout.ledger import generate_trade_ledger_qa
-from sectorscout.lifecycle import generate_position_lifecycle
-from sectorscout.market_regime import compute_market_regime
-from sectorscout.market_calendar import asof_market_close, to_market_time
-from sectorscout.metadata import build_run_metadata
-from sectorscout.pit import available_fundamental_facts, theme_members_asof, universe_asof
-from sectorscout.prices import create_frozen_price_snapshot
-from sectorscout.reports import generate_daily_report
-from sectorscout.scoring import run_scoring
-from sectorscout.setups import detect_setups
+
+DEFAULT_DEMO_ASOF_DATE = date(2024, 11, 29)
+DEFAULT_HINDSIGHT_CASES_PATH = Path("data/hindsight/leader_cases.csv")
+DEFAULT_PUBLIC_SOURCES_PATH = Path("data/intel/public_sources.yaml")
+DEFAULT_X_SOURCES_PATH = Path("data/intel/x_sources.yaml")
 
 app = typer.Typer(help="SectorScout research system CLI.")
 intel_capture_app = typer.Typer(help="Human-in-the-loop external intel capture.")
@@ -86,6 +52,8 @@ def _demo_init_command(
     launch_ui: bool,
     port: int,
 ) -> None:
+    from sectorscout.demo import run_demo_init
+
     loaded = _load(config)
     parsed_date = _parse_iso_date(date_)
     assert parsed_date is not None
@@ -118,6 +86,8 @@ def market_close(
     config: Path = typer.Option(Path("config.yaml"), "--config"),
 ) -> None:
     """Print the NYSE session close in UTC and market-local time."""
+    from sectorscout.market_calendar import asof_market_close, to_market_time
+
     loaded = _load(config)
     parsed_date = _parse_iso_date(session_date)
     assert parsed_date is not None
@@ -141,6 +111,8 @@ def market_close(
 @app.command("init-db")
 def init_db(config: Path = typer.Option(Path("config.yaml"), "--config")) -> None:
     """Initialize the Phase 0 DuckDB schema."""
+    from sectorscout.db import initialize_database
+
     loaded = _load(config)
     db_path = initialize_database(loaded)
     typer.echo(f"Initialized DuckDB schema at {db_path}")
@@ -148,7 +120,7 @@ def init_db(config: Path = typer.Option(Path("config.yaml"), "--config")) -> Non
 
 @app.command("demo-init")
 def demo_init(
-    date_: str = typer.Option(DEMO_ASOF_DATE.isoformat(), "--date"),
+    date_: str = typer.Option(DEFAULT_DEMO_ASOF_DATE.isoformat(), "--date"),
     reset: bool = typer.Option(False, "--reset/--no-reset"),
     force_reset: bool = typer.Option(False, "--force-reset/--no-force-reset"),
     launch_ui: bool = typer.Option(False, "--launch-ui/--no-launch-ui"),
@@ -161,7 +133,7 @@ def demo_init(
 
 @app.command("quickstart")
 def quickstart(
-    date_: str = typer.Option(DEMO_ASOF_DATE.isoformat(), "--date"),
+    date_: str = typer.Option(DEFAULT_DEMO_ASOF_DATE.isoformat(), "--date"),
     reset: bool = typer.Option(False, "--reset/--no-reset"),
     force_reset: bool = typer.Option(False, "--force-reset/--no-force-reset"),
     launch_ui: bool = typer.Option(False, "--launch-ui/--no-launch-ui"),
@@ -174,10 +146,12 @@ def quickstart(
 
 @app.command("demo-status")
 def demo_status(
-    date_: str = typer.Option(DEMO_ASOF_DATE.isoformat(), "--date"),
+    date_: str = typer.Option(DEFAULT_DEMO_ASOF_DATE.isoformat(), "--date"),
     config: Path = typer.Option(Path("config.yaml"), "--config"),
 ) -> None:
     """Show whether the local demo/dashboard is ready."""
+    from sectorscout.demo import demo_readiness
+
     loaded = _load(config)
     parsed_date = _parse_iso_date(date_)
     assert parsed_date is not None
@@ -192,6 +166,9 @@ def metadata(
     config: Path = typer.Option(Path("config.yaml"), "--config"),
 ) -> None:
     """Generate Phase 0 reproducibility metadata."""
+    from sectorscout.db import persist_run_metadata
+    from sectorscout.metadata import build_run_metadata
+
     loaded = _load(config)
     payload = build_run_metadata(loaded, command=command, asof_date=_parse_iso_date(asof))
     if persist:
@@ -215,6 +192,8 @@ def refresh_universe(
     provider: str = typer.Option("fixture", "--provider"),
     config: Path = typer.Option(Path("config.yaml"), "--config"),
 ) -> None:
+    from sectorscout.ingest import ingest_universe_csv
+
     loaded = _load(config)
     if from_csv is None:
         _phase0_not_implemented("live refresh-universe")
@@ -229,6 +208,8 @@ def ingest_prices(
     provider: str = typer.Option("fixture", "--provider"),
     config: Path = typer.Option(Path("config.yaml"), "--config"),
 ) -> None:
+    from sectorscout.ingest import ingest_prices_csv
+
     loaded = _load(config)
     if from_csv is None:
         _phase0_not_implemented("live ingest-prices")
@@ -243,6 +224,8 @@ def ingest_corporate_actions(
     source: str = typer.Option("fixture", "--source"),
     config: Path = typer.Option(Path("config.yaml"), "--config"),
 ) -> None:
+    from sectorscout.ingest import ingest_corporate_actions_csv
+
     loaded = _load(config)
     if from_csv is None:
         _phase0_not_implemented("live ingest-corporate-actions")
@@ -257,6 +240,8 @@ def ingest_fundamentals(
     source: str = typer.Option("fixture", "--source"),
     config: Path = typer.Option(Path("config.yaml"), "--config"),
 ) -> None:
+    from sectorscout.ingest import ingest_fundamental_facts_csv
+
     loaded = _load(config)
     if from_csv is None:
         _phase0_not_implemented("live ingest-fundamentals")
@@ -271,6 +256,8 @@ def ingest_themes(
     source: str = typer.Option("fixture", "--source"),
     config: Path = typer.Option(Path("config.yaml"), "--config"),
 ) -> None:
+    from sectorscout.ingest import ingest_themes_csv
+
     loaded = _load(config)
     if from_csv is None:
         _phase0_not_implemented("live ingest-themes")
@@ -285,6 +272,8 @@ def ingest_theme_members(
     source: str = typer.Option("fixture", "--source"),
     config: Path = typer.Option(Path("config.yaml"), "--config"),
 ) -> None:
+    from sectorscout.ingest import ingest_theme_members_csv
+
     loaded = _load(config)
     if from_csv is None:
         _phase0_not_implemented("live ingest-theme-members")
@@ -298,6 +287,8 @@ def compute_indicators_command(
     asof: str = typer.Option(..., "--asof"),
     config: Path = typer.Option(Path("config.yaml"), "--config"),
 ) -> None:
+    from sectorscout.indicators import compute_technical_indicators
+
     loaded = _load(config)
     parsed_asof = _parse_iso_date(asof)
     assert parsed_asof is not None
@@ -320,6 +311,8 @@ def market_regime_command(
     asof: str = typer.Option(..., "--asof"),
     config: Path = typer.Option(Path("config.yaml"), "--config"),
 ) -> None:
+    from sectorscout.market_regime import compute_market_regime
+
     loaded = _load(config)
     parsed_asof = _parse_iso_date(asof)
     assert parsed_asof is not None
@@ -332,6 +325,8 @@ def score(
     asof: str = typer.Option(..., "--asof"),
     config: Path = typer.Option(Path("config.yaml"), "--config"),
 ) -> None:
+    from sectorscout.scoring import run_scoring
+
     loaded = _load(config)
     parsed_asof = _parse_iso_date(asof)
     assert parsed_asof is not None
@@ -344,6 +339,8 @@ def detect_setups_command(
     asof: str = typer.Option(..., "--asof"),
     config: Path = typer.Option(Path("config.yaml"), "--config"),
 ) -> None:
+    from sectorscout.setups import detect_setups
+
     loaded = _load(config)
     parsed_asof = _parse_iso_date(asof)
     assert parsed_asof is not None
@@ -356,6 +353,8 @@ def report(
     date_: str = typer.Option(..., "--date"),
     config: Path = typer.Option(Path("config.yaml"), "--config"),
 ) -> None:
+    from sectorscout.reports import generate_daily_report
+
     loaded = _load(config)
     parsed_date = _parse_iso_date(date_)
     assert parsed_date is not None
@@ -372,6 +371,8 @@ def hindsight_write_default_cases(
     path: Path = typer.Option(DEFAULT_HINDSIGHT_CASES_PATH, "--path"),
 ) -> None:
     """Write the default hindsight leader case-study seed file."""
+    from sectorscout.hindsight import write_default_hindsight_cases
+
     typer.echo(str(write_default_hindsight_cases(path)))
 
 
@@ -381,6 +382,8 @@ def hindsight_seed(
     config: Path = typer.Option(Path("config.yaml"), "--config"),
 ) -> None:
     """Persist the hindsight case-study seed list into DuckDB."""
+    from sectorscout.hindsight import seed_hindsight_cases
+
     loaded = _load(config)
     count = seed_hindsight_cases(loaded, path)
     typer.echo(json.dumps({"seeded_cases": count, "path": str(path)}, indent=2, sort_keys=True))
@@ -393,9 +396,25 @@ def hindsight_scan(
     config: Path = typer.Option(Path("config.yaml"), "--config"),
 ) -> None:
     """Run case-study hindsight diagnostics for configured historical leader examples."""
+    from sectorscout.hindsight import scan_hindsight_cases
+
     loaded = _load(config)
     results = scan_hindsight_cases(loaded, path=path, persist=persist)
     typer.echo(json.dumps([result.to_dict() for result in results], indent=2, sort_keys=True))
+
+
+@hindsight_app.command("fetch-prices")
+def hindsight_fetch_prices(
+    path: Path = typer.Option(DEFAULT_HINDSIGHT_CASES_PATH, "--path"),
+    provider: str = typer.Option("yahoo_chart_public", "--provider"),
+    config: Path = typer.Option(Path("config.yaml"), "--config"),
+) -> None:
+    """Fetch public daily prices for the configured historical pattern cases."""
+    from sectorscout.hindsight import fetch_hindsight_prices
+
+    loaded = _load(config)
+    result = fetch_hindsight_prices(loaded, path=path, provider=provider)
+    typer.echo(json.dumps(result, indent=2, sort_keys=True))
 
 
 @app.command("execution-decisions")
@@ -405,6 +424,8 @@ def execution_decisions(
     persist: bool = typer.Option(True, "--persist/--no-persist"),
     config: Path = typer.Option(Path("config.yaml"), "--config"),
 ) -> None:
+    from sectorscout.execution import generate_execution_decisions
+
     loaded = _load(config)
     parsed_asof = _parse_iso_date(asof)
     assert parsed_asof is not None
@@ -425,6 +446,8 @@ def position_lifecycle(
     persist: bool = typer.Option(True, "--persist/--no-persist"),
     config: Path = typer.Option(Path("config.yaml"), "--config"),
 ) -> None:
+    from sectorscout.lifecycle import generate_position_lifecycle
+
     loaded = _load(config)
     through_date = _parse_iso_date(through)
     assert through_date is not None
@@ -444,6 +467,8 @@ def trade_ledger_qa(
     persist: bool = typer.Option(True, "--persist/--no-persist"),
     config: Path = typer.Option(Path("config.yaml"), "--config"),
 ) -> None:
+    from sectorscout.ledger import generate_trade_ledger_qa
+
     loaded = _load(config)
     result = generate_trade_ledger_qa(
         loaded,
@@ -459,6 +484,8 @@ def price_snapshot(
     persist: bool = typer.Option(True, "--persist/--no-persist"),
     config: Path = typer.Option(Path("config.yaml"), "--config"),
 ) -> None:
+    from sectorscout.prices import create_frozen_price_snapshot
+
     loaded = _load(config)
     parsed_asof = _parse_iso_date(asof)
     assert parsed_asof is not None
@@ -472,7 +499,12 @@ def validate() -> None:
 
 
 def _launch_streamlit(config: Path, port: int) -> None:
-    app_path = Path(__file__).with_name("ui") / "app.py"
+    source_app_path = Path.cwd() / "src" / "sectorscout" / "ui" / "app.py"
+    app_path = source_app_path if source_app_path.exists() else Path(__file__).with_name("ui") / "app.py"
+    env = os.environ.copy()
+    if source_app_path.exists():
+        source_path = str(Path.cwd() / "src")
+        env["PYTHONPATH"] = f"{source_path}{os.pathsep}{env['PYTHONPATH']}" if env.get("PYTHONPATH") else source_path
     command = [
         sys.executable,
         "-m",
@@ -483,14 +515,18 @@ def _launch_streamlit(config: Path, port: int) -> None:
         "true",
         "--server.port",
         str(port),
+        "--server.fileWatcherType",
+        "none",
+        "--browser.gatherUsageStats",
+        "false",
         "--",
         "--config",
         str(config),
     ]
     try:
-        completed = subprocess.run(command, check=False)
+        completed = subprocess.run(command, check=False, env=env)
     except ModuleNotFoundError:
-        typer.echo("Streamlit is not installed. Run: uv pip install -e '.[dev]'", err=True)
+        typer.echo("Streamlit is not installed. Run: uv sync --extra dev --no-editable", err=True)
         raise typer.Exit(code=1) from None
     if completed.returncode != 0:
         raise typer.Exit(code=completed.returncode)
@@ -529,6 +565,9 @@ def intel_capture_add_file(
     config: Path = typer.Option(Path("config.yaml"), "--config"),
 ) -> None:
     """Capture a markdown/text/image file into the intel overlay."""
+    from sectorscout.intel.capture_inbox import capture_image_file, capture_markdown_file, capture_text
+    from sectorscout.intel.storage import ensure_intel_tables
+
     loaded = _load(config)
     ensure_intel_tables(loaded)
     suffix = path.suffix.lower()
@@ -553,6 +592,8 @@ def intel_capture_add_file(
 @intel_capture_app.command("list")
 def intel_capture_list(config: Path = typer.Option(Path("config.yaml"), "--config")) -> None:
     """List captured raw intel rows."""
+    from sectorscout.intel.storage import ensure_intel_tables
+
     loaded = _load(config)
     ensure_intel_tables(loaded)
     from sectorscout.db import connect_database
@@ -592,6 +633,9 @@ def intel_capture_add_url(
     config: Path = typer.Option(Path("config.yaml"), "--config"),
 ) -> None:
     """Capture one public URL into the intel overlay."""
+    from sectorscout.intel.public_web import collect_public_url
+    from sectorscout.intel.storage import ensure_intel_tables
+
     loaded = _load(config)
     ensure_intel_tables(loaded)
     result = collect_public_url(loaded, url, source_id=source_id)
@@ -603,6 +647,8 @@ def intel_sources_list(
     sources_file: Path = typer.Option(DEFAULT_PUBLIC_SOURCES_PATH, "--sources-file"),
 ) -> None:
     """List configured public intel sources."""
+    from sectorscout.intel.public_sources import load_public_sources
+
     typer.echo(
         json.dumps(
             [source.to_dict() for source in load_public_sources(sources_file)],
@@ -619,6 +665,9 @@ def intel_sources_collect(
     config: Path = typer.Option(Path("config.yaml"), "--config"),
 ) -> None:
     """Collect configured public sources without login or private browsing."""
+    from sectorscout.intel.public_sources import collect_public_sources
+    from sectorscout.intel.storage import ensure_intel_tables
+
     loaded = _load(config)
     ensure_intel_tables(loaded)
     results = collect_public_sources(loaded, sources_path=sources_file, source_id=source_id)
@@ -630,6 +679,8 @@ def intel_x_status(
     sources_file: Path = typer.Option(DEFAULT_X_SOURCES_PATH, "--sources-file"),
 ) -> None:
     """Show X API configuration status without making network requests."""
+    from sectorscout.intel.x_collector import load_x_sources, x_api_status
+
     typer.echo(
         json.dumps(
             {
@@ -659,6 +710,9 @@ def intel_x_collect(
     config: Path = typer.Option(Path("config.yaml"), "--config"),
 ) -> None:
     """Collect recent public X posts using the official X Recent Search API."""
+    from sectorscout.intel.storage import ensure_intel_tables
+    from sectorscout.intel.x_collector import collect_x_recent_search
+
     loaded = _load(config)
     ensure_intel_tables(loaded)
     parsed_date = _parse_iso_date(date_)
@@ -681,6 +735,8 @@ def intel_extract(
     config: Path = typer.Option(Path("config.yaml"), "--config"),
 ) -> None:
     """Seed and extract MVP external intel for a date."""
+    from sectorscout.intel.chandler_seed import seed_chandler_fixture
+
     loaded = _load(config)
     parsed_date = _parse_iso_date(date_)
     assert parsed_date is not None
@@ -694,6 +750,8 @@ def intel_report_daily(
     config: Path = typer.Option(Path("config.yaml"), "--config"),
 ) -> None:
     """Generate the daily external intel markdown report."""
+    from sectorscout.intel.report import generate_intel_daily_report
+
     loaded = _load(config)
     parsed_date = _parse_iso_date(date_)
     assert parsed_date is not None
@@ -708,6 +766,8 @@ def data_quality(
     persist: bool = typer.Option(True, "--persist/--no-persist"),
     config: Path = typer.Option(Path("config.yaml"), "--config"),
 ) -> None:
+    from sectorscout.data_quality import compute_data_quality, compute_historical_data_quality, persist_data_quality
+
     loaded = _load(config)
     parsed_asof = _parse_iso_date(asof)
     assert parsed_asof is not None
@@ -728,6 +788,8 @@ def universe_asof_command(
     mode: str = typer.Option("historical", "--mode"),
     config: Path = typer.Option(Path("config.yaml"), "--config"),
 ) -> None:
+    from sectorscout.pit import universe_asof
+
     loaded = _load(config)
     parsed_asof = _parse_iso_date(asof)
     assert parsed_asof is not None
@@ -749,6 +811,8 @@ def theme_members_asof_command(
     allow_historical_ex_post: bool = typer.Option(False, "--allow-historical-ex-post"),
     config: Path = typer.Option(Path("config.yaml"), "--config"),
 ) -> None:
+    from sectorscout.pit import theme_members_asof
+
     loaded = _load(config)
     parsed_asof = _parse_iso_date(asof)
     assert parsed_asof is not None
@@ -765,6 +829,8 @@ def fundamentals_asof_command(
     asof: str = typer.Option(..., "--asof"),
     config: Path = typer.Option(Path("config.yaml"), "--config"),
 ) -> None:
+    from sectorscout.pit import available_fundamental_facts
+
     loaded = _load(config)
     parsed_asof = _parse_iso_date(asof)
     assert parsed_asof is not None

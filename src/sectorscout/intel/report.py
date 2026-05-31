@@ -57,13 +57,20 @@ def _count_where(config: SectorScoutConfig, table: str, where_clause: str, param
 
 def _friendly_overlap_label(label: str) -> str:
     return {
-        "CONFIRMED": "Internal and external agree",
-        "CONFLICT": "Possible disagreement",
-        "EXTERNAL_ONLY": "Only external sources mention it",
-        "INTERNAL_ONLY": "Only SectorScout has it",
+        "CONFIRMED": "SectorScout and outside context overlap",
+        "CONFLICT": "Outside context raises risk",
+        "EXTERNAL_ONLY": "Only outside sources mention it",
+        "INTERNAL_ONLY": "Only SectorScout is watching it",
         "WATCH_ONLY": "Watch only",
-        "NEEDS_REVIEW": "Needs review",
+        "NEEDS_REVIEW": "Needs your review",
     }.get(label, label.replace("_", " ").title())
+
+
+def _friendly_context(value: object, *, empty: str) -> str:
+    text = str(value or "").strip()
+    if not text or text.lower() in {"none", "nan", "null"}:
+        return empty
+    return text.replace("_", " ")
 
 
 def _top_rows(
@@ -312,7 +319,8 @@ def generate_intel_daily_report(
         [
             (
                 f"- {row['symbol']}: {_friendly_overlap_label(row['overlap_label'])}. "
-                f"SectorScout context: {row['internal_status']}; external context: {row['external_bias']}."
+                f"SectorScout context: {_friendly_context(row['internal_status'], empty='not in snapshot')}; "
+                f"outside context: {_friendly_context(row['external_bias'], empty='none captured')}."
             )
             for row in overlap[:20]
         ]

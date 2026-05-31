@@ -199,6 +199,15 @@ def _external_symbol_rows(views: pd.DataFrame) -> list[dict]:
     return rows
 
 
+def _clean_optional_text(value: object) -> str | None:
+    if value is None or pd.isna(value):
+        return None
+    text = str(value).strip()
+    if not text or text.lower() in {"none", "nan", "null"}:
+        return None
+    return text
+
+
 def classify_overlap(
     *,
     has_internal: bool,
@@ -262,14 +271,14 @@ def compute_overlap(config: SectorScoutConfig, *, asof_date: Any | None = None) 
         rows.append(
             OverlapRow(
                 symbol=symbol,
-                internal_status=str(internal_row.get("internal_status")) if internal_row else "none",
+                internal_status=(_clean_optional_text(internal_row.get("internal_status")) or "watch") if internal_row else "none",
                 internal_score=(
                     float(internal_row["internal_score"])
                     if internal_row and internal_row.get("internal_score") is not None and pd.notna(internal_row.get("internal_score"))
                     else None
                 ),
-                theme=str(internal_row.get("theme")) if internal_row and internal_row.get("theme") is not None else None,
-                setup_status=str(internal_row.get("setup_status")) if internal_row and internal_row.get("setup_status") is not None else None,
+                theme=_clean_optional_text(internal_row.get("theme")) if internal_row else None,
+                setup_status=_clean_optional_text(internal_row.get("setup_status")) if internal_row else None,
                 external_status=external_status,
                 external_sources=external_sources,
                 external_bias=external_bias,

@@ -8,6 +8,7 @@ from sectorscout.ui.data import UIContext, data_freshness_status, filtered_count
 from sectorscout.ui.report_panel import render_daily_report_panel
 from sectorscout.ui.workbench import (
     get_selected_symbol,
+    overlap_rows_dataframe,
     render_symbol_focus_control,
     render_ticker_inspector,
     symbol_rows_dataframe,
@@ -127,7 +128,7 @@ def _render_market_board(ctx: UIContext) -> None:
         if overlap.empty:
             st.write("No overlap rows yet.")
         else:
-            st.dataframe(overlap, use_container_width=True, hide_index=True)
+            st.dataframe(overlap_rows_dataframe(overlap.to_dict("records")), use_container_width=True, hide_index=True)
 
 
 def _render_external_context(ctx: UIContext) -> None:

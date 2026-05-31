@@ -7,7 +7,7 @@ import pandas as pd
 import streamlit as st
 
 from sectorscout.intel.overlap import compute_overlap
-from sectorscout.ui.data import UIContext, latest_rows, parse_json_list, table_df
+from sectorscout.ui.data import UIContext, data_freshness_status, latest_rows, parse_json_list, table_df
 
 
 SELECTED_SYMBOL_KEY = "sectorscout_selected_symbol"
@@ -21,6 +21,7 @@ class SymbolRow:
     external_count: int
     overlap_label: str
     theme: str | None
+    setup_status: str | None = None
 
 
 def inject_tradingview_styles() -> None:
@@ -115,6 +116,7 @@ def inject_tradingview_styles() -> None:
           display: flex;
           align-items: center;
           justify-content: space-between;
+          flex-wrap: wrap;
           gap: 16px;
           border: 1px solid var(--ss-border);
           background: rgba(255,255,255,.92);
@@ -127,7 +129,8 @@ def inject_tradingview_styles() -> None:
           display: flex;
           align-items: center;
           gap: 10px;
-          min-width: 0;
+          min-width: 220px;
+          flex: 1 1 260px;
         }
         .ss-mark {
           width: 28px;
@@ -156,6 +159,7 @@ def inject_tradingview_styles() -> None:
           flex-wrap: wrap;
           justify-content: flex-end;
           gap: 6px;
+          flex: 1 1 260px;
         }
         .ss-pill {
           display: inline-flex;
@@ -290,6 +294,13 @@ def inject_tradingview_styles() -> None:
           border-radius: 7px !important;
           font-weight: 650 !important;
         }
+        @media (max-width: 900px) {
+          .block-container { padding-left: 1rem; padding-right: 1rem; }
+          .ss-topbar { align-items: flex-start; }
+          .ss-topbar-meta { justify-content: flex-start; }
+          .ss-focus-strip { align-items: flex-start; flex-direction: column; }
+          .ss-focus-meta { justify-content: flex-start; }
+        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -303,6 +314,7 @@ def _pill(label: str, value: str, tone: str = "") -> str:
 
 
 def render_top_bar(ctx: UIContext, *, page: str) -> None:
+    freshness = data_freshness_status(ctx.asof_date)
     asof = ctx.asof_date.isoformat() if ctx.asof_date else "seed"
     selected_symbol = str(st.session_state.get(SELECTED_SYMBOL_KEY) or "none")
     st.markdown(
@@ -316,9 +328,10 @@ def render_top_bar(ctx: UIContext, *, page: str) -> None:
             </div>
           </div>
           <div class="ss-topbar-meta">
-            {_pill("as-of", asof, "blue")}
+            {_pill("today", freshness["today"].isoformat(), "green")}
+            {_pill("snapshot", asof, "blue")}
             {_pill("symbol", selected_symbol, "green" if selected_symbol != "none" else "")}
-            {_pill("mode", "research only", "purple")}
+            {_pill("mode", "research / QA only", "purple")}
           </div>
         </div>
         """,
@@ -402,6 +415,7 @@ def build_symbol_rows(ctx: UIContext) -> list[SymbolRow]:
                 status = str(first.get("state") or "")
                 theme = str(first.get("theme_id") or "") or None
         overlap_label = str(overlap.get(symbol, {}).get("overlap_label") or "WATCH_ONLY")
+        setup_status = overlap.get(symbol, {}).get("setup_status")
         rows.append(
             SymbolRow(
                 symbol=symbol,
@@ -410,6 +424,7 @@ def build_symbol_rows(ctx: UIContext) -> list[SymbolRow]:
                 external_count=external_counts.get(symbol, 0),
                 overlap_label=overlap_label,
                 theme=theme,
+                setup_status=str(setup_status) if setup_status else None,
             )
         )
     return sorted(rows, key=lambda row: (row.internal_score is None, -(row.internal_score or 0), row.symbol))
@@ -423,7 +438,7 @@ def symbol_rows_dataframe(ctx: UIContext) -> pd.DataFrame:
                 "Symbol": row.symbol,
                 "Research status": friendly_overlap_label(row.overlap_label),
                 "SectorScout score": row.internal_score,
-                "SectorScout status": row.internal_status,
+                "SectorScout context": friendly_internal_status(row.internal_status, row.setup_status),
                 "External notes": row.external_count,
                 "Theme": row.theme or "-",
             }
@@ -471,13 +486,92 @@ def _overlap_tone(label: str) -> str:
 
 def friendly_overlap_label(label: str) -> str:
     return {
-        "CONFIRMED": "Internal and external agree",
-        "CONFLICT": "Possible disagreement",
-        "EXTERNAL_ONLY": "Only external sources mention it",
-        "INTERNAL_ONLY": "Only SectorScout has it",
+        "CONFIRMED": "SectorScout and outside context overlap",
+        "CONFLICT": "Outside context raises risk",
+        "EXTERNAL_ONLY": "Only outside sources mention it",
+        "INTERNAL_ONLY": "Only SectorScout is watching it",
         "WATCH_ONLY": "Watch only",
-        "NEEDS_REVIEW": "Needs review",
+        "NEEDS_REVIEW": "Needs your review",
     }.get(label, label.replace("_", " ").title())
+
+
+def friendly_internal_status(status: object, setup_status: object | None = None) -> str:
+    text = _clean_status_text(status)
+    setup = _clean_status_text(setup_status)
+    if text in {"", "none"}:
+        return "Not in SectorScout for this snapshot"
+    if text == "watch_only":
+        return "On the research watchlist"
+    if text == "theme_member":
+        return "Theme member"
+    if text == "stock_score":
+        return "Ranked candidate"
+    readable = text.replace("_", " ").title()
+    if setup and setup not in {"none", "nan"}:
+        return f"{readable}; setup context: {setup.replace('_', ' ').title()}"
+    return readable
+
+
+def friendly_external_context(value: object) -> str:
+    text = _clean_status_text(value)
+    if text in {"", "none"}:
+        return "No captured outside context"
+    labels = {
+        "bullish": "Positive outside context",
+        "bearish": "Risk or opposing outside context",
+        "conditional": "Conditional outside context",
+        "mixed": "Mixed outside context",
+        "neutral": "Neutral outside context",
+        "unknown": "Unclear outside context",
+    }
+    return ", ".join(labels.get(part.strip().lower(), part.strip().title()) for part in text.split(","))
+
+
+def overlap_rows_dataframe(rows: list[dict[str, Any]]) -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {
+                "Symbol": row.get("symbol"),
+                "What it means": friendly_overlap_label(str(row.get("overlap_label") or "")),
+                "Sector or theme": display_cell(row.get("theme")),
+                "SectorScout context": friendly_internal_status(row.get("internal_status"), row.get("setup_status")),
+                "SectorScout score": row.get("internal_score"),
+                "Outside context": friendly_external_context(row.get("external_bias")),
+                "Sources": display_cell(row.get("external_sources")),
+                "Review step": overlap_next_step_hint(str(row.get("overlap_label") or "")),
+            }
+            for row in rows
+        ]
+    )
+
+
+def overlap_next_step_hint(label: str) -> str:
+    return {
+        "CONFIRMED": "Open the ticker detail and compare the setup, levels, and notes.",
+        "CONFLICT": "Read both contexts and write a manual review note before relying on the setup.",
+        "EXTERNAL_ONLY": "Decide whether this deserves a watchlist row or should remain outside context.",
+        "INTERNAL_ONLY": "Optional: capture outside context if this symbol matters for today's review.",
+        "WATCH_ONLY": "Keep it visible; current evidence is incomplete.",
+        "NEEDS_REVIEW": "Confirm the source capture or image extraction first.",
+    }.get(label, "Review manually.")
+
+
+def _clean_status_text(value: object) -> str:
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return ""
+    text = str(value).strip()
+    if text.lower() in {"nan", "null", "none"}:
+        return ""
+    return text.lower()
+
+
+def display_cell(value: object, fallback: str = "-") -> str:
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return fallback
+    text = str(value).strip()
+    if not text or text.lower() in {"none", "nan", "null"}:
+        return fallback
+    return text
 
 
 def _filter_views_for_symbol(views: pd.DataFrame, symbol: str) -> pd.DataFrame:

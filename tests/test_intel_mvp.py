@@ -11,6 +11,7 @@ from sectorscout.db import connect_database, initialize_database
 from sectorscout.demo import demo_readiness, run_demo_init
 from sectorscout.hindsight import (
     default_hindsight_cases,
+    fetch_hindsight_prices,
     historical_pattern_summary,
     scan_hindsight_cases,
     seed_hindsight_cases,
@@ -1187,3 +1188,45 @@ def test_historical_pattern_summary_separates_industry_and_technical_patterns(tm
     assert any(row["Industry / theme pattern"] == "AI semiconductors" for row in industry_patterns)
     assert any(row["Technical pattern to test"] == "Stage 2 trend proxy" for row in technical_patterns)
     assert all("Status" in row for row in industry_patterns + technical_patterns)
+
+
+def test_hindsight_fetch_prices_inserts_public_rows(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    config = _config(tmp_path)
+    case_file = tmp_path / "cases.csv"
+    case_file.write_text(
+        "\n".join(
+            [
+                "symbol,label,start_date,end_date,theme,hindsight_reason,anchor_event,source_url",
+                "NVDA,NVDA test,2024-01-02,2024-01-04,AI chips,Study test case,AI demand,https://example.com",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeResponse:
+        def __enter__(self) -> "FakeResponse":
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return (
+                '{"chart":{"result":[{"timestamp":[1704205800,1704292200],'
+                '"indicators":{"quote":[{"open":[10,10.5],"high":[11,12],'
+                '"low":[9,10],"close":[10.5,11.5],"volume":[1000,1200]}]}}],'
+                '"error":null}}'
+            ).encode("utf-8")
+
+    monkeypatch.setattr("sectorscout.hindsight.urlopen", lambda *_args, **_kwargs: FakeResponse())
+    summary = fetch_hindsight_prices(config, path=case_file)
+    assert summary[0]["rows_inserted"] == 2
+    with connect_database(config.database.path) as connection:
+        rows = connection.execute(
+            "SELECT symbol, price_date, close, provider, adjustment_warning FROM daily_prices ORDER BY price_date"
+        ).fetchall()
+    assert rows[0][0] == "NVDA"
+    assert str(rows[0][1]).startswith("2024-01-02")
+    assert rows[0][2] == 10.5
+    assert rows[0][3] == "yahoo_chart_public"
+    assert rows[0][4] is True

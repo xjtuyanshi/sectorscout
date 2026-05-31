@@ -1,37 +1,26 @@
 from __future__ import annotations
 
 import argparse
+import importlib
 from pathlib import Path
 
 import streamlit as st
 
 from sectorscout.ui.data import load_ui_context
-from sectorscout.ui.pages import (
-    capture_inbox,
-    external_intel,
-    historical_lab,
-    notes_review,
-    overview,
-    overlap,
-    settings,
-    ticker_detail,
-    vision_review,
-    workflow,
-)
 from sectorscout.ui.workbench import inject_tradingview_styles, render_top_bar
 
 
-PAGES = {
-    "Overview": overview.render,
-    "Research Checklist": workflow.render,
-    "External Intel": external_intel.render,
-    "Capture Inbox": capture_inbox.render,
-    "Vision Review": vision_review.render,
-    "Internal vs External Overlap": overlap.render,
-    "Ticker Detail": ticker_detail.render,
-    "Historical Pattern Discovery": historical_lab.render,
-    "Notes / Review": notes_review.render,
-    "Settings / Source Status": settings.render,
+PAGES: dict[str, str] = {
+    "Overview": "overview",
+    "Research Checklist": "workflow",
+    "External Intel": "external_intel",
+    "Capture Inbox": "capture_inbox",
+    "Vision Review": "vision_review",
+    "Internal vs External Overlap": "overlap",
+    "Ticker Detail": "ticker_detail",
+    "Historical Pattern Discovery": "historical_lab",
+    "Notes / Review": "notes_review",
+    "Settings / Source Status": "settings",
 }
 
 
@@ -52,7 +41,8 @@ def main() -> None:
         selected = st.radio("Page", list(PAGES), label_visibility="collapsed")
     ctx = load_ui_context(Path(config_path))
     render_top_bar(ctx, page=selected)
-    PAGES[selected](ctx)
+    module = importlib.import_module(f"sectorscout.ui.pages.{PAGES[selected]}")
+    module.render(ctx)
 
 
 if __name__ == "__main__":
