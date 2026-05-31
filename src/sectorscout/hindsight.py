@@ -21,6 +21,70 @@ from sectorscout.metadata import get_git_commit
 DEFAULT_HINDSIGHT_CASES_PATH = Path("data/hindsight/leader_cases.csv")
 
 
+OFFICIAL_EVENT_SEEDS: dict[str, dict[str, Any]] = {
+    "NVDA": {
+        "event_type": "earnings_results",
+        "event_date": date(2024, 2, 21),
+        "published_at_utc": datetime(2024, 2, 21, 21, 22, 9, tzinfo=timezone.utc),
+        "market_session": "after_close",
+        "source_url": "https://www.sec.gov/Archives/edgar/data/1045810/000104581024000028/0001045810-24-000028-index.htm",
+        "source_quality": "sec_8k_official",
+        "evidence_type": "realized_earnings_and_forward_guidance",
+        "evidence_summary": "Q4 FY2024 results: record revenue and Data Center growth; 8-K accepted after market close.",
+        "first_tradable_date": date(2024, 2, 22),
+        "first_tradable_bar_policy": "next_regular_session_after_after_close_release",
+        "technical_replay_as_of": date(2024, 2, 21),
+        "timing_status": "TIMING_RESOLVED",
+        "requires_review": False,
+    },
+    "MU": {
+        "event_type": "earnings_results",
+        "event_date": date(2025, 9, 23),
+        "published_at_utc": datetime(2025, 9, 23, 20, 2, 28, tzinfo=timezone.utc),
+        "market_session": "after_close",
+        "source_url": "https://www.sec.gov/Archives/edgar/data/723125/000072312525000024/0000723125-25-000024-index.htm",
+        "source_quality": "sec_8k_official",
+        "evidence_type": "realized_earnings_and_forward_guidance",
+        "evidence_summary": "FY2025 results: record fiscal Q4/full-year revenue driven by AI data center growth; 8-K accepted after market close.",
+        "first_tradable_date": date(2025, 9, 24),
+        "first_tradable_bar_policy": "next_regular_session_after_after_close_release",
+        "technical_replay_as_of": date(2025, 9, 23),
+        "timing_status": "TIMING_RESOLVED",
+        "requires_review": False,
+    },
+    "SNDK": {
+        "event_type": "spin_off_listing",
+        "event_date": date(2025, 1, 31),
+        "published_at_utc": datetime(2025, 2, 3, 21, 26, 53, tzinfo=timezone.utc),
+        "market_session": "after_close",
+        "source_url": "https://www.sec.gov/Archives/edgar/data/2023554/000119312525019298/d919795d8k.htm",
+        "source_quality": "sec_8k_official",
+        "evidence_type": "spin_off_schedule_and_regular_way_listing",
+        "evidence_summary": "Registration statement effectiveness 8-K: distribution expected after close and regular-way SNDK trading expected on Nasdaq.",
+        "first_tradable_date": date(2025, 2, 24),
+        "first_tradable_bar_policy": "first_regular_way_trading_session_only_no_wdc_splice",
+        "technical_replay_as_of": date(2025, 2, 24),
+        "timing_status": "TIMING_RESOLVED",
+        "requires_review": False,
+    },
+    "LITE": {
+        "event_type": "earnings_results",
+        "event_date": date(2026, 2, 3),
+        "published_at_utc": datetime(2026, 2, 3, 21, 12, 14, tzinfo=timezone.utc),
+        "market_session": "after_close",
+        "source_url": "https://www.sec.gov/Archives/edgar/data/1633978/000162828026005005/0001628280-26-005005-index.htm",
+        "source_quality": "sec_8k_official",
+        "evidence_type": "realized_earnings_backlog_and_forward_orders",
+        "evidence_summary": "Q2 FY2026 results: AI optical demand, OCS backlog above $400 million, and CPO order context; 8-K accepted after market close.",
+        "first_tradable_date": date(2026, 2, 4),
+        "first_tradable_bar_policy": "next_regular_session_after_after_close_release",
+        "technical_replay_as_of": date(2026, 2, 3),
+        "timing_status": "TIMING_RESOLVED",
+        "requires_review": False,
+    },
+}
+
+
 @dataclass(frozen=True)
 class HindsightCase:
     symbol: str
@@ -398,6 +462,31 @@ def build_hindsight_events_from_cases(cases: list[HindsightCase]) -> list[Hindsi
     events: list[HindsightEvent] = []
     for case in cases:
         event_id = str(uuid.uuid5(uuid.NAMESPACE_URL, "|".join(["hindsight_event", case.symbol, case.label])))
+        seed = OFFICIAL_EVENT_SEEDS.get(case.symbol.upper())
+        if seed:
+            published_at_utc = seed.get("published_at_utc")
+            events.append(
+                HindsightEvent(
+                    event_id=event_id,
+                    symbol=case.symbol,
+                    label=case.label,
+                    event_type=str(seed["event_type"]),
+                    event_date=seed["event_date"],
+                    published_at_utc=published_at_utc,
+                    market_session=str(seed["market_session"]),
+                    source_url=str(seed["source_url"]),
+                    source_quality=str(seed["source_quality"]),
+                    evidence_type=str(seed["evidence_type"]),
+                    evidence_summary=str(seed["evidence_summary"]),
+                    fundamental_evidence_available_at=published_at_utc,
+                    first_tradable_date=seed["first_tradable_date"],
+                    first_tradable_bar_policy=str(seed["first_tradable_bar_policy"]),
+                    technical_replay_as_of=seed["technical_replay_as_of"],
+                    timing_status=str(seed["timing_status"]),
+                    requires_review=bool(seed["requires_review"]),
+                )
+            )
+            continue
         events.append(
             HindsightEvent(
                 event_id=event_id,

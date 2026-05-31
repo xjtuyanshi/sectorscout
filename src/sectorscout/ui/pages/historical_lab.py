@@ -64,7 +64,7 @@ def render(ctx: UIContext) -> None:
     )
     st.info(
         "Research guardrail: evidence and price data must be visible before the claimed decision point. "
-        "Date-only events stay blocked until event timing and first tradable date are resolved."
+        "Default official event seeds resolve known first-tradable sessions; date-only custom events stay blocked."
     )
 
     st.subheader("Data readiness")

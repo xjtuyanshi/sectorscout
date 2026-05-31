@@ -1281,15 +1281,25 @@ def test_hindsight_pattern_observations_enter_review_queue(tmp_path: Path) -> No
 
 def test_hindsight_event_ledger_blocks_date_only_reaction(tmp_path: Path) -> None:
     config = _config(tmp_path)
-    count = seed_hindsight_events(config, tmp_path / "leader_cases.csv")
-    assert count == 4
+    case_file = tmp_path / "cases.csv"
+    case_file.write_text(
+        "\n".join(
+            [
+                "symbol,label,start_date,end_date,theme,hindsight_reason,anchor_event,source_url",
+                "TEST,Date-only test,2024-09-01,2024-12-31,AI semiconductors,Study test case,AI demand,https://example.com",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    count = seed_hindsight_events(config, case_file)
+    assert count == 1
     events = latest_hindsight_events(config)
     assert not events.empty
     assert set(events["market_session"]) == {"date_only_ambiguous"}
     assert events["first_tradable_date"].isna().all()
     assert set(events["timing_status"]) == {"DATA_GAP"}
 
-    gates = build_hindsight_replay_gates(config, path=tmp_path / "leader_cases.csv", persist=True)
+    gates = build_hindsight_replay_gates(config, path=case_file, persist=True)
     assert gates
     timing_gate = next(gate for gate in gates if gate.gate_name == "First tradable date resolved")
     assert timing_gate.gate_status == "DATA_GAP"
@@ -1298,6 +1308,32 @@ def test_hindsight_event_ledger_blocks_date_only_reaction(tmp_path: Path) -> Non
     latest_gates = latest_hindsight_replay_gates(config)
     assert not latest_gates.empty
     assert "DATA_GAP" in set(latest_gates["gate_status"])
+
+
+def test_default_hindsight_events_use_official_timing_seeds(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    count = seed_hindsight_events(config, tmp_path / "leader_cases.csv")
+    assert count == 4
+
+    events = latest_hindsight_events(config)
+    assert not events.empty
+    assert set(events["symbol"]) == {"NVDA", "MU", "SNDK", "LITE"}
+    assert set(events["timing_status"]) == {"TIMING_RESOLVED"}
+    assert set(events["source_quality"]) == {"sec_8k_official"}
+    assert events["published_at_utc"].notna().all()
+    assert not events["requires_review"].astype(bool).any()
+
+    by_symbol = events.set_index("symbol")
+    assert str(by_symbol.loc["NVDA", "first_tradable_date"])[:10] == "2024-02-22"
+    assert str(by_symbol.loc["MU", "first_tradable_date"])[:10] == "2025-09-24"
+    assert str(by_symbol.loc["SNDK", "first_tradable_date"])[:10] == "2025-02-24"
+    assert str(by_symbol.loc["LITE", "first_tradable_date"])[:10] == "2026-02-04"
+    assert "no_wdc_splice" in str(by_symbol.loc["SNDK", "first_tradable_bar_policy"])
+
+    gates = build_hindsight_replay_gates(config, path=tmp_path / "leader_cases.csv", persist=False)
+    first_tradable_gates = [gate for gate in gates if gate.gate_name == "First tradable date resolved"]
+    assert len(first_tradable_gates) == 4
+    assert {gate.gate_status for gate in first_tradable_gates} == {"PASS"}
 
 
 def test_first_tradable_date_resolver_respects_market_session() -> None:
@@ -1315,7 +1351,7 @@ def test_hindsight_pre_event_technical_gate_uses_loaded_lookback_rows(tmp_path: 
         "\n".join(
             [
                 "symbol,label,start_date,end_date,theme,hindsight_reason,anchor_event,source_url",
-                "NVDA,NVDA test,2024-09-01,2024-12-31,AI semiconductors,Study test case,AI demand,https://example.com",
+                "TEST,TEST case,2024-09-01,2024-12-31,AI semiconductors,Study test case,AI demand,https://example.com",
             ]
         ),
         encoding="utf-8",
@@ -1327,7 +1363,7 @@ def test_hindsight_pre_event_technical_gate_uses_loaded_lookback_rows(tmp_path: 
         close = 100.0 + offset
         rows.append(
             [
-                "NVDA",
+                "TEST",
                 current,
                 close,
                 close,

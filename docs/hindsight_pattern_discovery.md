@@ -104,10 +104,13 @@ before technical replay is interpreted:
 - `fundamental_evidence_available_at`
 - `technical_replay_as_of`
 
-The default seed is conservative: if only a date-level catalyst is known, the
-event is marked `date_only_ambiguous`, `first_tradable_date` stays unresolved,
-and event-reaction gates are `DATA_GAP`. This prevents treating unavailable
-overnight or intraday information as if it were known at the decision point.
+The default NVDA, MU, SNDK, and LITE cases include official timing seeds from
+SEC 8-K or spin-off filings so the lab can separate the event timestamp from
+the first regular tradable session. Custom cases stay conservative: if only a
+date-level catalyst is known, the event is marked `date_only_ambiguous`,
+`first_tradable_date` stays unresolved, and event-reaction gates are `DATA_GAP`.
+This prevents treating unavailable overnight or intraday information as if it
+were known at the decision point.
 
 Replay gates use explicit status labels:
 
