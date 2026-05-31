@@ -58,6 +58,10 @@ from sectorscout.hindsight_pattern_matrix import (
     pattern_diagnostics_summary,
     pattern_matrix_summary,
 )
+from sectorscout.hindsight_technical_fingerprint import (
+    build_hindsight_technical_fingerprints,
+    technical_fingerprint_summary,
+)
 from sectorscout.hindsight_sec_metadata import (
     build_hindsight_sec_filing_metadata,
     parse_sec_archive_url,
@@ -1545,6 +1549,8 @@ def test_hindsight_pattern_playbook_exports_markdown(tmp_path: Path) -> None:
     assert "AI data-center compute demand" in markdown
     assert "## Case Evidence Timeline" in markdown
     assert "Future-context splits" in markdown
+    assert "## Technical Fingerprints" in markdown
+    assert "Technical context data gap" in markdown
     assert "## Pattern Candidate Cards" in markdown
     assert "Anchor compute demand shock" in markdown
     assert "Storage context split" in markdown
@@ -1773,6 +1779,7 @@ def test_hindsight_refresh_runs_pipeline_without_network(tmp_path: Path) -> None
     assert steps["industry_profiles"]["rows"] == 7
     assert steps["public_price_history"]["status"] == "SKIPPED"
     assert steps["case_timelines"]["rows"] == 7
+    assert steps["technical_fingerprints"]["rows"] == 7
     assert steps["pattern_matrix"]["rows"] == 7
     assert steps["pattern_diagnostics"]["rows"] == 5
     assert steps["pattern_candidates"]["rows"] == 5
@@ -1787,6 +1794,11 @@ def test_hindsight_refresh_runs_pipeline_without_network(tmp_path: Path) -> None
     assert payload["industry_profile_summary"]["pit_ready_profiles"] == 4
     assert payload["case_timeline_summary"]["timelines"] == 7
     assert payload["case_timeline_summary"]["future_context_splits"] == 1
+    assert payload["technical_fingerprint_summary"]["fingerprints"] == 7
+    assert any(
+        row["symbol"] == "SNDK" and row["fingerprint_status"] == "NEW_LISTING_TECHNICAL_GAP"
+        for row in payload["technical_fingerprints"]
+    )
     assert any(
         row["symbol"] == "SNDK" and row["timeline_status"] == "FUTURE_CONTEXT_SPLIT"
         for row in payload["case_timelines"]
@@ -1822,6 +1834,7 @@ def test_hindsight_refresh_runs_pipeline_without_network(tmp_path: Path) -> None
     written = Path(result.playbook_path).read_text(encoding="utf-8")
     assert "H3 - Industry evidence plus pre-event technical strength" in written
     assert "## Case Evidence Timeline" in written
+    assert "## Technical Fingerprints" in written
     assert "## Pattern Candidate Cards" in written
     forbidden = ["buy signal", "sell signal", "win rate", "Sharpe", "CAGR", "profit factor", "strategy edge"]
     assert not any(term.lower() in json.dumps(payload).lower() for term in forbidden)
@@ -2040,6 +2053,71 @@ def test_hindsight_pattern_matrix_marks_industry_and_technical_alignment(tmp_pat
     assert nvda.benchmark_rs_status == "PASS"
     assert nvda.technical_status == "TECHNICAL_PASS"
     assert nvda.alignment_label == "INDUSTRY_AND_TECHNICAL_ALIGNED"
+
+
+def test_hindsight_technical_fingerprints_explain_gate_patterns(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    rows = []
+    start = date(2023, 6, 1)
+    for offset in range(260):
+        current = start + timedelta(days=offset)
+        nvda_close = 100.0 + offset * 1.5
+        amd_close = 90.0 + offset * 0.8
+        smh_close = 100.0 + offset * 0.2
+        for symbol, close in [("NVDA", nvda_close), ("AMD", amd_close), ("SMH", smh_close)]:
+            rows.append(
+                [
+                    symbol,
+                    current,
+                    close,
+                    close,
+                    close,
+                    close,
+                    1_000_000 + offset,
+                    close,
+                    close,
+                    close,
+                    close,
+                    1_000_000 + offset,
+                    "fixture",
+                    True,
+                    False,
+                    datetime.now(timezone.utc),
+                ]
+            )
+    with connect_database(config.database.path) as connection:
+        connection.executemany(
+            """
+            INSERT INTO daily_prices (
+                symbol, price_date, open, high, low, close, volume,
+                adj_open, adj_high, adj_low, adj_close, adj_volume,
+                provider, is_adjusted, adjustment_warning, ingested_at_utc
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            rows,
+        )
+    seed_hindsight_events(config, tmp_path / "leader_cases.csv")
+    seed_hindsight_evidence(config, tmp_path / "leader_cases.csv")
+    build_hindsight_replay_gates(config, path=tmp_path / "leader_cases.csv", persist=True)
+
+    fingerprints = build_hindsight_technical_fingerprints(config, path=tmp_path / "leader_cases.csv")
+    by_symbol = {item.symbol: item for item in fingerprints}
+
+    assert by_symbol["NVDA"].fingerprint_status == "TECHNICAL_FINGERPRINT_READY"
+    assert by_symbol["NVDA"].stage2_status == "PASS"
+    assert by_symbol["NVDA"].benchmark_rs_status == "PASS"
+    assert by_symbol["NVDA"].fingerprint_label == "Technical fingerprint ready"
+    assert by_symbol["SNDK"].fingerprint_status == "NEW_LISTING_TECHNICAL_GAP"
+    assert "do not splice" in by_symbol["SNDK"].guardrail.lower()
+    assert by_symbol["AMD"].fingerprint_status == "CONTROL_PARTIAL_TECHNICAL_REVIEW"
+    assert "false positives" in by_symbol["AMD"].guardrail
+
+    summary = technical_fingerprint_summary(fingerprints)
+    assert summary["fingerprints"] == 7
+    assert summary["ready"] == 1
+    assert summary["new_listing_gaps"] == 1
+    assert summary["control_partial_technical"] >= 1
+    assert summary["ready_symbols"] == ["NVDA"]
 
 
 def test_hindsight_source_audit_classifies_official_and_future_only_sources(tmp_path: Path) -> None:

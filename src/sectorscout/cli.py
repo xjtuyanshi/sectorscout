@@ -480,6 +480,26 @@ def hindsight_case_timeline(
     typer.echo(json.dumps(payload, indent=2, sort_keys=True))
 
 
+@hindsight_app.command("technical-fingerprints")
+def hindsight_technical_fingerprints(
+    path: Path = typer.Option(DEFAULT_HINDSIGHT_CASES_PATH, "--path"),
+    config: Path = typer.Option(Path("config.yaml"), "--config"),
+) -> None:
+    """Build pre-event technical fingerprint review rows from replay gates."""
+    from sectorscout.hindsight_technical_fingerprint import (
+        build_hindsight_technical_fingerprints,
+        technical_fingerprint_summary,
+    )
+
+    loaded = _load(config)
+    fingerprints = build_hindsight_technical_fingerprints(loaded, path=path)
+    payload = {
+        "summary": technical_fingerprint_summary(fingerprints),
+        "fingerprints": [item.to_dict() for item in fingerprints],
+    }
+    typer.echo(json.dumps(payload, indent=2, sort_keys=True))
+
+
 @hindsight_app.command("pattern-matrix")
 def hindsight_pattern_matrix(
     path: Path = typer.Option(DEFAULT_HINDSIGHT_CASES_PATH, "--path"),

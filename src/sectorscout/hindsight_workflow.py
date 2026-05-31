@@ -40,6 +40,10 @@ from sectorscout.hindsight_source_snapshot import (
     DEFAULT_SOURCE_SNAPSHOT_DIR,
     fetch_hindsight_source_snapshots,
 )
+from sectorscout.hindsight_technical_fingerprint import (
+    build_hindsight_technical_fingerprints,
+    technical_fingerprint_summary,
+)
 from sectorscout.metadata import get_git_commit
 
 
@@ -93,6 +97,8 @@ class HindsightRefreshResult:
     industry_profile_summary: dict[str, object]
     case_timelines: list[dict[str, object]]
     case_timeline_summary: dict[str, object]
+    technical_fingerprints: list[dict[str, object]]
+    technical_fingerprint_summary: dict[str, object]
     pattern_matrix: list[dict[str, object]]
     pattern_matrix_summary: dict[str, object]
     pattern_diagnostics: list[dict[str, object]]
@@ -216,6 +222,17 @@ def run_hindsight_refresh(
             "OK",
             "Built case timelines with event timing, knowable evidence, future context, and gate status.",
             len(case_timelines),
+        )
+    )
+
+    technical_fingerprints = build_hindsight_technical_fingerprints(config, path=path)
+    technical_fingerprint_summary_payload = technical_fingerprint_summary(technical_fingerprints)
+    steps.append(
+        HindsightRefreshStep(
+            "technical_fingerprints",
+            "OK",
+            "Built pre-event technical fingerprint review cards from replay gates.",
+            len(technical_fingerprints),
         )
     )
 
@@ -360,6 +377,8 @@ def run_hindsight_refresh(
         industry_profile_summary=industry_profile_summary_payload,
         case_timelines=[item.to_dict() for item in case_timelines],
         case_timeline_summary=case_timeline_summary_payload,
+        technical_fingerprints=[item.to_dict() for item in technical_fingerprints],
+        technical_fingerprint_summary=technical_fingerprint_summary_payload,
         pattern_matrix=[item.to_dict() for item in pattern_matrix],
         pattern_matrix_summary=pattern_matrix_summary_payload,
         pattern_diagnostics=[item.to_dict() for item in pattern_diagnostics],

@@ -66,7 +66,13 @@ This module follows a research-log design, not a validation design:
   https://www.sec.gov/search-filings/edgar-application-programming-interfaces
 - Relative-strength discipline: momentum/relative strength is a hypothesis
   feature with known academic precedent, but SectorScout still treats it as a
-  candidate observation requiring later validation.
+  candidate observation requiring later validation. See Jegadeesh and Titman's
+  relative-strength/momentum study:
+  https://www.bauer.uh.edu/rsusmel/phd/jegadeesh-titman93.pdf
+- Trend-structure discipline: moving-average and breakout-style technical
+  rules have long empirical history, but this lab only uses trend status as a
+  pre-event fingerprint to review. See Brock, Lakonishok, and LeBaron (1992):
+  https://finance.martinsewell.com/stylized-facts/distribution/BrockLakonishokLeBaron1992.pdf
 - Model-risk discipline: every rule needs purpose, assumptions, data quality,
   limitations, monitoring, and review before it can graduate from research
   hypothesis to production logic. SR 11-7 is the governance reference:
@@ -224,6 +230,7 @@ or a computed replay gate link.
 .venv/bin/sectorscout hindsight seed-evidence
 .venv/bin/sectorscout hindsight industry-profiles
 .venv/bin/sectorscout hindsight case-timeline
+.venv/bin/sectorscout hindsight technical-fingerprints
 .venv/bin/sectorscout hindsight pattern-matrix
 .venv/bin/sectorscout hindsight pattern-diagnostics
 .venv/bin/sectorscout hindsight pattern-candidates
@@ -290,6 +297,12 @@ After `scan`, review:
 - the Historical Lab `Case Evidence Timeline` cards for quickly spotting which
   symbols are PIT-ready, future-context splits, control evidence gaps, or
   technical data gaps;
+- `hindsight technical-fingerprints` for a focused pre-event technical readout:
+  price coverage, Stage 2 trend proxy, fixed-benchmark relative strength, and
+  first-session data. This is a QA fingerprint only, not a validation result;
+- the Historical Lab `Technical Fingerprints` cards for quickly spotting
+  shared leader fingerprints, new-listing technical gaps, and control rows that
+  may be too broad technically;
 - `hindsight pattern-matrix` for the industry plus technical review matrix that
   combines industry profile status with pre-event price coverage, Stage 2 trend,
   and fixed-benchmark relative strength gates;
@@ -353,6 +366,11 @@ remaining a research workflow rather than a statistical validation module.
 - Model-risk hygiene: keep documentation, ongoing monitoring, and outcomes
   analysis separate from initial model design. See Federal Reserve SR 11-7:
   https://www.federalreserve.gov/frrs/guidance/supervisory-guidance-on-model-risk-management.htm
+- Relative-strength and trend context: use momentum, moving averages, and
+  Stage-2-style uptrend labels as auditable technical context only until a
+  separate validation module exists. References: Jegadeesh and Titman (1993),
+  Brock, Lakonishok, and LeBaron (1992), and Weinstein-style stage definitions:
+  https://www.stageanalysis.net/blog/4222/stan-weinsteins-stage-analysis-definitions-of-the-stages-and-sub-stages
 
 ## Safety Rules
 

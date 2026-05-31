@@ -32,6 +32,10 @@ from sectorscout.hindsight_pattern_matrix import (
 from sectorscout.hindsight_sec_metadata import build_hindsight_sec_filing_metadata
 from sectorscout.hindsight_source_audit import build_hindsight_source_audit
 from sectorscout.hindsight_source_snapshot import DEFAULT_SOURCE_SNAPSHOT_DIR
+from sectorscout.hindsight_technical_fingerprint import (
+    build_hindsight_technical_fingerprints,
+    technical_fingerprint_summary,
+)
 from sectorscout.metadata import get_git_commit
 from sectorscout.ui.hindsight_presenter import (
     build_case_pattern_map_rows,
@@ -81,6 +85,7 @@ def build_hindsight_pattern_playbook_markdown(
     case_rows = build_case_pattern_map_rows(events, evidence, gates, hypotheses, case_results)
     source_audit = build_hindsight_source_audit(config)
     case_timelines = build_hindsight_case_timelines(config)
+    technical_fingerprints = build_hindsight_technical_fingerprints(config)
     industry_profiles = build_hindsight_industry_profiles(config)
     pattern_matrix = build_hindsight_pattern_matrix(config)
     pattern_diagnostics = build_hindsight_pattern_diagnostics(pattern_matrix)
@@ -146,6 +151,8 @@ def build_hindsight_pattern_playbook_markdown(
         lines.extend(_industry_profile_lines(industry_profiles))
         lines.extend(["## Case Evidence Timeline", ""])
         lines.extend(_case_timeline_lines(case_timelines))
+        lines.extend(["## Technical Fingerprints", ""])
+        lines.extend(_technical_fingerprint_lines(technical_fingerprints))
         lines.extend(["## Pattern Candidate Cards", ""])
         lines.extend(_pattern_candidate_lines(discovery_candidates))
         lines.extend(["## Industry + Technical Matrix", ""])
@@ -306,6 +313,44 @@ def _case_timeline_lines(items: list[Any]) -> list[str]:
                     _md(item.pre_event_status),
                     _md(item.timeline_status),
                     f"{_md(item.next_research_step)} |",
+                ]
+            )
+        )
+    lines.append("")
+    return lines
+
+
+def _technical_fingerprint_lines(items: list[Any]) -> list[str]:
+    summary = technical_fingerprint_summary(items)
+    lines = [
+        f"- Fingerprints: {_md(summary.get('fingerprints'))}",
+        f"- Ready fingerprints: {_md(summary.get('ready'))}",
+        f"- New-listing technical gaps: {_md(summary.get('new_listing_gaps'))}",
+        f"- Control technical review rows: {_md(summary.get('control_partial_technical'))}",
+        f"- Technical data gaps: {_md(summary.get('data_gaps'))}",
+        "",
+    ]
+    if not items:
+        return lines + ["No technical fingerprint rows are available yet.", ""]
+    lines.extend(
+        [
+            "| Symbol | Role | Fingerprint | Price coverage | Stage 2 | Benchmark RS | First-session data | Next step | Guardrail |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+        ]
+    )
+    for item in items:
+        lines.append(
+            " | ".join(
+                [
+                    f"| {_md(item.symbol)}",
+                    _md(item.case_role.replace("_", " ").title()),
+                    _md(item.fingerprint_label),
+                    _md(item.price_coverage_status),
+                    _md(item.stage2_status),
+                    _md(item.benchmark_rs_status),
+                    _md(item.first_tradable_status),
+                    _md(item.next_research_step),
+                    f"{_md(item.guardrail)} |",
                 ]
             )
         )

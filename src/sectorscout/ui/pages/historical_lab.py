@@ -51,6 +51,10 @@ from sectorscout.hindsight_playbook import generate_hindsight_pattern_playbook
 from sectorscout.hindsight_sec_metadata import build_hindsight_sec_filing_metadata
 from sectorscout.hindsight_source_audit import build_hindsight_source_audit_rows
 from sectorscout.hindsight_source_snapshot import fetch_hindsight_source_snapshots
+from sectorscout.hindsight_technical_fingerprint import (
+    build_hindsight_technical_fingerprints,
+    technical_fingerprints_to_frame,
+)
 from sectorscout.hindsight_workflow import run_hindsight_refresh
 from sectorscout.intel.storage import insert_review_mark
 from sectorscout.ui.data import UIContext, row_count, table_exists
@@ -210,6 +214,14 @@ def render(ctx: UIContext) -> None:
         _render_case_timeline_cards(timelines)
         with st.expander("Timeline detail table", expanded=False):
             st.dataframe(case_timelines_to_frame(timelines), use_container_width=True, hide_index=True)
+        st.markdown("#### Technical Fingerprints")
+        st.caption(
+            "A pre-event technical readout from replay gates: price coverage, Stage 2 trend proxy, fixed-benchmark RS, and first-session data."
+        )
+        fingerprints = build_hindsight_technical_fingerprints(ctx.config)
+        _render_technical_fingerprint_cards(fingerprints)
+        with st.expander("Technical fingerprint detail table", expanded=False):
+            st.dataframe(technical_fingerprints_to_frame(fingerprints), use_container_width=True, hide_index=True)
         st.markdown("#### Industry Evidence Profiles")
         st.caption(
             "These profiles turn evidence rows into reviewable industry mechanisms. They do not change SectorScout scores."
@@ -374,6 +386,11 @@ def _render_lab_refresh(ctx: UIContext) -> None:
                 _render_case_timeline_cards(result.case_timelines)
                 with st.expander("Timeline detail table", expanded=False):
                     st.dataframe(pd.DataFrame(result.case_timelines), use_container_width=True, hide_index=True)
+            if result.technical_fingerprints:
+                st.markdown("#### Technical Fingerprints")
+                _render_technical_fingerprint_cards(result.technical_fingerprints)
+                with st.expander("Technical fingerprint detail table", expanded=False):
+                    st.dataframe(pd.DataFrame(result.technical_fingerprints), use_container_width=True, hide_index=True)
             if result.pattern_matrix:
                 st.markdown("#### Industry + Technical Matrix")
                 st.dataframe(pd.DataFrame(result.pattern_matrix), use_container_width=True, hide_index=True)
@@ -522,13 +539,12 @@ def _render_summary_cards(cards: list[dict[str, str]]) -> None:
     for card in cards:
         tone = _safe_tone(card.get("Tone"))
         html.append(
-            f"""
-            <div class="ss-research-card ss-tone-{tone}">
-              <div class="ss-card-kicker">{escape(str(card.get("Label") or ""))}</div>
-              <div class="ss-card-value">{escape(str(card.get("Value") or "-"))}</div>
-              <div class="ss-card-body">{escape(str(card.get("Detail") or ""))}</div>
-            </div>
-            """
+            "<div class=\"ss-research-card ss-tone-"
+            f"{tone}\">"
+            f"<div class=\"ss-card-kicker\">{escape(str(card.get('Label') or ''))}</div>"
+            f"<div class=\"ss-card-value\">{escape(str(card.get('Value') or '-'))}</div>"
+            f"<div class=\"ss-card-body\">{escape(str(card.get('Detail') or ''))}</div>"
+            "</div>"
         )
     html.append("</div>")
     st.markdown("".join(html), unsafe_allow_html=True)
@@ -541,18 +557,17 @@ def _render_pattern_cards(cards: list[dict[str, str]]) -> None:
     for card in cards:
         tone = _safe_tone(card.get("Tone"))
         html.append(
-            f"""
-            <div class="ss-research-card ss-tone-{tone}">
-              <div class="ss-card-kicker">{escape(str(card.get("Lane") or ""))}</div>
-              <div class="ss-card-title">{escape(str(card.get("Title") or ""))}</div>
-              <div class="ss-card-body">{escape(str(card.get("Status") or ""))}</div>
-              {_card_line("Support", card.get("Support"))}
-              {_card_line("Gaps", card.get("Gaps"))}
-              {_card_line("Control", card.get("Control"))}
-              {_card_line("Takeaway", card.get("Takeaway"))}
-              {_card_line("Next", card.get("Next"))}
-            </div>
-            """
+            "<div class=\"ss-research-card ss-tone-"
+            f"{tone}\">"
+            f"<div class=\"ss-card-kicker\">{escape(str(card.get('Lane') or ''))}</div>"
+            f"<div class=\"ss-card-title\">{escape(str(card.get('Title') or ''))}</div>"
+            f"<div class=\"ss-card-body\">{escape(str(card.get('Status') or ''))}</div>"
+            f"{_card_line('Support', card.get('Support'))}"
+            f"{_card_line('Gaps', card.get('Gaps'))}"
+            f"{_card_line('Control', card.get('Control'))}"
+            f"{_card_line('Takeaway', card.get('Takeaway'))}"
+            f"{_card_line('Next', card.get('Next'))}"
+            "</div>"
         )
     html.append("</div>")
     st.markdown("".join(html), unsafe_allow_html=True)
@@ -565,17 +580,16 @@ def _render_case_cards(cards: list[dict[str, str]]) -> None:
     for card in cards:
         tone = _safe_tone(card.get("Tone"))
         html.append(
-            f"""
-            <div class="ss-research-card ss-tone-{tone}">
-              <div class="ss-card-kicker">{escape(str(card.get("Role") or ""))}</div>
-              <div class="ss-card-title">{escape(str(card.get("Symbol") or ""))}</div>
-              <div class="ss-card-body">{escape(str(card.get("Read") or ""))}</div>
-              {_card_line("Industry", card.get("Industry"))}
-              {_card_line("Technical", card.get("Technical"))}
-              {_card_line("Timing", card.get("Timing"))}
-              {_card_line("Next", card.get("Next"))}
-            </div>
-            """
+            "<div class=\"ss-research-card ss-tone-"
+            f"{tone}\">"
+            f"<div class=\"ss-card-kicker\">{escape(str(card.get('Role') or ''))}</div>"
+            f"<div class=\"ss-card-title\">{escape(str(card.get('Symbol') or ''))}</div>"
+            f"<div class=\"ss-card-body\">{escape(str(card.get('Read') or ''))}</div>"
+            f"{_card_line('Industry', card.get('Industry'))}"
+            f"{_card_line('Technical', card.get('Technical'))}"
+            f"{_card_line('Timing', card.get('Timing'))}"
+            f"{_card_line('Next', card.get('Next'))}"
+            "</div>"
         )
     html.append("</div>")
     st.markdown("".join(html), unsafe_allow_html=True)
@@ -628,17 +642,16 @@ def _render_matrix_diagnostic_cards(items: list[object]) -> None:
         else:
             symbol_text = ", ".join(str(symbol) for symbol in symbols) or "-"
         cards.append(
-            f"""
-            <div class="ss-research-card ss-tone-{_diagnostic_tone(status)}">
-              <div class="ss-card-kicker">{escape(_friendly_diagnostic_type(row.get("diagnostic_type")))}</div>
-              <div class="ss-card-title">{escape(str(row.get("title") or "Diagnostic"))}</div>
-              <div class="ss-card-value">{escape(_friendly_diagnostic_status(status))}</div>
-              <div class="ss-card-body">{escape(str(row.get("interpretation") or ""))}</div>
-              <div class="ss-card-line"><span>Symbols</span><span>{escape(symbol_text)}</span></div>
-              <div class="ss-card-line"><span>Next</span><span>{escape(str(row.get("next_action") or ""))}</span></div>
-              <div class="ss-card-line"><span>Guardrail</span><span>{escape(str(row.get("guardrail") or ""))}</span></div>
-            </div>
-            """
+            "<div class=\"ss-research-card ss-tone-"
+            f"{_diagnostic_tone(status)}\">"
+            f"<div class=\"ss-card-kicker\">{escape(_friendly_diagnostic_type(row.get('diagnostic_type')))}</div>"
+            f"<div class=\"ss-card-title\">{escape(str(row.get('title') or 'Diagnostic'))}</div>"
+            f"<div class=\"ss-card-value\">{escape(_friendly_diagnostic_status(status))}</div>"
+            f"<div class=\"ss-card-body\">{escape(str(row.get('interpretation') or ''))}</div>"
+            f"<div class=\"ss-card-line\"><span>Symbols</span><span>{escape(symbol_text)}</span></div>"
+            f"<div class=\"ss-card-line\"><span>Next</span><span>{escape(str(row.get('next_action') or ''))}</span></div>"
+            f"<div class=\"ss-card-line\"><span>Guardrail</span><span>{escape(str(row.get('guardrail') or ''))}</span></div>"
+            "</div>"
         )
     st.markdown(f"<div class='ss-research-card-grid'>{''.join(cards)}</div>", unsafe_allow_html=True)
 
@@ -700,6 +713,31 @@ def _render_case_timeline_cards(items: list[object]) -> None:
     st.markdown(f"<div class='ss-case-card-grid'>{''.join(cards)}</div>", unsafe_allow_html=True)
 
 
+def _render_technical_fingerprint_cards(items: list[object]) -> None:
+    if not items:
+        st.info("No technical fingerprint rows available yet.")
+        return
+    cards: list[str] = []
+    for item in items:
+        row = item.to_dict() if hasattr(item, "to_dict") else dict(item)
+        status = str(row.get("fingerprint_status") or row.get("technical_fingerprint_status") or "")
+        cards.append(
+            "<div class=\"ss-research-card ss-tone-"
+            f"{_safe_tone(row.get('tone'))}\">"
+            f"<div class=\"ss-card-kicker\">{escape(_friendly_text(row.get('case_role')))}</div>"
+            f"<div class=\"ss-card-title\">{escape(str(row.get('symbol') or '-'))} technical fingerprint</div>"
+            f"<div class=\"ss-card-value\">{escape(_friendly_technical_fingerprint_status(status))}</div>"
+            f"<div class=\"ss-card-body\">{escape(_clip(row.get('reviewer_readout'), 170))}</div>"
+            f"<div class=\"ss-card-line\"><span>Price coverage</span><span>{escape(str(row.get('price_coverage_status') or '-'))}</span></div>"
+            f"<div class=\"ss-card-line\"><span>Stage 2</span><span>{escape(str(row.get('stage2_status') or '-'))}</span></div>"
+            f"<div class=\"ss-card-line\"><span>Benchmark RS</span><span>{escape(str(row.get('benchmark_rs_status') or '-'))}</span></div>"
+            f"<div class=\"ss-card-line\"><span>First session</span><span>{escape(str(row.get('first_tradable_status') or '-'))}</span></div>"
+            f"<div class=\"ss-card-line\"><span>Next</span><span>{escape(_clip(row.get('next_research_step'), 125))}</span></div>"
+            "</div>"
+        )
+    st.markdown(f"<div class='ss-case-card-grid'>{''.join(cards)}</div>", unsafe_allow_html=True)
+
+
 def _friendly_timeline_status(status: str) -> str:
     return {
         "PIT_TIMELINE_READY": "PIT timeline ready",
@@ -709,6 +747,18 @@ def _friendly_timeline_status(status: str) -> str:
         "TIMING_DATA_GAP": "Timing data gap",
         "EVIDENCE_DATA_GAP": "Evidence data gap",
         "TIMELINE_REVIEW": "Timeline review",
+    }.get(status, status.replace("_", " ").title())
+
+
+def _friendly_technical_fingerprint_status(status: str) -> str:
+    return {
+        "TECHNICAL_FINGERPRINT_READY": "Technical fingerprint ready",
+        "NEW_LISTING_TECHNICAL_GAP": "New listing technical gap",
+        "CONTROL_PARTIAL_TECHNICAL_REVIEW": "Control technical review",
+        "CONTROL_TECHNICAL_READY_REVIEW": "Control fingerprint ready for comparison",
+        "TECHNICAL_FINGERPRINT_FAIL": "Technical gate review required",
+        "TECHNICAL_CONTEXT_DATA_GAP": "Technical context data gap",
+        "TECHNICAL_FINGERPRINT_REVIEW": "Technical fingerprint review",
     }.get(status, status.replace("_", " ").title())
 
 
