@@ -29,6 +29,8 @@ TABLES = [
     "hindsight_case_studies",
     "hindsight_scan_results",
     "hindsight_pattern_observations",
+    "hindsight_event_ledger",
+    "hindsight_replay_gates",
 ]
 
 

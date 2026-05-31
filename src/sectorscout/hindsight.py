@@ -87,6 +87,69 @@ class HindsightPatternObservation:
         return asdict(self)
 
 
+@dataclass(frozen=True)
+class HindsightEvent:
+    event_id: str
+    symbol: str
+    label: str
+    event_type: str
+    event_date: date
+    published_at_utc: datetime | None
+    market_session: str
+    source_url: str
+    source_quality: str
+    evidence_type: str
+    evidence_summary: str
+    fundamental_evidence_available_at: datetime | None
+    first_tradable_date: date | None
+    first_tradable_bar_policy: str
+    technical_replay_as_of: date | None
+    timing_status: str
+    requires_review: bool
+
+    def to_dict(self) -> dict[str, Any]:
+        payload = asdict(self)
+        payload["event_date"] = self.event_date.isoformat()
+        payload["published_at_utc"] = self.published_at_utc.isoformat() if self.published_at_utc else None
+        payload["fundamental_evidence_available_at"] = (
+            self.fundamental_evidence_available_at.isoformat()
+            if self.fundamental_evidence_available_at
+            else None
+        )
+        payload["first_tradable_date"] = self.first_tradable_date.isoformat() if self.first_tradable_date else None
+        payload["technical_replay_as_of"] = self.technical_replay_as_of.isoformat() if self.technical_replay_as_of else None
+        return payload
+
+
+@dataclass(frozen=True)
+class HindsightReplayGate:
+    gate_id: str
+    event_id: str
+    symbol: str
+    label: str
+    gate_group: str
+    gate_name: str
+    gate_status: str
+    formula: str
+    computed_value: str
+    threshold: str
+    data_used: str
+    required_rows: int
+    available_rows: int
+    missing_detail: str
+    reason: str
+    asof_date: date
+    first_tradable_date: date | None
+    source: str
+    requires_review: bool
+
+    def to_dict(self) -> dict[str, Any]:
+        payload = asdict(self)
+        payload["asof_date"] = self.asof_date.isoformat()
+        payload["first_tradable_date"] = self.first_tradable_date.isoformat() if self.first_tradable_date else None
+        return payload
+
+
 def default_hindsight_cases() -> list[HindsightCase]:
     return [
         HindsightCase(
@@ -205,6 +268,68 @@ def ensure_hindsight_tables(config: SectorScoutConfig) -> None:
             )
             """
         )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS hindsight_event_ledger (
+                event_id VARCHAR NOT NULL,
+                symbol VARCHAR NOT NULL,
+                label VARCHAR NOT NULL,
+                event_type VARCHAR NOT NULL,
+                event_date DATE NOT NULL,
+                published_at_utc TIMESTAMPTZ,
+                market_session VARCHAR NOT NULL,
+                source_url VARCHAR NOT NULL,
+                source_quality VARCHAR NOT NULL,
+                evidence_type VARCHAR NOT NULL,
+                evidence_summary VARCHAR NOT NULL,
+                fundamental_evidence_available_at TIMESTAMPTZ,
+                first_tradable_date DATE,
+                first_tradable_bar_policy VARCHAR NOT NULL,
+                technical_replay_as_of DATE,
+                timing_status VARCHAR NOT NULL,
+                requires_review BOOLEAN NOT NULL,
+                generated_at_utc TIMESTAMPTZ NOT NULL,
+                config_hash VARCHAR NOT NULL,
+                git_commit VARCHAR NOT NULL,
+                data_snapshot_id VARCHAR NOT NULL,
+                universe_version VARCHAR NOT NULL,
+                theme_version VARCHAR NOT NULL,
+                PRIMARY KEY (event_id)
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS hindsight_replay_gates (
+                gate_id VARCHAR NOT NULL,
+                event_id VARCHAR NOT NULL,
+                symbol VARCHAR NOT NULL,
+                label VARCHAR NOT NULL,
+                gate_group VARCHAR NOT NULL,
+                gate_name VARCHAR NOT NULL,
+                gate_status VARCHAR NOT NULL,
+                formula VARCHAR NOT NULL,
+                computed_value VARCHAR NOT NULL,
+                threshold VARCHAR NOT NULL,
+                data_used VARCHAR NOT NULL,
+                required_rows INTEGER NOT NULL,
+                available_rows INTEGER NOT NULL,
+                missing_detail VARCHAR NOT NULL,
+                reason VARCHAR NOT NULL,
+                asof_date DATE NOT NULL,
+                first_tradable_date DATE,
+                source VARCHAR NOT NULL,
+                requires_review BOOLEAN NOT NULL,
+                generated_at_utc TIMESTAMPTZ NOT NULL,
+                config_hash VARCHAR NOT NULL,
+                git_commit VARCHAR NOT NULL,
+                data_snapshot_id VARCHAR NOT NULL,
+                universe_version VARCHAR NOT NULL,
+                theme_version VARCHAR NOT NULL,
+                PRIMARY KEY (gate_id)
+            )
+            """
+        )
 
 
 def load_hindsight_cases(path: Path = DEFAULT_HINDSIGHT_CASES_PATH) -> list[HindsightCase]:
@@ -267,6 +392,100 @@ def seed_hindsight_cases(config: SectorScoutConfig, path: Path = DEFAULT_HINDSIG
                 ],
             )
     return len(cases)
+
+
+def build_hindsight_events_from_cases(cases: list[HindsightCase]) -> list[HindsightEvent]:
+    events: list[HindsightEvent] = []
+    for case in cases:
+        event_id = str(uuid.uuid5(uuid.NAMESPACE_URL, "|".join(["hindsight_event", case.symbol, case.label])))
+        events.append(
+            HindsightEvent(
+                event_id=event_id,
+                symbol=case.symbol,
+                label=case.label,
+                event_type=_event_type_from_theme(case.theme),
+                event_date=case.start_date,
+                published_at_utc=None,
+                market_session="date_only_ambiguous",
+                source_url=case.source_url,
+                source_quality="case_metadata_needs_source_review",
+                evidence_type="theme_or_catalyst_seed",
+                evidence_summary=case.anchor_event,
+                fundamental_evidence_available_at=None,
+                first_tradable_date=None,
+                first_tradable_bar_policy="unresolved_until_timestamp_reviewed",
+                technical_replay_as_of=case.start_date,
+                timing_status="DATA_GAP",
+                requires_review=True,
+            )
+        )
+    return events
+
+
+def seed_hindsight_events(config: SectorScoutConfig, path: Path = DEFAULT_HINDSIGHT_CASES_PATH) -> int:
+    ensure_hindsight_tables(config)
+    events = build_hindsight_events_from_cases(load_hindsight_cases(path))
+    _persist_hindsight_events(config, events)
+    return len(events)
+
+
+def latest_hindsight_events(config: SectorScoutConfig, *, limit: int = 100) -> pd.DataFrame:
+    ensure_hindsight_tables(config)
+    with connect_database(config.database.path) as connection:
+        return connection.execute(
+            """
+            SELECT *
+            FROM hindsight_event_ledger
+            ORDER BY symbol, event_date, event_type
+            LIMIT ?
+            """,
+            [limit],
+        ).fetchdf()
+
+
+def build_hindsight_replay_gates(
+    config: SectorScoutConfig,
+    *,
+    path: Path = DEFAULT_HINDSIGHT_CASES_PATH,
+    persist: bool = True,
+    asof_date: date | None = None,
+) -> list[HindsightReplayGate]:
+    ensure_hindsight_tables(config)
+    cases = load_hindsight_cases(path)
+    case_by_symbol = {case.symbol: case for case in cases}
+    events = latest_hindsight_events(config)
+    if events.empty:
+        seed_hindsight_events(config, path)
+        events = latest_hindsight_events(config)
+    gates: list[HindsightReplayGate] = []
+    effective_asof = asof_date or date.today()
+    for _, event_row in events.iterrows():
+        symbol = str(event_row["symbol"]).upper()
+        case = case_by_symbol.get(symbol)
+        if case is None:
+            continue
+        event = _event_from_row(event_row)
+        gates.extend(_event_timing_gates(event, case, asof_date=effective_asof))
+        gates.extend(_pre_event_technical_gates(config, event, case, asof_date=effective_asof))
+        gates.extend(_first_tradable_gates(config, event, case, asof_date=effective_asof))
+    if persist:
+        _persist_hindsight_replay_gates(config, gates)
+    return gates
+
+
+def latest_hindsight_replay_gates(config: SectorScoutConfig, *, limit: int = 500) -> pd.DataFrame:
+    ensure_hindsight_tables(config)
+    with connect_database(config.database.path) as connection:
+        return connection.execute(
+            """
+            SELECT *
+            FROM hindsight_replay_gates
+            QUALIFY dense_rank() OVER (ORDER BY generated_at_utc DESC) = 1
+            ORDER BY symbol, gate_group, gate_name
+            LIMIT ?
+            """,
+            [limit],
+        ).fetchdf()
 
 
 def fetch_hindsight_prices(
@@ -389,6 +608,8 @@ def scan_hindsight_cases(
     if persist:
         _persist_results(config, results)
         _persist_pattern_observations(config, build_hindsight_pattern_observations(cases, results))
+        seed_hindsight_events(config, path)
+        build_hindsight_replay_gates(config, path=path, persist=True)
     return results
 
 
@@ -821,6 +1042,383 @@ def _industry_cluster(theme: str) -> str:
     return "Other industry theme"
 
 
+def _event_type_from_theme(theme: str) -> str:
+    lowered = theme.lower()
+    if any(word in lowered for word in ["memory", "hbm", "storage", "nand", "optical", "semiconductor", "ai"]):
+        return "theme_catalyst"
+    return "other"
+
+
+def _event_from_row(row: pd.Series) -> HindsightEvent:
+    published = row.get("published_at_utc")
+    fundamental_available = row.get("fundamental_evidence_available_at")
+    return HindsightEvent(
+        event_id=str(row["event_id"]),
+        symbol=str(row["symbol"]).upper(),
+        label=str(row["label"]),
+        event_type=str(row["event_type"]),
+        event_date=_coerce_date(row["event_date"]),
+        published_at_utc=_coerce_datetime(published),
+        market_session=str(row["market_session"]),
+        source_url=str(row.get("source_url") or ""),
+        source_quality=str(row.get("source_quality") or ""),
+        evidence_type=str(row.get("evidence_type") or ""),
+        evidence_summary=str(row.get("evidence_summary") or ""),
+        fundamental_evidence_available_at=_coerce_datetime(fundamental_available),
+        first_tradable_date=_coerce_optional_date(row.get("first_tradable_date")),
+        first_tradable_bar_policy=str(row.get("first_tradable_bar_policy") or ""),
+        technical_replay_as_of=_coerce_optional_date(row.get("technical_replay_as_of")),
+        timing_status=str(row.get("timing_status") or "DATA_GAP"),
+        requires_review=bool(row.get("requires_review")),
+    )
+
+
+def _coerce_date(value: object) -> date:
+    if isinstance(value, date) and not isinstance(value, datetime):
+        return value
+    if hasattr(value, "date"):
+        return value.date()
+    return date.fromisoformat(str(value)[:10])
+
+
+def _coerce_optional_date(value: object) -> date | None:
+    if value is None or pd.isna(value):
+        return None
+    return _coerce_date(value)
+
+
+def _coerce_datetime(value: object) -> datetime | None:
+    if value is None or pd.isna(value):
+        return None
+    if isinstance(value, datetime):
+        return value
+    return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+
+
+def resolve_first_tradable_date(event_date: date, market_session: str, trading_dates: list[date]) -> date | None:
+    trading_dates = sorted({day for day in trading_dates if day >= event_date})
+    if market_session == "date_only_ambiguous" or not trading_dates:
+        return None
+    if market_session in {"pre_market", "regular"} and trading_dates[0] == event_date:
+        return event_date
+    for trading_day in trading_dates:
+        if trading_day > event_date:
+            return trading_day
+    return None
+
+
+def _event_timing_gates(
+    event: HindsightEvent,
+    case: HindsightCase,
+    *,
+    asof_date: date,
+) -> list[HindsightReplayGate]:
+    gates = [
+        _gate(
+            event=event,
+            case=case,
+            gate_group="event_timing",
+            gate_name="Event timestamp available",
+            gate_status="PASS" if event.published_at_utc else "DATA_GAP",
+            formula="published_at_utc must be known before event reaction can be interpreted",
+            computed_value=event.published_at_utc.isoformat() if event.published_at_utc else "missing",
+            threshold="non-null timestamp",
+            data_used="hindsight_event_ledger.published_at_utc",
+            required_rows=1,
+            available_rows=1 if event.published_at_utc else 0,
+            missing_detail="Published timestamp is not captured." if not event.published_at_utc else "",
+            reason=(
+                "Event timing is auditable."
+                if event.published_at_utc
+                else "Only a date-level seed is available; do not infer intraday availability."
+            ),
+            asof_date=asof_date,
+            source=event.source_url,
+            requires_review=not bool(event.published_at_utc),
+        ),
+        _gate(
+            event=event,
+            case=case,
+            gate_group="event_timing",
+            gate_name="First tradable date resolved",
+            gate_status="PASS" if event.first_tradable_date else "DATA_GAP",
+            formula="first_tradable_date must follow the event market session policy",
+            computed_value=event.first_tradable_date.isoformat() if event.first_tradable_date else "unresolved",
+            threshold="non-null first tradable date",
+            data_used="hindsight_event_ledger.market_session + market calendar",
+            required_rows=1,
+            available_rows=1 if event.first_tradable_date else 0,
+            missing_detail=(
+                "Market session is date_only_ambiguous or the trading calendar has not resolved the event."
+                if not event.first_tradable_date
+                else ""
+            ),
+            reason=(
+                "Reaction and first-tradable checks can be separated."
+                if event.first_tradable_date
+                else "Do not compute event reaction until the first tradable date is known."
+            ),
+            asof_date=asof_date,
+            source=event.source_url,
+            requires_review=not bool(event.first_tradable_date),
+        ),
+    ]
+    return gates
+
+
+def _pre_event_technical_gates(
+    config: SectorScoutConfig,
+    event: HindsightEvent,
+    case: HindsightCase,
+    *,
+    asof_date: date,
+) -> list[HindsightReplayGate]:
+    prices = _price_rows_before_event(config, event.symbol, event.event_date)
+    benchmark = _primary_benchmark(case)
+    gates: list[HindsightReplayGate] = []
+    gates.append(
+        _gate(
+            event=event,
+            case=case,
+            gate_group="pre_event",
+            gate_name="Pre-event price coverage",
+            gate_status="PASS" if len(prices) >= 60 else "DATA_GAP",
+            formula="daily price rows before event_date >= 60",
+            computed_value=f"{len(prices)} rows",
+            threshold=">= 60 rows",
+            data_used="daily_prices before event_date",
+            required_rows=60,
+            available_rows=len(prices),
+            missing_detail="" if len(prices) >= 60 else "Not enough pre-event daily bars loaded.",
+            reason=(
+                "Enough pre-event bars exist for basic trend and liquidity context."
+                if len(prices) >= 60
+                else "Pre-event context is incomplete; avoid treating the case as if setup evidence was visible."
+            ),
+            asof_date=asof_date,
+            source="daily_prices",
+            requires_review=False,
+        )
+    )
+    gates.append(_stage2_gate(event, case, prices, asof_date=asof_date))
+    gates.append(_benchmark_rs_gate(config, event, case, benchmark=benchmark, asof_date=asof_date))
+    return gates
+
+
+def _stage2_gate(
+    event: HindsightEvent,
+    case: HindsightCase,
+    prices: pd.DataFrame,
+    *,
+    asof_date: date,
+) -> HindsightReplayGate:
+    required = 220
+    if len(prices) < required:
+        return _gate(
+            event=event,
+            case=case,
+            gate_group="pre_event",
+            gate_name="Stage 2 trend explain",
+            gate_status="DATA_GAP",
+            formula="close > SMA50 and close > SMA200 and SMA200[t] > SMA200[t-20]",
+            computed_value=f"{len(prices)} rows available",
+            threshold=f">= {required} pre-event rows",
+            data_used="daily_prices.adj_close",
+            required_rows=required,
+            available_rows=len(prices),
+            missing_detail="Need enough pre-event rows for SMA200 and slope.",
+            reason="Trend proxy cannot be evaluated without sufficient pre-event history.",
+            asof_date=asof_date,
+            source="daily_prices",
+            requires_review=False,
+        )
+    close = prices["adj_close"].astype(float).reset_index(drop=True)
+    sma50 = close.rolling(50).mean()
+    sma200 = close.rolling(200).mean()
+    latest_close = float(close.iloc[-1])
+    latest_sma50 = float(sma50.iloc[-1])
+    latest_sma200 = float(sma200.iloc[-1])
+    prior_sma200 = float(sma200.iloc[-21])
+    passed = latest_close > latest_sma50 and latest_close > latest_sma200 and latest_sma200 > prior_sma200
+    return _gate(
+        event=event,
+        case=case,
+        gate_group="pre_event",
+        gate_name="Stage 2 trend explain",
+        gate_status="PASS" if passed else "FAIL",
+        formula="close > SMA50 and close > SMA200 and SMA200[t] > SMA200[t-20]",
+        computed_value=(
+            f"close={latest_close:.2f}; sma50={latest_sma50:.2f}; "
+            f"sma200={latest_sma200:.2f}; sma200_20d_prior={prior_sma200:.2f}"
+        ),
+        threshold="all conditions true",
+        data_used="daily_prices.adj_close",
+        required_rows=required,
+        available_rows=len(prices),
+        missing_detail="",
+        reason="Pre-event trend proxy met." if passed else "Pre-event trend proxy did not meet all conditions.",
+        asof_date=asof_date,
+        source="daily_prices",
+        requires_review=False,
+    )
+
+
+def _benchmark_rs_gate(
+    config: SectorScoutConfig,
+    event: HindsightEvent,
+    case: HindsightCase,
+    *,
+    benchmark: str,
+    asof_date: date,
+) -> HindsightReplayGate:
+    symbol_prices = _price_rows_before_event(config, event.symbol, event.event_date).tail(63)
+    benchmark_prices = _price_rows_before_event(config, benchmark, event.event_date).tail(63)
+    required = 63
+    if len(symbol_prices) < required or len(benchmark_prices) < required:
+        return _gate(
+            event=event,
+            case=case,
+            gate_group="pre_event",
+            gate_name=f"Benchmark RS vs {benchmark}",
+            gate_status="DATA_GAP",
+            formula="63-session symbol return minus fixed primary benchmark return",
+            computed_value=f"symbol_rows={len(symbol_prices)}; benchmark_rows={len(benchmark_prices)}",
+            threshold=f"{required} rows for both symbol and {benchmark}",
+            data_used=f"daily_prices for {event.symbol} and fixed benchmark {benchmark}",
+            required_rows=required * 2,
+            available_rows=len(symbol_prices) + len(benchmark_prices),
+            missing_detail="Primary benchmark coverage is incomplete; no benchmark fallback is applied.",
+            reason="Relative strength cannot be evaluated without the fixed primary benchmark.",
+            asof_date=asof_date,
+            source="daily_prices",
+            requires_review=False,
+        )
+    symbol_return = float(symbol_prices["adj_close"].iloc[-1] / symbol_prices["adj_close"].iloc[0] - 1)
+    benchmark_return = float(benchmark_prices["adj_close"].iloc[-1] / benchmark_prices["adj_close"].iloc[0] - 1)
+    spread = symbol_return - benchmark_return
+    return _gate(
+        event=event,
+        case=case,
+        gate_group="pre_event",
+        gate_name=f"Benchmark RS vs {benchmark}",
+        gate_status="PASS" if spread > 0 else "FAIL",
+        formula="63-session symbol return minus fixed primary benchmark return",
+        computed_value=f"symbol={symbol_return:.2%}; {benchmark}={benchmark_return:.2%}; spread={spread:.2%}",
+        threshold="spread > 0",
+        data_used=f"daily_prices for {event.symbol} and fixed benchmark {benchmark}",
+        required_rows=required * 2,
+        available_rows=len(symbol_prices) + len(benchmark_prices),
+        missing_detail="",
+        reason="Symbol led the fixed benchmark." if spread > 0 else "Symbol did not lead the fixed benchmark.",
+        asof_date=asof_date,
+        source="daily_prices",
+        requires_review=False,
+    )
+
+
+def _first_tradable_gates(
+    config: SectorScoutConfig,
+    event: HindsightEvent,
+    case: HindsightCase,
+    *,
+    asof_date: date,
+) -> list[HindsightReplayGate]:
+    if event.first_tradable_date is None:
+        return [
+            _gate(
+                event=event,
+                case=case,
+                gate_group="first_tradable",
+                gate_name="First-tradable reaction explain",
+                gate_status="DATA_GAP",
+                formula="first_tradable_date is required before reaction checks",
+                computed_value="unresolved",
+                threshold="first_tradable_date resolved",
+                data_used="hindsight_event_ledger",
+                required_rows=1,
+                available_rows=0,
+                missing_detail="First tradable date is unresolved.",
+                reason="Reaction checks are blocked to avoid using an unavailable or ambiguous bar.",
+                asof_date=asof_date,
+                source=event.source_url,
+                requires_review=True,
+            )
+        ]
+    prices = _price_rows_on_or_after(config, event.symbol, event.first_tradable_date)
+    first_row = prices.iloc[0].to_dict() if not prices.empty else None
+    gates = [
+        _gate(
+            event=event,
+            case=case,
+            gate_group="first_tradable",
+            gate_name="First-tradable price row",
+            gate_status="PASS" if first_row else "DATA_GAP",
+            formula="daily_prices row must exist for first_tradable_date",
+            computed_value=str(first_row.get("price_date")) if first_row else "missing",
+            threshold=event.first_tradable_date.isoformat(),
+            data_used="daily_prices",
+            required_rows=1,
+            available_rows=1 if first_row else 0,
+            missing_detail="" if first_row else "No price row exists for first_tradable_date.",
+            reason="First tradable bar is available." if first_row else "First tradable bar is missing.",
+            asof_date=asof_date,
+            source="daily_prices",
+            requires_review=False,
+        )
+    ]
+    return gates
+
+
+def _gate(
+    *,
+    event: HindsightEvent,
+    case: HindsightCase,
+    gate_group: str,
+    gate_name: str,
+    gate_status: str,
+    formula: str,
+    computed_value: str,
+    threshold: str,
+    data_used: str,
+    required_rows: int,
+    available_rows: int,
+    missing_detail: str,
+    reason: str,
+    asof_date: date,
+    source: str,
+    requires_review: bool,
+) -> HindsightReplayGate:
+    gate_key = "|".join([event.event_id, gate_group, gate_name, asof_date.isoformat()])
+    return HindsightReplayGate(
+        gate_id=str(uuid.uuid5(uuid.NAMESPACE_URL, gate_key)),
+        event_id=event.event_id,
+        symbol=event.symbol,
+        label=case.label,
+        gate_group=gate_group,
+        gate_name=gate_name,
+        gate_status=gate_status,
+        formula=formula,
+        computed_value=computed_value,
+        threshold=threshold,
+        data_used=data_used,
+        required_rows=required_rows,
+        available_rows=available_rows,
+        missing_detail=missing_detail,
+        reason=reason,
+        asof_date=asof_date,
+        first_tradable_date=event.first_tradable_date,
+        source=source,
+        requires_review=requires_review,
+    )
+
+
+def _primary_benchmark(case: HindsightCase) -> str:
+    lowered = case.theme.lower()
+    if any(word in lowered for word in ["semiconductor", "memory", "hbm", "nand", "storage", "optical", "ai"]):
+        return "SMH"
+    return "QQQ"
+
+
 def _format_metric(value: object, *, suffix: str = "") -> str:
     if value is None or pd.isna(value):
         return "missing"
@@ -844,6 +1442,42 @@ def _price_rows(config: SectorScoutConfig, case: HindsightCase) -> pd.DataFrame:
                 ORDER BY price_date
                 """,
                 [case.symbol, case.start_date, case.end_date],
+            ).fetchdf()
+        except Exception:
+            return pd.DataFrame()
+
+
+def _price_rows_before_event(config: SectorScoutConfig, symbol: str, event_date: date) -> pd.DataFrame:
+    with connect_database(config.database.path) as connection:
+        try:
+            return connection.execute(
+                """
+                SELECT price_date, adj_open, adj_high, adj_low, adj_close, adj_volume, provider
+                FROM daily_prices
+                WHERE symbol = ?
+                  AND price_date < ?
+                QUALIFY row_number() OVER (PARTITION BY price_date ORDER BY provider) = 1
+                ORDER BY price_date
+                """,
+                [symbol.upper(), event_date],
+            ).fetchdf()
+        except Exception:
+            return pd.DataFrame()
+
+
+def _price_rows_on_or_after(config: SectorScoutConfig, symbol: str, start_date: date) -> pd.DataFrame:
+    with connect_database(config.database.path) as connection:
+        try:
+            return connection.execute(
+                """
+                SELECT price_date, adj_open, adj_high, adj_low, adj_close, adj_volume, provider
+                FROM daily_prices
+                WHERE symbol = ?
+                  AND price_date >= ?
+                QUALIFY row_number() OVER (PARTITION BY price_date ORDER BY provider) = 1
+                ORDER BY price_date
+                """,
+                [symbol.upper(), start_date],
             ).fetchdf()
         except Exception:
             return pd.DataFrame()
@@ -928,6 +1562,103 @@ def _max_drawdown_pct(close: pd.Series) -> float | None:
     running_max = close.cummax()
     drawdowns = (close / running_max - 1.0) * 100
     return float(drawdowns.min())
+
+
+def _persist_hindsight_events(config: SectorScoutConfig, events: list[HindsightEvent]) -> None:
+    if not events:
+        return
+    now = datetime.now(timezone.utc)
+    git_commit = get_git_commit()
+    cfg_hash = config_hash(config)
+    with connect_database(config.database.path) as connection:
+        for event in events:
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO hindsight_event_ledger (
+                    event_id, symbol, label, event_type, event_date, published_at_utc,
+                    market_session, source_url, source_quality, evidence_type,
+                    evidence_summary, fundamental_evidence_available_at,
+                    first_tradable_date, first_tradable_bar_policy,
+                    technical_replay_as_of, timing_status, requires_review,
+                    generated_at_utc, config_hash, git_commit, data_snapshot_id,
+                    universe_version, theme_version
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    event.event_id,
+                    event.symbol,
+                    event.label,
+                    event.event_type,
+                    event.event_date,
+                    event.published_at_utc,
+                    event.market_session,
+                    event.source_url,
+                    event.source_quality,
+                    event.evidence_type,
+                    event.evidence_summary,
+                    event.fundamental_evidence_available_at,
+                    event.first_tradable_date,
+                    event.first_tradable_bar_policy,
+                    event.technical_replay_as_of,
+                    event.timing_status,
+                    event.requires_review,
+                    now,
+                    cfg_hash,
+                    git_commit,
+                    config.reproducibility.data_snapshot_id,
+                    config.reproducibility.universe_version,
+                    config.reproducibility.theme_version,
+                ],
+            )
+
+
+def _persist_hindsight_replay_gates(config: SectorScoutConfig, gates: list[HindsightReplayGate]) -> None:
+    if not gates:
+        return
+    now = datetime.now(timezone.utc)
+    git_commit = get_git_commit()
+    cfg_hash = config_hash(config)
+    with connect_database(config.database.path) as connection:
+        for gate in gates:
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO hindsight_replay_gates (
+                    gate_id, event_id, symbol, label, gate_group, gate_name,
+                    gate_status, formula, computed_value, threshold, data_used,
+                    required_rows, available_rows, missing_detail, reason,
+                    asof_date, first_tradable_date, source, requires_review,
+                    generated_at_utc, config_hash, git_commit, data_snapshot_id,
+                    universe_version, theme_version
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    gate.gate_id,
+                    gate.event_id,
+                    gate.symbol,
+                    gate.label,
+                    gate.gate_group,
+                    gate.gate_name,
+                    gate.gate_status,
+                    gate.formula,
+                    gate.computed_value,
+                    gate.threshold,
+                    gate.data_used,
+                    gate.required_rows,
+                    gate.available_rows,
+                    gate.missing_detail,
+                    gate.reason,
+                    gate.asof_date,
+                    gate.first_tradable_date,
+                    gate.source,
+                    gate.requires_review,
+                    now,
+                    cfg_hash,
+                    git_commit,
+                    config.reproducibility.data_snapshot_id,
+                    config.reproducibility.universe_version,
+                    config.reproducibility.theme_version,
+                ],
+            )
 
 
 def _persist_results(config: SectorScoutConfig, results: list[HindsightResult]) -> None:

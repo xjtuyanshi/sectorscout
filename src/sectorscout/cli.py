@@ -403,6 +403,33 @@ def hindsight_scan(
     typer.echo(json.dumps([result.to_dict() for result in results], indent=2, sort_keys=True))
 
 
+@hindsight_app.command("seed-events")
+def hindsight_seed_events(
+    path: Path = typer.Option(DEFAULT_HINDSIGHT_CASES_PATH, "--path"),
+    config: Path = typer.Option(Path("config.yaml"), "--config"),
+) -> None:
+    """Persist the event ledger seed for historical pattern cases."""
+    from sectorscout.hindsight import seed_hindsight_events
+
+    loaded = _load(config)
+    count = seed_hindsight_events(loaded, path)
+    typer.echo(json.dumps({"seeded_events": count, "path": str(path)}, indent=2, sort_keys=True))
+
+
+@hindsight_app.command("build-gates")
+def hindsight_build_gates(
+    path: Path = typer.Option(DEFAULT_HINDSIGHT_CASES_PATH, "--path"),
+    persist: bool = typer.Option(True, "--persist/--no-persist"),
+    config: Path = typer.Option(Path("config.yaml"), "--config"),
+) -> None:
+    """Build audit-friendly replay gate rows for historical pattern cases."""
+    from sectorscout.hindsight import build_hindsight_replay_gates
+
+    loaded = _load(config)
+    gates = build_hindsight_replay_gates(loaded, path=path, persist=persist)
+    typer.echo(json.dumps([gate.to_dict() for gate in gates], indent=2, sort_keys=True))
+
+
 @hindsight_app.command("fetch-prices")
 def hindsight_fetch_prices(
     path: Path = typer.Option(DEFAULT_HINDSIGHT_CASES_PATH, "--path"),

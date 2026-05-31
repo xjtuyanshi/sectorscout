@@ -43,10 +43,14 @@ This module follows a research-log design, not a validation design:
   https://www.spglobal.com/spdji/en/landing/topic/gics/
 - Fundamental data discipline: use filing-time-aware facts where possible. SEC
   EDGAR company facts and submissions APIs are the preferred public baseline:
-  https://www.sec.gov/edgar/sec-api-documentation
+  https://www.sec.gov/search-filings/edgar-application-programming-interfaces
 - Relative-strength discipline: momentum/relative strength is a hypothesis
   feature with known academic precedent, but SectorScout still treats it as a
   candidate observation requiring later validation.
+- Model-risk discipline: every rule needs purpose, assumptions, data quality,
+  limitations, monitoring, and review before it can graduate from research
+  hypothesis to production logic. SR 11-7 is the governance reference:
+  https://www.federalreserve.gov/supervisionreg/srletters/sr1107.htm
 
 ## Pattern Observation Model
 
@@ -85,13 +89,47 @@ The user review status is stored in `intel_review_marks` with
 Confirmed, rejected, and not-applicable observations leave the open review queue.
 Future follow-up dates defer the queue item until due.
 
+## Event Ledger And Gate Explain
+
+The next audit layer is the event ledger. Each historical case gets an event row
+before technical replay is interpreted:
+
+- `event_date`
+- `published_at_utc`
+- `market_session`
+- `first_tradable_date`
+- `source_url`
+- `source_quality`
+- `evidence_type`
+- `fundamental_evidence_available_at`
+- `technical_replay_as_of`
+
+The default seed is conservative: if only a date-level catalyst is known, the
+event is marked `date_only_ambiguous`, `first_tradable_date` stays unresolved,
+and event-reaction gates are `DATA_GAP`. This prevents treating unavailable
+overnight or intraday information as if it were known at the decision point.
+
+Replay gates use explicit status labels:
+
+- `PASS`: data exists and the rule condition is met.
+- `FAIL`: data exists and the rule condition is not met.
+- `DATA_GAP`: required timestamp, source, price, or benchmark data is missing.
+- `PENDING`: the future review window is not complete.
+- `N/A`: the gate does not apply to this event type.
+
+Every gate stores formula, threshold, computed value, data used, required rows,
+available rows, missing detail, source, and reason. Benchmark relative strength
+uses a fixed primary benchmark and does not silently fall back to another index.
+
 ## Current Commands
 
 ```bash
 .venv/bin/sectorscout hindsight write-default-cases
 .venv/bin/sectorscout hindsight seed
+.venv/bin/sectorscout hindsight seed-events
 .venv/bin/sectorscout hindsight fetch-prices
 .venv/bin/sectorscout hindsight scan
+.venv/bin/sectorscout hindsight build-gates
 ```
 
 `fetch-prices` defaults to the public Yahoo chart JSON endpoint for case-study diagnostics. Stooq remains available with `--provider stooq_public` when `STOOQ_API_KEY` is configured. Corporate-action adjustment status is marked with a warning in stored price rows, so split-sensitive cases still need provider-quality review before any formal validation.
@@ -100,7 +138,9 @@ After `scan`, review:
 
 - `hindsight_scan_results` for case-level coverage and path diagnostics;
 - `hindsight_pattern_observations` for the actual industry, technical, and
-  manual-review hypothesis observations.
+  manual-review hypothesis observations;
+- `hindsight_event_ledger` for event timing and source availability;
+- `hindsight_replay_gates` for PASS / FAIL / DATA_GAP / PENDING explain rows.
 
 ## Safety Rules
 

@@ -7,12 +7,16 @@ import streamlit as st
 
 from sectorscout.db import connect_database
 from sectorscout.hindsight import (
+    build_hindsight_replay_gates,
     fetch_hindsight_prices,
     historical_pattern_summary,
+    latest_hindsight_events,
     load_hindsight_cases,
     latest_hindsight_pattern_observations,
+    latest_hindsight_replay_gates,
     latest_hindsight_results,
     scan_hindsight_cases,
+    seed_hindsight_events,
     seed_hindsight_cases,
 )
 from sectorscout.intel.storage import insert_review_mark
@@ -34,6 +38,8 @@ HISTORICAL_TABLES = [
     "hindsight_case_studies",
     "hindsight_scan_results",
     "hindsight_pattern_observations",
+    "hindsight_event_ledger",
+    "hindsight_replay_gates",
 ]
 
 
@@ -55,6 +61,10 @@ def render(ctx: UIContext) -> None:
         "The goal is not to admire winners after the fact. The goal is to turn historical leaders into testable "
         "industry and technical patterns, then replay those patterns with point-in-time data, as-of universe "
         "membership, reproducible config, and explicit rule versions."
+    )
+    st.info(
+        "Research guardrail: evidence and price data must be visible before the claimed decision point. "
+        "Date-only events stay blocked until event timing and first tradable date are resolved."
     )
 
     st.subheader("Data readiness")
@@ -100,6 +110,31 @@ def render(ctx: UIContext) -> None:
         st.success(f"Scanned {len(results)} hindsight cases.")
         st.dataframe([_display_result(result.to_dict()) for result in results], use_container_width=True, hide_index=True)
     st.caption("Case-study diagnostics only. This does not validate a strategy or change SectorScout scores.")
+
+    st.subheader("Event Ledger")
+    event_cols = st.columns([1, 2])
+    if event_cols[0].button("Seed event ledger", use_container_width=True):
+        count = seed_hindsight_events(ctx.config)
+        st.success(f"Seeded {count} event ledger rows.")
+    if event_cols[1].button("Build gate explain rows", use_container_width=True):
+        gates = build_hindsight_replay_gates(ctx.config)
+        st.success(f"Built {len(gates)} gate explain rows.")
+    events = latest_hindsight_events(ctx.config)
+    if events.empty:
+        st.info("No event ledger rows yet. Seed event ledger before interpreting event-timed patterns.")
+    else:
+        st.caption(
+            "Each event row is the audit spine for timing, source quality, first tradable date, and PIT evidence."
+        )
+        st.dataframe(_display_events_frame(events), use_container_width=True, hide_index=True)
+
+    st.subheader("Gate Explain Panel")
+    gates = latest_hindsight_replay_gates(ctx.config)
+    if gates.empty:
+        st.info("No gate explain rows yet. Build gates after seeding the event ledger.")
+    else:
+        st.caption("DATA GAP is not a failure. It means the required evidence or price rows are not available yet.")
+        st.dataframe(_display_gates_frame(gates), use_container_width=True, hide_index=True)
 
     st.subheader("Latest scan results")
     latest = latest_hindsight_results(ctx.config)
@@ -180,6 +215,47 @@ def _display_result(row: dict) -> dict:
         "Data quality": row.get("data_quality"),
         "Notes": row.get("notes"),
     }
+
+
+def _display_events_frame(frame: pd.DataFrame) -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {
+                "Symbol": row.get("symbol"),
+                "Event type": _friendly_text(row.get("event_type")),
+                "Event date": row.get("event_date"),
+                "Market session": _friendly_text(row.get("market_session")),
+                "First tradable date": row.get("first_tradable_date") or "Unresolved",
+                "Timing status": row.get("timing_status"),
+                "Evidence type": _friendly_text(row.get("evidence_type")),
+                "Source quality": _friendly_text(row.get("source_quality")),
+                "Evidence summary": row.get("evidence_summary"),
+                "Needs review": bool(row.get("requires_review")),
+            }
+            for _, row in frame.iterrows()
+        ]
+    )
+
+
+def _display_gates_frame(frame: pd.DataFrame) -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {
+                "Symbol": row.get("symbol"),
+                "Gate lane": _friendly_text(row.get("gate_group")),
+                "Gate": row.get("gate_name"),
+                "Status": row.get("gate_status"),
+                "Computed value": row.get("computed_value"),
+                "Threshold": row.get("threshold"),
+                "Rows": f"{row.get('available_rows')}/{row.get('required_rows')}",
+                "Reason": row.get("reason"),
+                "Missing detail": row.get("missing_detail") or "-",
+                "Formula": row.get("formula"),
+                "Data used": row.get("data_used"),
+            }
+            for _, row in frame.iterrows()
+        ]
+    )
 
 
 def _display_results_frame(frame: pd.DataFrame) -> pd.DataFrame:
@@ -296,6 +372,10 @@ def _friendly_user_review(value: object) -> str:
         "unclear": "Unclear",
         "not_applicable": "Not applicable",
     }.get(str(value or ""), "Not reviewed")
+
+
+def _friendly_text(value: object) -> str:
+    return str(value or "-").replace("_", " ").title()
 
 
 def _latest_observation_review_map(ctx: UIContext) -> dict[str, dict]:

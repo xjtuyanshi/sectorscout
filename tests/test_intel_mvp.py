@@ -11,12 +11,17 @@ from sectorscout.db import connect_database, initialize_database
 from sectorscout.demo import demo_readiness, run_demo_init
 from sectorscout.hindsight import (
     build_hindsight_pattern_observations,
+    build_hindsight_replay_gates,
     default_hindsight_cases,
     fetch_hindsight_prices,
     historical_pattern_summary,
+    latest_hindsight_events,
     latest_hindsight_pattern_observations,
+    latest_hindsight_replay_gates,
+    resolve_first_tradable_date,
     scan_hindsight_cases,
     seed_hindsight_cases,
+    seed_hindsight_events,
 )
 from sectorscout.intel.chandler_seed import load_chandler_fixture, seed_chandler_fixture
 from sectorscout.intel.capture_inbox import capture_markdown_text
@@ -1272,6 +1277,35 @@ def test_hindsight_pattern_observations_enter_review_queue(tmp_path: Path) -> No
         item["bucket"] == "hindsight_pattern_review" and item["object_id"] == first["object_id"]
         for item in after_review
     )
+
+
+def test_hindsight_event_ledger_blocks_date_only_reaction(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    count = seed_hindsight_events(config, tmp_path / "leader_cases.csv")
+    assert count == 4
+    events = latest_hindsight_events(config)
+    assert not events.empty
+    assert set(events["market_session"]) == {"date_only_ambiguous"}
+    assert events["first_tradable_date"].isna().all()
+    assert set(events["timing_status"]) == {"DATA_GAP"}
+
+    gates = build_hindsight_replay_gates(config, path=tmp_path / "leader_cases.csv", persist=True)
+    assert gates
+    timing_gate = next(gate for gate in gates if gate.gate_name == "First tradable date resolved")
+    assert timing_gate.gate_status == "DATA_GAP"
+    assert "Do not compute event reaction" in timing_gate.reason
+
+    latest_gates = latest_hindsight_replay_gates(config)
+    assert not latest_gates.empty
+    assert "DATA_GAP" in set(latest_gates["gate_status"])
+
+
+def test_first_tradable_date_resolver_respects_market_session() -> None:
+    trading_days = [date(2024, 2, 21), date(2024, 2, 22), date(2024, 2, 23)]
+    assert resolve_first_tradable_date(date(2024, 2, 21), "pre_market", trading_days) == date(2024, 2, 21)
+    assert resolve_first_tradable_date(date(2024, 2, 21), "regular", trading_days) == date(2024, 2, 21)
+    assert resolve_first_tradable_date(date(2024, 2, 21), "after_close", trading_days) == date(2024, 2, 22)
+    assert resolve_first_tradable_date(date(2024, 2, 21), "date_only_ambiguous", trading_days) is None
 
 
 def test_historical_pattern_summary_separates_industry_and_technical_patterns(tmp_path: Path) -> None:
