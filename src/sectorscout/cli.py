@@ -535,6 +535,7 @@ def hindsight_refresh(
     include_benchmarks: bool = typer.Option(True, "--include-benchmarks/--no-include-benchmarks"),
     check_sources: bool = typer.Option(False, "--check-sources/--no-check-sources"),
     fetch_sec_metadata: bool = typer.Option(False, "--fetch-sec-metadata/--no-fetch-sec-metadata"),
+    fetch_companyfacts: bool = typer.Option(False, "--fetch-companyfacts/--no-fetch-companyfacts"),
     snapshot_sources: bool = typer.Option(False, "--snapshot-sources/--no-snapshot-sources"),
     source_snapshot_dir: Path = typer.Option(Path("data/hindsight/sources"), "--source-snapshot-dir"),
     strict_price_fetch: bool = typer.Option(False, "--strict-price-fetch/--no-strict-price-fetch"),
@@ -556,6 +557,7 @@ def hindsight_refresh(
         continue_on_price_error=not strict_price_fetch,
         check_sources=check_sources,
         fetch_sec_metadata=fetch_sec_metadata,
+        fetch_companyfacts=fetch_companyfacts,
         snapshot_sources=snapshot_sources,
         source_snapshot_dir=source_snapshot_dir,
     )
@@ -573,6 +575,24 @@ def hindsight_sec_metadata(
     loaded = _load(config)
     rows = build_hindsight_sec_filing_metadata(loaded, fetch_remote=fetch_remote)
     typer.echo(json.dumps([row.to_dict() for row in rows], indent=2, sort_keys=True))
+
+
+@hindsight_app.command("companyfacts")
+def hindsight_companyfacts(
+    fetch_remote: bool = typer.Option(False, "--fetch-remote/--no-fetch-remote"),
+    config: Path = typer.Option(Path("config.yaml"), "--config"),
+) -> None:
+    """Build SEC companyfacts candidate rows for hindsight review."""
+    from sectorscout.hindsight_companyfacts import build_hindsight_companyfacts, companyfacts_summary
+
+    loaded = _load(config)
+    candidates, statuses = build_hindsight_companyfacts(loaded, fetch_remote=fetch_remote)
+    payload = {
+        "summary": companyfacts_summary(candidates, statuses),
+        "status": [status.to_dict() for status in statuses],
+        "candidates": [candidate.to_dict() for candidate in candidates],
+    }
+    typer.echo(json.dumps(payload, indent=2, sort_keys=True))
 
 
 @hindsight_app.command("snapshot-sources")

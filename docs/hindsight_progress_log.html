@@ -1,0 +1,388 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SectorScout Hindsight Research Log</title>
+  <style>
+    :root {
+      --bg: #f6f7f9;
+      --panel: #ffffff;
+      --text: #101418;
+      --muted: #5b6572;
+      --line: #d9dee7;
+      --soft: #edf1f6;
+      --blue: #1f6feb;
+      --green: #12805c;
+      --amber: #b86e00;
+      --purple: #7c3aed;
+      --red: #c2410c;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    a { color: var(--blue); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .page { max-width: 1180px; margin: 0 auto; padding: 28px 18px 56px; }
+    .topbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 16px;
+      margin-bottom: 18px;
+    }
+    .brand { display: flex; gap: 12px; align-items: center; }
+    .mark {
+      width: 38px;
+      height: 38px;
+      border-radius: 9px;
+      display: grid;
+      place-items: center;
+      background: #111827;
+      color: white;
+      font-weight: 780;
+    }
+    h1 { font-size: 24px; margin: 0 0 4px; letter-spacing: 0; }
+    h2 { font-size: 18px; margin: 0 0 12px; letter-spacing: 0; }
+    h3 { font-size: 15px; margin: 0 0 8px; letter-spacing: 0; }
+    p { margin: 0 0 10px; }
+    .subtitle { color: var(--muted); font-size: 13px; }
+    .pills { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
+    .pill {
+      border: 1px solid var(--line);
+      background: var(--panel);
+      border-radius: 999px;
+      padding: 5px 9px;
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+    .banner {
+      border: 1px solid #bfdbfe;
+      background: #eff6ff;
+      color: #174ea6;
+      border-radius: 8px;
+      padding: 11px 13px;
+      margin: 14px 0 18px;
+    }
+    .grid { display: grid; gap: 12px; }
+    .grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px;
+      min-width: 0;
+      overflow-wrap: anywhere;
+    }
+    .metric {
+      font-size: 26px;
+      line-height: 1.05;
+      font-weight: 780;
+      margin-bottom: 4px;
+    }
+    .kicker {
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 760;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+      margin-bottom: 6px;
+    }
+    .note { color: var(--muted); font-size: 13px; }
+    .timeline { display: grid; gap: 16px; margin-top: 18px; }
+    .entry {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 16px;
+    }
+    .entry-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      border-bottom: 1px solid var(--soft);
+      padding-bottom: 12px;
+      margin-bottom: 14px;
+    }
+    .entry-title { font-size: 19px; font-weight: 780; }
+    .entry-meta { color: var(--muted); font-size: 12px; text-align: right; }
+    .diagram {
+      width: 100%;
+      min-height: 176px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbfcfe;
+      padding: 8px;
+      overflow: auto;
+    }
+    svg { width: 100%; height: auto; display: block; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+      background: var(--panel);
+    }
+    th, td {
+      border-bottom: 1px solid var(--soft);
+      padding: 8px 7px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th { color: var(--muted); font-size: 12px; font-weight: 720; }
+    .status {
+      display: inline-block;
+      border-radius: 6px;
+      padding: 2px 6px;
+      font-size: 11px;
+      font-weight: 720;
+      background: var(--soft);
+    }
+    .green { color: var(--green); }
+    .blue { color: var(--blue); }
+    .amber { color: var(--amber); }
+    .purple { color: var(--purple); }
+    .red { color: var(--red); }
+    .callout {
+      border-left: 4px solid var(--purple);
+      background: #f5f3ff;
+      padding: 10px 12px;
+      border-radius: 8px;
+      color: #4c1d95;
+    }
+    .footer {
+      margin-top: 20px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    @media (max-width: 880px) {
+      .topbar, .entry-head { flex-direction: column; }
+      .pills { justify-content: flex-start; }
+      .entry-meta { text-align: left; }
+      .grid-3, .grid-2 { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <section class="topbar">
+      <div class="brand">
+        <div class="mark">SS</div>
+        <div>
+          <h1>SectorScout Hindsight Research Log</h1>
+          <div class="subtitle">持续记录历史规律发现系统的每次改动：功能、覆盖面、逻辑变化、验证结果。</div>
+        </div>
+      </div>
+      <div class="pills">
+        <span class="pill">mode: research / QA only</span>
+        <span class="pill">updated: 2026-05-31</span>
+        <span class="pill">dashboard: Historical Pattern Discovery</span>
+      </div>
+    </section>
+
+    <div class="banner">
+      SectorScout 是盘后/周度研究与 QA 系统。本日志记录研究流程能力，不记录策略收益，不自动交易，也不把 hindsight 结论直接推入 live scoring。
+    </div>
+
+    <section class="grid grid-3">
+      <div class="card">
+        <div class="kicker">Current focus</div>
+        <div class="metric">SEC facts</div>
+        <div class="note">把 NVDA / MU / SNDK / LITE 的官方 SEC 元数据继续推进到 companyfacts 候选层。</div>
+      </div>
+      <div class="card">
+        <div class="kicker">Coverage impact</div>
+        <div class="metric">0 -> 4</div>
+        <div class="note">离线 refresh 现在能显示 4 个 SEC CIK 的 companyfacts 状态，不联网时也不空白。</div>
+      </div>
+      <div class="card">
+        <div class="kicker">Boundary</div>
+        <div class="metric">overlay</div>
+        <div class="note">companyfacts 只作为审核候选，不写入 live fundamental_facts，不影响 SectorScout 基础评分。</div>
+      </div>
+    </section>
+
+    <section class="timeline">
+      <article class="entry">
+        <div class="entry-head">
+          <div>
+            <div class="kicker">Update 2026-05-31</div>
+            <div class="entry-title">SEC Companyfacts Candidate Layer</div>
+          </div>
+          <div class="entry-meta">
+            Source basis: SEC EDGAR APIs + existing SectorScout event ledger<br>
+            Verification: targeted tests and full regression passed
+          </div>
+        </div>
+
+        <div class="grid grid-2">
+          <div>
+            <h2>1. 这一版做了什么功能</h2>
+            <table>
+              <thead>
+                <tr><th>Area</th><th>Change</th><th>Status</th></tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Data source</td>
+                  <td>新增 SEC companyfacts URL builder 和 public JSON fetcher。</td>
+                  <td><span class="status blue">optional remote</span></td>
+                </tr>
+                <tr>
+                  <td>Extraction</td>
+                  <td>先提取 Revenues / customer revenue / sales revenue 等通用 XBRL 概念，作为事实候选。</td>
+                  <td><span class="status green">rule based</span></td>
+                </tr>
+                <tr>
+                  <td>Workflow</td>
+                  <td>接入 <code>hindsight refresh --fetch-companyfacts</code>，默认关闭网络。</td>
+                  <td><span class="status green">safe default</span></td>
+                </tr>
+                <tr>
+                  <td>UI</td>
+                  <td>Historical Lab 增加 SEC Company Facts Candidates 区块和 checkbox。</td>
+                  <td><span class="status green">visible</span></td>
+                </tr>
+                <tr>
+                  <td>Report</td>
+                  <td>Pattern playbook 增加 SEC Company Facts Candidates section。</td>
+                  <td><span class="status green">documented</span></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div>
+            <h2>2. 流程表现改进在哪里</h2>
+            <table>
+              <thead>
+                <tr><th>Metric</th><th>Before</th><th>After</th></tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>SEC identity coverage</td>
+                  <td>CIK / accession metadata only</td>
+                  <td>CIK metadata + companyfacts status rows</td>
+                </tr>
+                <tr>
+                  <td>Offline dashboard clarity</td>
+                  <td>无法看出 companyfacts 是否已接入</td>
+                  <td>显示 REMOTE_NOT_REQUESTED，明确不是数据缺失</td>
+                </tr>
+                <tr>
+                  <td>Audit path</td>
+                  <td>人工从 SEC filing 页面找数字</td>
+                  <td>可选抓取 XBRL candidates，再人工审核 taxonomy / unit / timing</td>
+                </tr>
+                <tr>
+                  <td>Scoring impact</td>
+                  <td>无</td>
+                  <td>仍为无；只进入 hindsight audit/readout</td>
+                </tr>
+              </tbody>
+            </table>
+            <p class="note" style="margin-top:10px;">这里的表现改进指研究流程覆盖面和可审计性，不是策略收益或交易结果。</p>
+          </div>
+        </div>
+
+        <div class="grid grid-2" style="margin-top:14px;">
+          <div>
+            <h2>3. 逻辑上哪里改变了</h2>
+            <div class="diagram" aria-label="SEC companyfacts workflow diagram">
+              <svg viewBox="0 0 820 230" role="img">
+                <defs>
+                  <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+                    <path d="M0,0 L0,6 L9,3 z" fill="#5b6572"></path>
+                  </marker>
+                </defs>
+                <rect x="20" y="42" width="140" height="74" rx="8" fill="#ffffff" stroke="#d9dee7"></rect>
+                <text x="90" y="72" text-anchor="middle" font-weight="700" fill="#101418">Event ledger</text>
+                <text x="90" y="94" text-anchor="middle" font-size="12" fill="#5b6572">official SEC URL</text>
+                <line x1="160" y1="79" x2="245" y2="79" stroke="#5b6572" stroke-width="2" marker-end="url(#arrow)"></line>
+
+                <rect x="245" y="42" width="150" height="74" rx="8" fill="#ffffff" stroke="#d9dee7"></rect>
+                <text x="320" y="72" text-anchor="middle" font-weight="700" fill="#101418">SEC metadata</text>
+                <text x="320" y="94" text-anchor="middle" font-size="12" fill="#5b6572">CIK + accession</text>
+                <line x1="395" y1="79" x2="480" y2="79" stroke="#5b6572" stroke-width="2" marker-end="url(#arrow)"></line>
+
+                <rect x="480" y="42" width="150" height="74" rx="8" fill="#ffffff" stroke="#d9dee7"></rect>
+                <text x="555" y="72" text-anchor="middle" font-weight="700" fill="#101418">Companyfacts</text>
+                <text x="555" y="94" text-anchor="middle" font-size="12" fill="#5b6572">optional public fetch</text>
+                <line x1="630" y1="79" x2="715" y2="79" stroke="#5b6572" stroke-width="2" marker-end="url(#arrow)"></line>
+
+                <rect x="715" y="42" width="85" height="74" rx="8" fill="#f5f3ff" stroke="#c4b5fd"></rect>
+                <text x="757" y="72" text-anchor="middle" font-weight="700" fill="#4c1d95">Review</text>
+                <text x="757" y="94" text-anchor="middle" font-size="12" fill="#5b6572">candidate</text>
+
+                <rect x="245" y="150" width="385" height="52" rx="8" fill="#fff7ed" stroke="#fed7aa"></rect>
+                <text x="437" y="181" text-anchor="middle" fill="#9a3412" font-weight="700">No direct path into live SectorScout scores</text>
+                <line x1="555" y1="116" x2="555" y2="150" stroke="#b86e00" stroke-width="2" marker-end="url(#arrow)"></line>
+              </svg>
+            </div>
+          </div>
+
+          <div>
+            <h2>4. Review checklist</h2>
+            <table>
+              <thead>
+                <tr><th>Question</th><th>Current answer</th></tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>会不会联网抓取默认打开？</td>
+                  <td>不会。CLI / UI 都需要显式启用。</td>
+                </tr>
+                <tr>
+                  <td>会不会把通用 Revenues 当行业结论？</td>
+                  <td>不会。所有 companyfacts 行都标成 review candidates。</td>
+                </tr>
+                <tr>
+                  <td>能不能支持 NVDA / MU / SNDK / LITE？</td>
+                  <td>可以从 SEC event ledger 中解析这些 CIK，并显示候选状态。</td>
+                </tr>
+                <tr>
+                  <td>下一步最该做什么？</td>
+                  <td>把 official press release / SEC filing 文本中的 Data Center、HBM、OCS、datacenter storage 等主题证据结构化。</td>
+                </tr>
+              </tbody>
+            </table>
+            <div class="callout" style="margin-top:12px;">
+              下一版建议：做“行业证据字段表”，把需求驱动、收入来源、订单/库存/产能、供需周期、主题扩散阶段拆开，不只看 revenue 数字。
+            </div>
+          </div>
+        </div>
+
+        <div style="margin-top:14px;">
+          <h2>5. Evidence sources used</h2>
+          <table>
+            <thead>
+              <tr><th>Source</th><th>Use</th><th>Boundary</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><a href="https://www.sec.gov/edgar/sec-api-documentation">SEC EDGAR APIs</a></td>
+                <td>Official endpoint shape for submissions and companyfacts.</td>
+                <td>Public API only; no credentials or private pages.</td>
+              </tr>
+              <tr>
+                <td><a href="https://www.sec.gov/about/developer-resources">SEC Developer Resources</a></td>
+                <td>Fair-access reminder and user-agent guidance.</td>
+                <td>Optional fetch, default off.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </article>
+    </section>
+
+    <div class="footer">
+      This page is a living log. Future changes should append a new update section above this footer instead of replacing the history.
+    </div>
+  </main>
+</body>
+</html>

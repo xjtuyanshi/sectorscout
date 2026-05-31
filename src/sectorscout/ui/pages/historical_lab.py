@@ -28,6 +28,7 @@ from sectorscout.hindsight import (
     seed_hindsight_events,
     seed_hindsight_cases,
 )
+from sectorscout.hindsight_companyfacts import build_hindsight_companyfacts
 from sectorscout.hindsight_playbook import generate_hindsight_pattern_playbook
 from sectorscout.hindsight_sec_metadata import build_hindsight_sec_filing_metadata
 from sectorscout.hindsight_source_audit import build_hindsight_source_audit_rows
@@ -291,6 +292,7 @@ def _render_lab_refresh(ctx: UIContext) -> None:
         refresh_asof = controls[3].date_input("Refresh as-of", value=date.today())
         check_sources = st.checkbox("Check official source URLs", value=False)
         fetch_sec_metadata = st.checkbox("Fetch SEC submissions metadata", value=False)
+        fetch_companyfacts = st.checkbox("Fetch SEC companyfacts", value=False)
         snapshot_sources = st.checkbox("Snapshot public source text", value=False)
         if st.button("Run full historical refresh", use_container_width=True):
             with st.spinner("Refreshing historical lab artifacts..."):
@@ -302,6 +304,7 @@ def _render_lab_refresh(ctx: UIContext) -> None:
                     lookback_days=int(lookback_days),
                     check_sources=check_sources,
                     fetch_sec_metadata=fetch_sec_metadata,
+                    fetch_companyfacts=fetch_companyfacts,
                     snapshot_sources=snapshot_sources,
                 )
             st.success(f"Refresh complete. Playbook: {result.playbook_path}")
@@ -312,6 +315,13 @@ def _render_lab_refresh(ctx: UIContext) -> None:
             if result.sec_filing_metadata:
                 st.markdown("#### SEC Filing Metadata")
                 st.dataframe(_display_sec_metadata_rows(result.sec_filing_metadata), use_container_width=True, hide_index=True)
+            if result.companyfacts_candidates or result.companyfacts_status:
+                st.markdown("#### SEC Company Facts Candidates")
+                st.dataframe(
+                    _display_companyfacts_rows(result.companyfacts_candidates, result.companyfacts_status),
+                    use_container_width=True,
+                    hide_index=True,
+                )
             if result.source_snapshots:
                 st.markdown("#### Source Snapshots")
                 st.dataframe(_display_source_snapshot_rows(result.source_snapshots), use_container_width=True, hide_index=True)
@@ -334,6 +344,20 @@ def _render_source_audit(ctx: UIContext) -> None:
     sec_rows = build_hindsight_sec_filing_metadata(ctx.config, fetch_remote=fetch_sec_metadata)
     if sec_rows:
         st.dataframe(_display_sec_metadata_rows([row.to_dict() for row in sec_rows]), use_container_width=True, hide_index=True)
+    st.markdown("#### SEC Company Facts Candidates")
+    fetch_companyfacts = st.checkbox("Fetch SEC companyfacts now", value=False)
+    companyfacts, companyfacts_status = build_hindsight_companyfacts(ctx.config, fetch_remote=fetch_companyfacts)
+    st.caption(
+        "Companyfacts rows are review candidates only. They are not written into live SectorScout fundamentals."
+    )
+    st.dataframe(
+        _display_companyfacts_rows(
+            [row.to_dict() for row in companyfacts],
+            [row.to_dict() for row in companyfacts_status],
+        ),
+        use_container_width=True,
+        hide_index=True,
+    )
     if st.button("Snapshot public source text", use_container_width=True):
         with st.spinner("Fetching public source snapshots..."):
             snapshots = fetch_hindsight_source_snapshots(ctx.config)
@@ -626,6 +650,40 @@ def _display_sec_metadata_rows(rows: list[dict[str, object]]) -> pd.DataFrame:
                 "Error": row.get("error") or "-",
             }
             for row in rows
+        ]
+    )
+
+
+def _display_companyfacts_rows(candidates: list[dict[str, object]], statuses: list[dict[str, object]]) -> pd.DataFrame:
+    if candidates:
+        return pd.DataFrame(
+            [
+                {
+                    "Symbol": row.get("symbol"),
+                    "Fact": f"{row.get('taxonomy')}:{row.get('fact_name')}",
+                    "Value": row.get("value"),
+                    "Unit": row.get("unit"),
+                    "Period end": row.get("period_end_date") or "-",
+                    "Filed": row.get("filed_at") or "-",
+                    "Form": row.get("form") or "-",
+                    "PIT status": _friendly_text(row.get("pit_status")),
+                    "Review note": row.get("review_note"),
+                    "Source filing": row.get("source_filing_url") or "-",
+                }
+                for row in candidates
+            ]
+        )
+    return pd.DataFrame(
+        [
+            {
+                "Symbol": row.get("symbol"),
+                "CIK": row.get("cik"),
+                "Fetch status": _friendly_text(row.get("fetch_status")),
+                "Candidates": row.get("candidates"),
+                "Companyfacts URL": row.get("companyfacts_url"),
+                "Error": row.get("error") or "-",
+            }
+            for row in statuses
         ]
     )
 

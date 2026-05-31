@@ -13,6 +13,7 @@ from sectorscout.hindsight import (
     latest_hindsight_hypothesis_case_results,
     latest_hindsight_replay_gates,
 )
+from sectorscout.hindsight_companyfacts import build_hindsight_companyfacts, companyfacts_summary
 from sectorscout.hindsight_sec_metadata import build_hindsight_sec_filing_metadata
 from sectorscout.hindsight_source_audit import build_hindsight_source_audit
 from sectorscout.hindsight_source_snapshot import DEFAULT_SOURCE_SNAPSHOT_DIR
@@ -65,6 +66,7 @@ def build_hindsight_pattern_playbook_markdown(
     case_rows = build_case_pattern_map_rows(events, evidence, gates, hypotheses, case_results)
     source_audit = build_hindsight_source_audit(config)
     sec_metadata = build_hindsight_sec_filing_metadata(config)
+    companyfacts, companyfacts_status = build_hindsight_companyfacts(config)
     summary_cards = build_hindsight_readout_summary_cards(pattern_rows, case_rows)
     pattern_cards = build_pattern_story_cards(pattern_rows)
     case_cards = build_case_story_cards(case_rows)
@@ -124,6 +126,8 @@ def build_hindsight_pattern_playbook_markdown(
         lines.extend(_source_audit_lines(source_audit))
         lines.extend(["## SEC Filing Metadata", ""])
         lines.extend(_sec_metadata_lines(sec_metadata))
+        lines.extend(["## SEC Company Facts Candidates", ""])
+        lines.extend(_companyfacts_lines(companyfacts, companyfacts_status))
         lines.extend(["## Source Snapshots", ""])
         lines.extend(_source_snapshot_lines(source_snapshot_dir))
         lines.extend(["## Research Queue", ""])
@@ -259,6 +263,68 @@ def _sec_metadata_lines(items: list[Any]) -> list[str]:
                     _md(item.filing_date or "-"),
                     _md(item.acceptance_datetime or item.seed_published_at_utc or "-"),
                     f"{_md(item.primary_document or item.document or '-')} |",
+                ]
+            )
+        )
+    lines.append("")
+    return lines
+
+
+def _companyfacts_lines(candidates: list[Any], statuses: list[Any]) -> list[str]:
+    summary = companyfacts_summary(candidates, statuses)
+    lines = [
+        f"- Eligible SEC CIKs: {_md(summary.get('eligible_ciks'))}",
+        f"- Fetched CIKs: {_md(summary.get('fetched_ciks'))}",
+        f"- Candidate facts: {_md(summary.get('candidate_facts'))}",
+        "",
+    ]
+    if not candidates:
+        lines.extend(
+            [
+                "No SEC companyfacts candidates are loaded yet.",
+                "Run `.venv/bin/sectorscout hindsight companyfacts --fetch-remote` or `hindsight refresh --fetch-companyfacts` after reviewing SEC fair-access settings.",
+                "",
+            ]
+        )
+        if statuses:
+            lines.extend(
+                [
+                    "| Symbol | CIK | Fetch status | Companyfacts URL |",
+                    "| --- | --- | --- | --- |",
+                ]
+            )
+            for status in statuses:
+                lines.append(
+                    " | ".join(
+                        [
+                            f"| {_md(status.symbol)}",
+                            _md(status.cik),
+                            _md(status.fetch_status),
+                            f"{_md(status.companyfacts_url)} |",
+                        ]
+                    )
+                )
+            lines.append("")
+        return lines
+    lines.extend(
+        [
+            "| Symbol | Fact | Value | Unit | Period end | Filed | Form | PIT status | Review note |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+        ]
+    )
+    for item in candidates:
+        lines.append(
+            " | ".join(
+                [
+                    f"| {_md(item.symbol)}",
+                    _md(f"{item.taxonomy}:{item.fact_name}"),
+                    _md(item.value),
+                    _md(item.unit),
+                    _md(item.period_end_date),
+                    _md(item.filed_at),
+                    _md(item.form),
+                    _md(item.pit_status),
+                    f"{_md(item.review_note)} |",
                 ]
             )
         )

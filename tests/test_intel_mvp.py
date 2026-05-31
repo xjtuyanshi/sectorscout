@@ -35,6 +35,11 @@ from sectorscout.hindsight_playbook import (
     build_hindsight_pattern_playbook_markdown,
     generate_hindsight_pattern_playbook,
 )
+from sectorscout.hindsight_companyfacts import (
+    build_hindsight_companyfacts,
+    extract_companyfacts_candidates,
+    sec_companyfacts_url,
+)
 from sectorscout.hindsight_sec_metadata import (
     build_hindsight_sec_filing_metadata,
     parse_sec_archive_url,
@@ -1476,6 +1481,8 @@ def test_hindsight_pattern_playbook_exports_markdown(tmp_path: Path) -> None:
     assert "## Official Source Audit" in markdown
     assert "## SEC Filing Metadata" in markdown
     assert "1045810" in markdown
+    assert "## SEC Company Facts Candidates" in markdown
+    assert "No SEC companyfacts candidates are loaded yet" in markdown
     assert "## Source Snapshots" in markdown
     assert "No source snapshot manifest" in markdown
     assert "official_company_release" in markdown
@@ -1539,6 +1546,74 @@ def test_hindsight_sec_metadata_parses_archive_urls_and_matches_submission_json(
     assert sndk.metadata_status == "ACCESSION_NOT_FOUND"
 
 
+def test_hindsight_companyfacts_extracts_revenue_candidates(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert sec_companyfacts_url(1045810).endswith("CIK0001045810.json")
+    payload = {
+        "facts": {
+            "us-gaap": {
+                "Revenues": {
+                    "label": "Revenues",
+                    "units": {
+                        "USD": [
+                            {
+                                "end": "2024-01-28",
+                                "val": 22103000000,
+                                "accn": "0001045810-24-000028",
+                                "fy": 2024,
+                                "fp": "FY",
+                                "form": "10-K",
+                                "filed": "2024-02-21",
+                                "frame": "CY2023",
+                            },
+                            {
+                                "end": "2025-01-26",
+                                "val": 130497000000,
+                                "accn": "0001045810-25-000023",
+                                "fy": 2025,
+                                "fp": "FY",
+                                "form": "10-K",
+                                "filed": "2025-02-26",
+                                "frame": "CY2024",
+                            },
+                        ]
+                    },
+                }
+            }
+        }
+    }
+    candidates = extract_companyfacts_candidates(
+        symbol="NVDA",
+        cik=1045810,
+        payload=payload,
+        anchor_published_at_utc="2024-02-21T21:22:09+00:00",
+    )
+    assert len(candidates) == 1
+    nvda = candidates[0]
+    assert nvda.symbol == "NVDA"
+    assert nvda.fact_name == "Revenues"
+    assert nvda.value == "22103000000"
+    assert nvda.period_end_date == "2024-01-28"
+    assert nvda.filed_at == "2024-02-21"
+    assert nvda.pit_status == "PIT_CANDIDATE_REQUIRES_ACCEPTANCE_REVIEW"
+    assert "000104581024000028" in nvda.source_filing_url
+
+    config = _config(tmp_path)
+    seed_hindsight_events(config, tmp_path / "leader_cases.csv")
+
+    def fake_companyfacts_json(cik: int, *, timeout: int) -> dict:
+        assert cik in {1045810, 723125, 2023554, 1633978}
+        return payload
+
+    monkeypatch.setattr("sectorscout.hindsight_companyfacts._fetch_sec_companyfacts_json", fake_companyfacts_json)
+    rows, statuses = build_hindsight_companyfacts(config, fetch_remote=True)
+    assert statuses
+    assert any(status.fetch_status == "FETCHED" for status in statuses)
+    assert any(row.symbol == "NVDA" and row.fact_name == "Revenues" for row in rows)
+
+
 def test_hindsight_refresh_runs_pipeline_without_network(tmp_path: Path) -> None:
     config = _config(tmp_path)
     result = run_hindsight_refresh(
@@ -1558,10 +1633,14 @@ def test_hindsight_refresh_runs_pipeline_without_network(tmp_path: Path) -> None
     assert steps["public_price_history"]["status"] == "SKIPPED"
     assert steps["source_audit"]["rows"] >= 5
     assert steps["sec_filing_metadata"]["rows"] == 4
+    assert steps["sec_companyfacts"]["status"] == "SKIPPED"
     assert steps["source_snapshots"]["status"] == "SKIPPED"
     assert steps["hypothesis_registry"]["rows"] == 28
     assert payload["source_snapshots"] == []
     assert payload["sec_filing_metadata_summary"]["parsed_only_filings"] == 4
+    assert payload["companyfacts_summary"]["remote_not_requested"] == 4
+    assert payload["companyfacts_candidates"] == []
+    assert any(row["symbol"] == "NVDA" for row in payload["companyfacts_status"])
     assert any(row["symbol"] == "NVDA" and row["cik"] == 1045810 for row in payload["sec_filing_metadata"])
     assert payload["source_audit_summary"]["pit_usable_sources"] >= 4
     assert any("NVIDIA" in row["source_url"] or "nvidia" in row["source_url"] for row in payload["source_audit"])

@@ -1,5 +1,10 @@
 # Historical Pattern Discovery
 
+For a visual running change log, open
+[`docs/hindsight_progress_log.html`](hindsight_progress_log.html). New
+hindsight-system changes should append a short illustrated update there so the
+research workflow remains easy to review later.
+
 This lab is for turning historical leaders into testable pattern hypotheses. It is not a daily action engine and it does not modify SectorScout scores.
 
 The goal is not to prove rules by looking backward. The goal is to study prior leaders with explicit missing-data flags, then separate industry conditions from technical conditions before any future validation work.
@@ -225,6 +230,7 @@ or a computed replay gate link.
 .venv/bin/sectorscout hindsight playbook
 .venv/bin/sectorscout hindsight refresh --asof 2026-05-31
 .venv/bin/sectorscout hindsight sec-metadata
+.venv/bin/sectorscout hindsight companyfacts
 .venv/bin/sectorscout hindsight snapshot-sources
 ```
 
@@ -248,6 +254,14 @@ parses CIK, accession number, and document path locally. Add
 --fetch-remote`, to query the public `data.sec.gov/submissions/CIK##########.json`
 API and match the accession number. This uses public SEC APIs only and should
 respect SEC fair-access guidance.
+
+SEC companyfacts candidates can be built with `hindsight companyfacts
+--fetch-remote` or `refresh --fetch-companyfacts`. The fetcher reads the public
+`data.sec.gov/api/xbrl/companyfacts/CIK##########.json` endpoint and extracts a
+small set of generic revenue concepts as review candidates. These rows are not
+written into live `fundamental_facts` and do not affect SectorScout scoring.
+Treat them as audit material until the taxonomy, unit, filing timing, and
+industry-mechanism mapping are reviewed.
 
 Use `snapshot-sources` or `refresh --snapshot-sources` to save local public
 source text snapshots under `data/hindsight/sources/`. This is for audit
@@ -274,6 +288,8 @@ After `scan`, review:
   company release, future-only, and source-review status.
 - the `SEC Filing Metadata` UI/playbook section for parsed CIK/accession data
   and optional SEC submissions metadata.
+- the `SEC Company Facts Candidates` UI/playbook section for optional public
+  SEC XBRL fact candidates that still require taxonomy and timing review.
 
 Observation links keep promotion discipline visible. Industry/theme observations
 must link to usable point-in-time evidence. Technical/OHLCV observations must

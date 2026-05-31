@@ -20,6 +20,7 @@ from sectorscout.hindsight import (
     seed_hindsight_events,
     write_default_hindsight_cases,
 )
+from sectorscout.hindsight_companyfacts import build_hindsight_companyfacts, companyfacts_summary
 from sectorscout.hindsight_playbook import generate_hindsight_pattern_playbook
 from sectorscout.hindsight_sec_metadata import build_hindsight_sec_filing_metadata, sec_filing_metadata_summary
 from sectorscout.hindsight_source_audit import build_hindsight_source_audit, source_audit_summary
@@ -73,6 +74,9 @@ class HindsightRefreshResult:
     source_snapshots: list[dict[str, object]]
     sec_filing_metadata: list[dict[str, object]]
     sec_filing_metadata_summary: dict[str, object]
+    companyfacts_candidates: list[dict[str, object]]
+    companyfacts_status: list[dict[str, object]]
+    companyfacts_summary: dict[str, object]
 
     def to_dict(self) -> dict[str, object]:
         payload = asdict(self)
@@ -93,6 +97,7 @@ def run_hindsight_refresh(
     continue_on_price_error: bool = True,
     check_sources: bool = False,
     fetch_sec_metadata: bool = False,
+    fetch_companyfacts: bool = False,
     snapshot_sources: bool = False,
     source_snapshot_dir: Path = DEFAULT_SOURCE_SNAPSHOT_DIR,
 ) -> HindsightRefreshResult:
@@ -210,6 +215,21 @@ def run_hindsight_refresh(
         )
     )
 
+    companyfacts, companyfacts_status = build_hindsight_companyfacts(config, fetch_remote=fetch_companyfacts)
+    companyfacts_summary_payload = companyfacts_summary(companyfacts, companyfacts_status)
+    steps.append(
+        HindsightRefreshStep(
+            "sec_companyfacts",
+            "OK" if fetch_companyfacts else "SKIPPED",
+            (
+                "Fetched SEC companyfacts candidates for review."
+                if fetch_companyfacts
+                else "SEC companyfacts fetch disabled; candidate facts remain unloaded."
+            ),
+            len(companyfacts),
+        )
+    )
+
     source_snapshots: list[dict[str, object]] = []
     if snapshot_sources:
         snapshots = fetch_hindsight_source_snapshots(config, output_dir=source_snapshot_dir)
@@ -258,6 +278,9 @@ def run_hindsight_refresh(
         source_snapshots=source_snapshots,
         sec_filing_metadata=[item.to_dict() for item in sec_metadata],
         sec_filing_metadata_summary=sec_summary,
+        companyfacts_candidates=[item.to_dict() for item in companyfacts],
+        companyfacts_status=[item.to_dict() for item in companyfacts_status],
+        companyfacts_summary=companyfacts_summary_payload,
     )
 
 
