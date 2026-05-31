@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import ipaddress
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -9,6 +9,12 @@ import pytest
 from sectorscout.config import SectorScoutConfig
 from sectorscout.db import connect_database, initialize_database
 from sectorscout.demo import demo_readiness, run_demo_init
+from sectorscout.hindsight import (
+    default_hindsight_cases,
+    historical_pattern_summary,
+    scan_hindsight_cases,
+    seed_hindsight_cases,
+)
 from sectorscout.intel.chandler_seed import load_chandler_fixture, seed_chandler_fixture
 from sectorscout.intel.capture_inbox import capture_markdown_text
 from sectorscout.intel.manual_inbox import parse_manual_markdown
@@ -1099,3 +1105,85 @@ def test_ui_and_intel_modules_import() -> None:
     import sectorscout.intel.storage  # noqa: F401
     import sectorscout.ui.data  # noqa: F401
     import sectorscout.ui.pages.historical_lab  # noqa: F401
+
+
+def test_hindsight_default_cases_include_requested_symbols() -> None:
+    symbols = {case.symbol for case in default_hindsight_cases()}
+    assert {"NVDA", "MU", "SNDK", "LITE"}.issubset(symbols)
+
+
+def test_hindsight_scan_marks_missing_price_history(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    count = seed_hindsight_cases(config, tmp_path / "leader_cases.csv")
+    results = scan_hindsight_cases(config, path=tmp_path / "leader_cases.csv", persist=False)
+    assert count == 4
+    assert len(results) == 4
+    assert {result.symbol for result in results} == {"NVDA", "MU", "SNDK", "LITE"}
+    assert all(result.data_quality == "missing_price_history" for result in results)
+
+
+def test_hindsight_scan_scores_loaded_price_path(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    case_file = tmp_path / "cases.csv"
+    case_file.write_text(
+        "\n".join(
+            [
+                "symbol,label,start_date,end_date,theme,hindsight_reason,anchor_event,source_url",
+                "NVDA,NVDA test,2024-01-02,2024-04-30,AI chips,Study test case,AI demand,https://example.com",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    start = date(2024, 1, 2)
+    rows = []
+    for offset in range(90):
+        current = start + timedelta(days=offset)
+        close = 10.0 + (offset * 0.2)
+        rows.append(
+            [
+                "NVDA",
+                current,
+                close,
+                close,
+                close,
+                close,
+                1_000_000 + offset,
+                close,
+                close,
+                close,
+                close,
+                1_000_000 + offset,
+                "fixture",
+                True,
+                False,
+                datetime.now(timezone.utc),
+            ]
+        )
+    with connect_database(config.database.path) as connection:
+        connection.executemany(
+            """
+            INSERT INTO daily_prices (
+                symbol, price_date, open, high, low, close, volume,
+                adj_open, adj_high, adj_low, adj_close, adj_volume,
+                provider, is_adjusted, adjustment_warning, ingested_at_utc
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            rows,
+        )
+    [result] = scan_hindsight_cases(config, path=case_file, persist=False)
+    assert result.symbol == "NVDA"
+    assert result.price_rows == 90
+    assert result.data_quality == "ok"
+    assert result.max_gain_pct is not None and result.max_gain_pct > 100
+    assert result.hindsight_score > 0
+
+
+def test_historical_pattern_summary_separates_industry_and_technical_patterns(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    results = scan_hindsight_cases(config, path=tmp_path / "leader_cases.csv", persist=False)
+    summary = historical_pattern_summary(default_hindsight_cases(), results)
+    industry_patterns = summary["industry_patterns"]
+    technical_patterns = summary["technical_patterns"]
+    assert any(row["Industry / theme pattern"] == "AI semiconductors" for row in industry_patterns)
+    assert any(row["Technical pattern to test"] == "Stage 2 trend proxy" for row in technical_patterns)
+    assert all("Status" in row for row in industry_patterns + technical_patterns)

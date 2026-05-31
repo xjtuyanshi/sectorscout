@@ -29,7 +29,7 @@ PAGES = {
     "Vision Review": vision_review.render,
     "Internal vs External Overlap": overlap.render,
     "Ticker Detail": ticker_detail.render,
-    "Historical Research Lab": historical_lab.render,
+    "Historical Pattern Discovery": historical_lab.render,
     "Notes / Review": notes_review.render,
     "Settings / Source Status": settings.render,
 }

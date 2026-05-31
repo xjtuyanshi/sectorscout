@@ -26,6 +26,8 @@ TABLES = [
     "intel_trade_views",
     "intel_review_marks",
     "intel_notes",
+    "hindsight_case_studies",
+    "hindsight_scan_results",
 ]
 
 

@@ -18,6 +18,12 @@ from sectorscout.data_quality import (
 from sectorscout.db import initialize_database, persist_run_metadata
 from sectorscout.demo import DEMO_ASOF_DATE, demo_readiness, run_demo_init
 from sectorscout.execution import generate_execution_decisions
+from sectorscout.hindsight import (
+    DEFAULT_HINDSIGHT_CASES_PATH,
+    scan_hindsight_cases,
+    seed_hindsight_cases,
+    write_default_hindsight_cases,
+)
 from sectorscout.ingest import (
     ingest_corporate_actions_csv,
     ingest_fundamental_facts_csv,
@@ -50,10 +56,12 @@ intel_capture_app = typer.Typer(help="Human-in-the-loop external intel capture."
 intel_report_app = typer.Typer(help="External intel report commands.")
 intel_sources_app = typer.Typer(help="Configured public intel sources.")
 intel_x_app = typer.Typer(help="Official X API external intel collection.")
+hindsight_app = typer.Typer(help="Historical hindsight case-study tools.")
 app.add_typer(intel_capture_app, name="intel-capture")
 app.add_typer(intel_report_app, name="intel-report")
 app.add_typer(intel_sources_app, name="intel-sources")
 app.add_typer(intel_x_app, name="intel-x")
+app.add_typer(hindsight_app, name="hindsight")
 
 
 def _load(config: Path):
@@ -357,6 +365,37 @@ def report(
 @app.command()
 def backtest() -> None:
     _phase0_not_implemented("backtest")
+
+
+@hindsight_app.command("write-default-cases")
+def hindsight_write_default_cases(
+    path: Path = typer.Option(DEFAULT_HINDSIGHT_CASES_PATH, "--path"),
+) -> None:
+    """Write the default hindsight leader case-study seed file."""
+    typer.echo(str(write_default_hindsight_cases(path)))
+
+
+@hindsight_app.command("seed")
+def hindsight_seed(
+    path: Path = typer.Option(DEFAULT_HINDSIGHT_CASES_PATH, "--path"),
+    config: Path = typer.Option(Path("config.yaml"), "--config"),
+) -> None:
+    """Persist the hindsight case-study seed list into DuckDB."""
+    loaded = _load(config)
+    count = seed_hindsight_cases(loaded, path)
+    typer.echo(json.dumps({"seeded_cases": count, "path": str(path)}, indent=2, sort_keys=True))
+
+
+@hindsight_app.command("scan")
+def hindsight_scan(
+    path: Path = typer.Option(DEFAULT_HINDSIGHT_CASES_PATH, "--path"),
+    persist: bool = typer.Option(True, "--persist/--no-persist"),
+    config: Path = typer.Option(Path("config.yaml"), "--config"),
+) -> None:
+    """Run case-study hindsight diagnostics for configured historical leader examples."""
+    loaded = _load(config)
+    results = scan_hindsight_cases(loaded, path=path, persist=persist)
+    typer.echo(json.dumps([result.to_dict() for result in results], indent=2, sort_keys=True))
 
 
 @app.command("execution-decisions")
