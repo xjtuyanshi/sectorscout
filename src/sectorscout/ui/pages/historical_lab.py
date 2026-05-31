@@ -28,6 +28,10 @@ from sectorscout.hindsight import (
     seed_hindsight_events,
     seed_hindsight_cases,
 )
+from sectorscout.hindsight_case_timeline import (
+    build_hindsight_case_timelines,
+    case_timelines_to_frame,
+)
 from sectorscout.hindsight_companyfacts import build_hindsight_companyfacts
 from sectorscout.hindsight_industry_profile import (
     build_hindsight_industry_profiles,
@@ -198,6 +202,14 @@ def render(ctx: UIContext) -> None:
             "Industry and fundamental claims must have source, timestamp, and replay usability before they support a pattern."
         )
         st.dataframe(_display_evidence_frame(evidence), use_container_width=True, hide_index=True)
+        st.markdown("#### Case Evidence Timeline")
+        st.caption(
+            "Event-study style timing: event date, replay decision time, evidence available then, later context, and gate status."
+        )
+        timelines = build_hindsight_case_timelines(ctx.config)
+        _render_case_timeline_cards(timelines)
+        with st.expander("Timeline detail table", expanded=False):
+            st.dataframe(case_timelines_to_frame(timelines), use_container_width=True, hide_index=True)
         st.markdown("#### Industry Evidence Profiles")
         st.caption(
             "These profiles turn evidence rows into reviewable industry mechanisms. They do not change SectorScout scores."
@@ -357,6 +369,11 @@ def _render_lab_refresh(ctx: UIContext) -> None:
             if result.industry_profiles:
                 st.markdown("#### Industry Evidence Profiles")
                 st.dataframe(pd.DataFrame(result.industry_profiles), use_container_width=True, hide_index=True)
+            if result.case_timelines:
+                st.markdown("#### Case Evidence Timeline")
+                _render_case_timeline_cards(result.case_timelines)
+                with st.expander("Timeline detail table", expanded=False):
+                    st.dataframe(pd.DataFrame(result.case_timelines), use_container_width=True, hide_index=True)
             if result.pattern_matrix:
                 st.markdown("#### Industry + Technical Matrix")
                 st.dataframe(pd.DataFrame(result.pattern_matrix), use_container_width=True, hide_index=True)
@@ -653,6 +670,46 @@ def _render_pattern_candidate_cards(items: list[object]) -> None:
             "</div>"
         )
     st.markdown(f"<div class='ss-research-card-grid'>{''.join(cards)}</div>", unsafe_allow_html=True)
+
+
+def _render_case_timeline_cards(items: list[object]) -> None:
+    if not items:
+        st.info("No case timeline rows available yet.")
+        return
+    cards: list[str] = []
+    for item in items:
+        row = item.to_dict() if hasattr(item, "to_dict") else dict(item)
+        status = str(row.get("timeline_status") or "")
+        evidence_count = len(row.get("knowable_evidence") or [])
+        future_count = len(row.get("future_context") or [])
+        cards.append(
+            "<div class=\"ss-research-card ss-tone-"
+            f"{_safe_tone(row.get('tone'))}\">"
+            f"<div class=\"ss-card-kicker\">{escape(_friendly_text(row.get('case_role')))}</div>"
+            f"<div class=\"ss-card-title\">{escape(str(row.get('symbol') or '-'))} evidence timeline</div>"
+            f"<div class=\"ss-card-value\">{escape(_friendly_timeline_status(status))}</div>"
+            f"<div class=\"ss-card-body\">{escape(_clip(row.get('reviewer_readout'), 170))}</div>"
+            f"<div class=\"ss-card-line\"><span>Event</span><span>{escape(str(row.get('event_date') or '-'))}</span></div>"
+            f"<div class=\"ss-card-line\"><span>Replay</span><span>{escape(_clip(row.get('replay_decision_at_utc') or '-', 80))}</span></div>"
+            f"<div class=\"ss-card-line\"><span>Evidence</span><span>{evidence_count} knowable / {future_count} later</span></div>"
+            f"<div class=\"ss-card-line\"><span>Timing</span><span>{escape(str(row.get('timing_status') or '-'))}</span></div>"
+            f"<div class=\"ss-card-line\"><span>Technical</span><span>{escape(str(row.get('pre_event_status') or '-'))}</span></div>"
+            f"<div class=\"ss-card-line\"><span>Next</span><span>{escape(_clip(row.get('next_research_step'), 125))}</span></div>"
+            "</div>"
+        )
+    st.markdown(f"<div class='ss-case-card-grid'>{''.join(cards)}</div>", unsafe_allow_html=True)
+
+
+def _friendly_timeline_status(status: str) -> str:
+    return {
+        "PIT_TIMELINE_READY": "PIT timeline ready",
+        "FUTURE_CONTEXT_SPLIT": "Future context split",
+        "CONTROL_EVIDENCE_GAP": "Control evidence gap",
+        "TECHNICAL_DATA_GAP": "Technical data gap",
+        "TIMING_DATA_GAP": "Timing data gap",
+        "EVIDENCE_DATA_GAP": "Evidence data gap",
+        "TIMELINE_REVIEW": "Timeline review",
+    }.get(status, status.replace("_", " ").title())
 
 
 def _friendly_candidate_status(status: str) -> str:

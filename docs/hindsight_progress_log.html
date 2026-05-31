@@ -192,22 +192,163 @@
     <section class="grid grid-3">
       <div class="card">
         <div class="kicker">Current focus</div>
-        <div class="metric">rule cards</div>
-        <div class="note">把 NVDA、MU、SNDK、LITE 和控制组转成候选规律卡片，方便逐条 review。</div>
+        <div class="metric">timelines</div>
+        <div class="note">把每个历史案例拆成事件日、replay decision time、当时可用证据和未来证据。</div>
       </div>
       <div class="card">
         <div class="kicker">Coverage impact</div>
-        <div class="metric">5 candidates</div>
-        <div class="note">新增 anchor compute、memory、storage guardrail、optical、control comparability 五类候选卡。</div>
+        <div class="metric">7 cases</div>
+        <div class="note">NVDA、MU、SNDK、LITE、AMD、INTC、MRVL 都有 PIT timeline readout。</div>
       </div>
       <div class="card">
         <div class="kicker">Boundary</div>
         <div class="metric">overlay</div>
-        <div class="note">候选卡只表达研究假设、证据要求和下一步，不改变 live scoring。</div>
+        <div class="note">时间轴只解释什么信息当时可见，不产生交易指令，也不做收益统计。</div>
       </div>
     </section>
 
     <section class="timeline">
+      <article class="entry">
+        <div class="entry-head">
+          <div>
+            <div class="kicker">Update 2026-05-31</div>
+            <div class="entry-title">PIT Case Evidence Timelines</div>
+          </div>
+          <div class="entry-meta">
+            Source basis: event-study timing + negative controls<br>
+            Verification: targeted tests and full regression passed
+          </div>
+        </div>
+
+        <div class="grid grid-2">
+          <div>
+            <h2>1. 这一版做了什么功能</h2>
+            <table>
+              <thead>
+                <tr><th>Field</th><th>Why it matters</th><th>UI</th></tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Replay decision time</td>
+                  <td>明确事件发布后第一个可用决策点，避免把后来的信息塞回过去。</td>
+                  <td><span class="status green">new</span></td>
+                </tr>
+                <tr>
+                  <td>Knowable evidence</td>
+                  <td>只列 replay point 之前已经可用的官方证据。</td>
+                  <td><span class="status blue">PIT</span></td>
+                </tr>
+                <tr>
+                  <td>Future context</td>
+                  <td>SNDK 这类 later confirmation 单独显示，不能支持原始 replay。</td>
+                  <td><span class="status amber">guardrail</span></td>
+                </tr>
+                <tr>
+                  <td>Gate status</td>
+                  <td>同一张卡显示 timing、pre-event technical、first-tradable 数据状态。</td>
+                  <td><span class="status purple">QA</span></td>
+                </tr>
+                <tr>
+                  <td>Control evidence gaps</td>
+                  <td>AMD、INTC、MRVL 缺同等级证据时，不当作反证或失败。</td>
+                  <td><span class="status amber">control</span></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div>
+            <h2>2. Performance 改进了多少</h2>
+            <table>
+              <thead>
+                <tr><th>Review workflow</th><th>Before</th><th>After</th></tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>时间理解</td>
+                  <td>要分别看 event ledger、evidence ledger、gates</td>
+                  <td>一张 timeline card 直接显示 replay time 和可用证据</td>
+                </tr>
+                <tr>
+                  <td>防止未来信息泄漏</td>
+                  <td>later evidence 只在 evidence 表里</td>
+                  <td>future context 计数和 guardrail 直接出现在卡片</td>
+                </tr>
+                <tr>
+                  <td>控制组解释</td>
+                  <td>控制组 DATA_GAP 容易误读</td>
+                  <td>Control evidence gap 明确表示还不能比较</td>
+                </tr>
+                <tr>
+                  <td>下一步数据任务</td>
+                  <td>需要自己推断要补什么</td>
+                  <td>每个 symbol 给下一步 source / technical / timing 任务</td>
+                </tr>
+              </tbody>
+            </table>
+            <p class="note" style="margin-top:10px;">这里的 Performance 是研究审查速度和防错能力，不是策略表现。</p>
+          </div>
+        </div>
+
+        <div class="grid grid-2" style="margin-top:14px;">
+          <div>
+            <h2>3. 逻辑上哪里改变了</h2>
+            <div class="diagram" aria-label="Case evidence timeline workflow diagram">
+              <svg viewBox="0 0 820 230" role="img">
+                <defs>
+                  <marker id="arrow6" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+                    <path d="M0,0 L0,6 L9,3 z" fill="#5b6572"></path>
+                  </marker>
+                </defs>
+                <rect x="36" y="54" width="150" height="70" rx="8" fill="#ffffff" stroke="#d9dee7"></rect>
+                <text x="111" y="82" text-anchor="middle" font-weight="700" fill="#101418">Event ledger</text>
+                <text x="111" y="104" text-anchor="middle" font-size="12" fill="#5b6572">date + source time</text>
+                <line x1="186" y1="89" x2="270" y2="89" stroke="#5b6572" stroke-width="2" marker-end="url(#arrow6)"></line>
+
+                <rect x="270" y="54" width="150" height="70" rx="8" fill="#ffffff" stroke="#d9dee7"></rect>
+                <text x="345" y="82" text-anchor="middle" font-weight="700" fill="#101418">Evidence ledger</text>
+                <text x="345" y="104" text-anchor="middle" font-size="12" fill="#5b6572">PIT vs future</text>
+                <line x1="420" y1="89" x2="504" y2="89" stroke="#5b6572" stroke-width="2" marker-end="url(#arrow6)"></line>
+
+                <rect x="504" y="54" width="150" height="70" rx="8" fill="#ffffff" stroke="#d9dee7"></rect>
+                <text x="579" y="82" text-anchor="middle" font-weight="700" fill="#101418">Replay gates</text>
+                <text x="579" y="104" text-anchor="middle" font-size="12" fill="#5b6572">technical status</text>
+                <line x1="579" y1="124" x2="579" y2="164" stroke="#5b6572" stroke-width="2" marker-end="url(#arrow6)"></line>
+
+                <rect x="458" y="164" width="242" height="44" rx="8" fill="#f8fbff" stroke="#b8d4ff"></rect>
+                <text x="579" y="191" text-anchor="middle" font-weight="700" fill="#174ea6">Case Evidence Timeline</text>
+
+                <rect x="90" y="164" width="220" height="44" rx="8" fill="#fff7ed" stroke="#fed7aa"></rect>
+                <text x="200" y="191" text-anchor="middle" font-weight="700" fill="#9a6700">Separate later context</text>
+                <line x1="310" y1="186" x2="458" y2="186" stroke="#5b6572" stroke-width="2" marker-end="url(#arrow6)"></line>
+              </svg>
+            </div>
+          </div>
+          <div>
+            <h2>4. Best-practice basis</h2>
+            <table>
+              <thead>
+                <tr><th>Reference</th><th>Applied here</th></tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Event-study methodology</td>
+                  <td>先锁定 event date / decision point，再看窗口内发生什么。</td>
+                </tr>
+                <tr>
+                  <td>Negative controls</td>
+                  <td>控制组必须有同等级证据后才能解释 bias 或机制宽窄。</td>
+                </tr>
+                <tr>
+                  <td>Model governance</td>
+                  <td>设计、监控、结果分析分层；本层仍不是 formal validation。</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </article>
+
       <article class="entry">
         <div class="entry-head">
           <div>

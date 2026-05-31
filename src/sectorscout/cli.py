@@ -463,6 +463,23 @@ def hindsight_industry_profiles(
     typer.echo(json.dumps(payload, indent=2, sort_keys=True))
 
 
+@hindsight_app.command("case-timeline")
+def hindsight_case_timeline(
+    path: Path = typer.Option(DEFAULT_HINDSIGHT_CASES_PATH, "--path"),
+    config: Path = typer.Option(Path("config.yaml"), "--config"),
+) -> None:
+    """Build event-time, PIT-evidence, and gate-status timeline rows for historical cases."""
+    from sectorscout.hindsight_case_timeline import build_hindsight_case_timelines, case_timeline_summary
+
+    loaded = _load(config)
+    timelines = build_hindsight_case_timelines(loaded, path=path)
+    payload = {
+        "summary": case_timeline_summary(timelines),
+        "timelines": [item.to_dict() for item in timelines],
+    }
+    typer.echo(json.dumps(payload, indent=2, sort_keys=True))
+
+
 @hindsight_app.command("pattern-matrix")
 def hindsight_pattern_matrix(
     path: Path = typer.Option(DEFAULT_HINDSIGHT_CASES_PATH, "--path"),

@@ -35,6 +35,10 @@ from sectorscout.hindsight_playbook import (
     build_hindsight_pattern_playbook_markdown,
     generate_hindsight_pattern_playbook,
 )
+from sectorscout.hindsight_case_timeline import (
+    build_hindsight_case_timelines,
+    case_timeline_summary,
+)
 from sectorscout.hindsight_companyfacts import (
     build_hindsight_companyfacts,
     extract_companyfacts_candidates,
@@ -1539,6 +1543,8 @@ def test_hindsight_pattern_playbook_exports_markdown(tmp_path: Path) -> None:
     assert "## Case Map" in markdown
     assert "## Industry Evidence Profiles" in markdown
     assert "AI data-center compute demand" in markdown
+    assert "## Case Evidence Timeline" in markdown
+    assert "Future-context splits" in markdown
     assert "## Pattern Candidate Cards" in markdown
     assert "Anchor compute demand shock" in markdown
     assert "Storage context split" in markdown
@@ -1766,6 +1772,7 @@ def test_hindsight_refresh_runs_pipeline_without_network(tmp_path: Path) -> None
     steps = {str(step["step"]): step for step in payload["steps"]}
     assert steps["industry_profiles"]["rows"] == 7
     assert steps["public_price_history"]["status"] == "SKIPPED"
+    assert steps["case_timelines"]["rows"] == 7
     assert steps["pattern_matrix"]["rows"] == 7
     assert steps["pattern_diagnostics"]["rows"] == 5
     assert steps["pattern_candidates"]["rows"] == 5
@@ -1778,6 +1785,12 @@ def test_hindsight_refresh_runs_pipeline_without_network(tmp_path: Path) -> None
     assert payload["sec_filing_metadata_summary"]["parsed_only_filings"] == 4
     assert payload["industry_profile_summary"]["profiles"] == 7
     assert payload["industry_profile_summary"]["pit_ready_profiles"] == 4
+    assert payload["case_timeline_summary"]["timelines"] == 7
+    assert payload["case_timeline_summary"]["future_context_splits"] == 1
+    assert any(
+        row["symbol"] == "SNDK" and row["timeline_status"] == "FUTURE_CONTEXT_SPLIT"
+        for row in payload["case_timelines"]
+    )
     assert payload["pattern_matrix_summary"]["rows"] == 7
     assert payload["pattern_matrix_summary"]["control_review_rows"] == 3
     assert payload["pattern_diagnostics_summary"]["diagnostics"] == 5
@@ -1808,6 +1821,7 @@ def test_hindsight_refresh_runs_pipeline_without_network(tmp_path: Path) -> None
     assert result.row_counts["hindsight_hypothesis_case_results"] == 28
     written = Path(result.playbook_path).read_text(encoding="utf-8")
     assert "H3 - Industry evidence plus pre-event technical strength" in written
+    assert "## Case Evidence Timeline" in written
     assert "## Pattern Candidate Cards" in written
     forbidden = ["buy signal", "sell signal", "win rate", "Sharpe", "CAGR", "profit factor", "strategy edge"]
     assert not any(term.lower() in json.dumps(payload).lower() for term in forbidden)
@@ -1924,6 +1938,35 @@ def test_hindsight_industry_profiles_structure_drivers_and_pit_status(tmp_path: 
     assert summary["profiles"] == 7
     assert summary["pit_ready_profiles"] == 4
     assert summary["data_gap_profiles"] == 3
+
+
+def test_hindsight_case_timelines_separate_pit_and_future_context(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    seed_hindsight_events(config, tmp_path / "leader_cases.csv")
+    seed_hindsight_evidence(config, tmp_path / "leader_cases.csv")
+    build_hindsight_replay_gates(config, path=tmp_path / "leader_cases.csv", persist=True)
+
+    timelines = build_hindsight_case_timelines(config, path=tmp_path / "leader_cases.csv")
+    by_symbol = {row.symbol: row for row in timelines}
+
+    assert len(timelines) == 7
+    assert by_symbol["NVDA"].event_date == "2024-02-21"
+    assert by_symbol["NVDA"].first_tradable_date == "2024-02-22"
+    assert by_symbol["NVDA"].replay_decision_at_utc == "2024-02-22T14:30:00+00:00"
+    assert any("Data Center revenue" in item for item in by_symbol["NVDA"].knowable_evidence)
+    assert by_symbol["NVDA"].timeline_status == "TECHNICAL_DATA_GAP"
+    assert by_symbol["SNDK"].timeline_status == "FUTURE_CONTEXT_SPLIT"
+    assert by_symbol["SNDK"].first_tradable_policy == "first_regular_way_trading_session_only_no_wdc_splice"
+    assert any("Datacenter revenue" in item for item in by_symbol["SNDK"].future_context)
+    assert "cannot support the original replay point" in by_symbol["SNDK"].guardrail
+    assert by_symbol["AMD"].timeline_status == "CONTROL_EVIDENCE_GAP"
+    assert "cannot confirm or reject" in by_symbol["AMD"].reviewer_readout
+
+    summary = case_timeline_summary(timelines)
+    assert summary["timelines"] == 7
+    assert summary["future_context_splits"] == 1
+    assert summary["control_evidence_gaps"] == 3
+    assert summary["technical_data_gaps"] == 3
 
 
 def test_hindsight_pattern_matrix_combines_industry_and_technical_gates(tmp_path: Path) -> None:

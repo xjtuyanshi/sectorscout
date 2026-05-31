@@ -13,6 +13,10 @@ from sectorscout.hindsight import (
     latest_hindsight_hypothesis_case_results,
     latest_hindsight_replay_gates,
 )
+from sectorscout.hindsight_case_timeline import (
+    build_hindsight_case_timelines,
+    case_timeline_summary,
+)
 from sectorscout.hindsight_companyfacts import build_hindsight_companyfacts, companyfacts_summary
 from sectorscout.hindsight_industry_profile import build_hindsight_industry_profiles, industry_profile_summary
 from sectorscout.hindsight_pattern_candidates import (
@@ -76,6 +80,7 @@ def build_hindsight_pattern_playbook_markdown(
     pattern_rows = build_pattern_insight_rows(hypotheses, case_results)
     case_rows = build_case_pattern_map_rows(events, evidence, gates, hypotheses, case_results)
     source_audit = build_hindsight_source_audit(config)
+    case_timelines = build_hindsight_case_timelines(config)
     industry_profiles = build_hindsight_industry_profiles(config)
     pattern_matrix = build_hindsight_pattern_matrix(config)
     pattern_diagnostics = build_hindsight_pattern_diagnostics(pattern_matrix)
@@ -139,6 +144,8 @@ def build_hindsight_pattern_playbook_markdown(
             lines.extend(_case_card_lines(card))
         lines.extend(["## Industry Evidence Profiles", ""])
         lines.extend(_industry_profile_lines(industry_profiles))
+        lines.extend(["## Case Evidence Timeline", ""])
+        lines.extend(_case_timeline_lines(case_timelines))
         lines.extend(["## Pattern Candidate Cards", ""])
         lines.extend(_pattern_candidate_lines(discovery_candidates))
         lines.extend(["## Industry + Technical Matrix", ""])
@@ -261,6 +268,44 @@ def _industry_profile_lines(profiles: list[Any]) -> list[str]:
                     _md(profile.profile_status),
                     _md(", ".join(profile.mechanism_tags) or "-"),
                     f"{_md(profile.review_note)} |",
+                ]
+            )
+        )
+    lines.append("")
+    return lines
+
+
+def _case_timeline_lines(items: list[Any]) -> list[str]:
+    summary = case_timeline_summary(items)
+    lines = [
+        f"- Timelines: {_md(summary.get('timelines'))}",
+        f"- PIT-ready timelines: {_md(summary.get('pit_ready'))}",
+        f"- Future-context splits: {_md(summary.get('future_context_splits'))}",
+        f"- Control evidence gaps: {_md(summary.get('control_evidence_gaps'))}",
+        f"- Technical data gaps: {_md(summary.get('technical_data_gaps'))}",
+        "",
+    ]
+    if not items:
+        return lines + ["No case timeline rows are available yet.", ""]
+    lines.extend(
+        [
+            "| Symbol | Event date | Replay decision | Knowable evidence | Future context | Timing | Pre-event technical | Status | Next step |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+        ]
+    )
+    for item in items:
+        lines.append(
+            " | ".join(
+                [
+                    f"| {_md(item.symbol)}",
+                    _md(item.event_date),
+                    _md(item.replay_decision_at_utc or "-"),
+                    _md("; ".join(item.knowable_evidence) or "-"),
+                    _md("; ".join(item.future_context) or "-"),
+                    _md(item.timing_status),
+                    _md(item.pre_event_status),
+                    _md(item.timeline_status),
+                    f"{_md(item.next_research_step)} |",
                 ]
             )
         )

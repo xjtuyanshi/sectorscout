@@ -20,6 +20,7 @@ from sectorscout.hindsight import (
     seed_hindsight_events,
     write_default_hindsight_cases,
 )
+from sectorscout.hindsight_case_timeline import build_hindsight_case_timelines, case_timeline_summary
 from sectorscout.hindsight_companyfacts import build_hindsight_companyfacts, companyfacts_summary
 from sectorscout.hindsight_industry_profile import build_hindsight_industry_profiles, industry_profile_summary
 from sectorscout.hindsight_pattern_candidates import (
@@ -90,6 +91,8 @@ class HindsightRefreshResult:
     companyfacts_summary: dict[str, object]
     industry_profiles: list[dict[str, object]]
     industry_profile_summary: dict[str, object]
+    case_timelines: list[dict[str, object]]
+    case_timeline_summary: dict[str, object]
     pattern_matrix: list[dict[str, object]]
     pattern_matrix_summary: dict[str, object]
     pattern_diagnostics: list[dict[str, object]]
@@ -204,6 +207,17 @@ def run_hindsight_refresh(
 
     gates = build_hindsight_replay_gates(config, path=path, persist=True, asof_date=effective_asof)
     steps.append(HindsightRefreshStep("replay_gates", "OK", "Built timing, technical, and first-session replay gates.", len(gates)))
+
+    case_timelines = build_hindsight_case_timelines(config, path=path)
+    case_timeline_summary_payload = case_timeline_summary(case_timelines)
+    steps.append(
+        HindsightRefreshStep(
+            "case_timelines",
+            "OK",
+            "Built case timelines with event timing, knowable evidence, future context, and gate status.",
+            len(case_timelines),
+        )
+    )
 
     pattern_matrix = build_hindsight_pattern_matrix(config, path=path)
     pattern_matrix_summary_payload = pattern_matrix_summary(pattern_matrix)
@@ -344,6 +358,8 @@ def run_hindsight_refresh(
         companyfacts_summary=companyfacts_summary_payload,
         industry_profiles=[item.to_dict() for item in industry_profiles],
         industry_profile_summary=industry_profile_summary_payload,
+        case_timelines=[item.to_dict() for item in case_timelines],
+        case_timeline_summary=case_timeline_summary_payload,
         pattern_matrix=[item.to_dict() for item in pattern_matrix],
         pattern_matrix_summary=pattern_matrix_summary_payload,
         pattern_diagnostics=[item.to_dict() for item in pattern_diagnostics],

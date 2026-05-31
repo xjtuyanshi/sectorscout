@@ -223,6 +223,7 @@ or a computed replay gate link.
 .venv/bin/sectorscout hindsight seed-events
 .venv/bin/sectorscout hindsight seed-evidence
 .venv/bin/sectorscout hindsight industry-profiles
+.venv/bin/sectorscout hindsight case-timeline
 .venv/bin/sectorscout hindsight pattern-matrix
 .venv/bin/sectorscout hindsight pattern-diagnostics
 .venv/bin/sectorscout hindsight pattern-candidates
@@ -283,6 +284,12 @@ After `scan`, review:
 - `hindsight_evidence_items` for point-in-time industry and fundamental evidence;
 - `hindsight industry-profiles` for a dynamic review layer that turns evidence
   rows into demand driver, chain-node, mechanism-tag, and PIT status summaries;
+- `hindsight case-timeline` for an event-study style timeline that shows event
+  date, replay decision time, first-tradable policy, knowable evidence, later
+  context, timing gates, and pre-event technical status per case;
+- the Historical Lab `Case Evidence Timeline` cards for quickly spotting which
+  symbols are PIT-ready, future-context splits, control evidence gaps, or
+  technical data gaps;
 - `hindsight pattern-matrix` for the industry plus technical review matrix that
   combines industry profile status with pre-event price coverage, Stage 2 trend,
   and fixed-benchmark relative strength gates;
@@ -331,6 +338,21 @@ bias. A control `DATA_GAP` means the same point-in-time evidence has not been
 loaded yet, not that the control failed. If a control later supports a
 hypothesis under the same rules, the registry must move to control review before
 any future replay promotion.
+
+## Methodology References
+
+This lab borrows structure from event-study and model-governance practice, while
+remaining a research workflow rather than a statistical validation module.
+
+- Event-study discipline: define the event date, event-time availability, and
+  event window before interpreting reactions. See MacKinlay, "Event Studies in
+  Economics and Finance" (1997): https://www.bu.edu/econ/files/2011/01/MacKinlay-1996-Event-Studies-in-Economics-and-Finance.pdf
+- Negative controls: use controls to detect suspected or unsuspected bias rather
+  than treating missing control evidence as a failed pattern. See Lipsitch,
+  Tchetgen Tchetgen, and Cohen (2010): https://pmc.ncbi.nlm.nih.gov/articles/PMC3053408/
+- Model-risk hygiene: keep documentation, ongoing monitoring, and outcomes
+  analysis separate from initial model design. See Federal Reserve SR 11-7:
+  https://www.federalreserve.gov/frrs/guidance/supervisory-guidance-on-model-risk-management.htm
 
 ## Safety Rules
 
