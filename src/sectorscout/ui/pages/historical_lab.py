@@ -28,6 +28,7 @@ from sectorscout.hindsight import (
     seed_hindsight_events,
     seed_hindsight_cases,
 )
+from sectorscout.hindsight_playbook import generate_hindsight_pattern_playbook
 from sectorscout.intel.storage import insert_review_mark
 from sectorscout.ui.data import UIContext, row_count, table_exists
 from sectorscout.ui.hindsight_presenter import (
@@ -335,6 +336,9 @@ def _render_hypothesis_registry(ctx: UIContext) -> None:
     if pattern_map_rows:
         _render_case_cards(build_case_story_cards(pattern_map_rows))
         st.dataframe(pattern_map_rows, use_container_width=True, hide_index=True)
+    if st.button("Generate pattern playbook", use_container_width=True):
+        path = generate_hindsight_pattern_playbook(ctx.config)
+        st.success(f"Generated playbook: {path}")
     st.dataframe(_display_hypotheses_frame(hypotheses, case_results), use_container_width=True, hide_index=True)
     st.markdown("#### Case Matrix")
     st.dataframe(_display_hypothesis_case_matrix(hypotheses, case_results), use_container_width=True, hide_index=True)

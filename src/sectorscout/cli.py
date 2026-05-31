@@ -504,6 +504,20 @@ def hindsight_fetch_prices(
     typer.echo(json.dumps(result, indent=2, sort_keys=True))
 
 
+@hindsight_app.command("playbook")
+def hindsight_playbook(
+    output_dir: Path = typer.Option(Path("data/hindsight/reports"), "--output-dir"),
+    asof: str | None = typer.Option(None, "--asof"),
+    config: Path = typer.Option(Path("config.yaml"), "--config"),
+) -> None:
+    """Generate a Markdown pattern playbook from current hindsight evidence."""
+    from sectorscout.hindsight_playbook import generate_hindsight_pattern_playbook
+
+    loaded = _load(config)
+    path = generate_hindsight_pattern_playbook(loaded, output_dir=output_dir, asof_date=_parse_iso_date(asof))
+    typer.echo(str(path))
+
+
 @app.command("execution-decisions")
 def execution_decisions(
     asof: str = typer.Option(..., "--asof"),

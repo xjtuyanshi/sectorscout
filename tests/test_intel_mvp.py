@@ -31,6 +31,10 @@ from sectorscout.hindsight import (
     seed_hindsight_evidence,
     seed_hindsight_events,
 )
+from sectorscout.hindsight_playbook import (
+    build_hindsight_pattern_playbook_markdown,
+    generate_hindsight_pattern_playbook,
+)
 from sectorscout.intel.chandler_seed import load_chandler_fixture, seed_chandler_fixture
 from sectorscout.intel.capture_inbox import capture_markdown_text
 from sectorscout.intel.manual_inbox import parse_manual_markdown
@@ -1447,6 +1451,35 @@ def test_hindsight_presenter_builds_plain_language_pattern_readout(tmp_path: Pat
     assert len(case_cards) == 7
     assert next(card for card in case_cards if card["Symbol"] == "NVDA")["Technical"]
     assert next(card for card in case_cards if card["Symbol"] == "SNDK")["Tone"] == "amber"
+
+
+def test_hindsight_pattern_playbook_exports_markdown(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    scan_hindsight_cases(config, path=tmp_path / "leader_cases.csv", persist=True)
+    build_hindsight_hypothesis_registry(config, path=tmp_path / "leader_cases.csv")
+
+    markdown = build_hindsight_pattern_playbook_markdown(config, asof_date=date(2026, 5, 31))
+    assert "# SectorScout Hindsight Pattern Playbook" in markdown
+    assert "## Pattern Candidates" in markdown
+    assert "H2 - Downstream revenue conversion" in markdown
+    assert "## Case Map" in markdown
+    assert "NVDA - Anchor leader" in markdown
+    assert "SNDK" in markdown
+    assert "Control case" in markdown or "control" in markdown.lower()
+    assert "## Promotion Boundary" in markdown
+    forbidden = ["buy signal", "sell signal", "win rate", "Sharpe", "CAGR", "profit factor", "strategy edge"]
+    assert not any(term.lower() in markdown.lower() for term in forbidden)
+
+    path = generate_hindsight_pattern_playbook(
+        config,
+        output_dir=tmp_path / "reports",
+        asof_date=date(2026, 5, 31),
+    )
+    assert path.exists()
+    assert path.name == "hindsight_pattern_playbook_2026-05-31.md"
+    written = path.read_text(encoding="utf-8")
+    assert "# SectorScout Hindsight Pattern Playbook" in written
+    assert "H2 - Downstream revenue conversion" in written
 
 
 def test_hindsight_event_ledger_blocks_date_only_reaction(tmp_path: Path) -> None:

@@ -19,3 +19,6 @@ data/intel/media/*
 !data/intel/media/.gitkeep
 data/intel/reports/*
 !data/intel/reports/.gitkeep
+
+data/hindsight/reports/*
+!data/hindsight/reports/.gitkeep

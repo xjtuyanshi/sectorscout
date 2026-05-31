@@ -222,6 +222,7 @@ or a computed replay gate link.
 .venv/bin/sectorscout hindsight build-gates
 .venv/bin/sectorscout hindsight build-observation-links
 .venv/bin/sectorscout hindsight build-hypotheses
+.venv/bin/sectorscout hindsight playbook
 ```
 
 `fetch-prices` defaults to the public Yahoo chart JSON endpoint for case-study diagnostics and fetches a 320-calendar-day pre-event lookback by default. That lookback is required for pre-event technical replay gates such as trend, relative strength, and price coverage. Stooq remains available with `--provider stooq_public` when `STOOQ_API_KEY` is configured. Corporate-action adjustment status is marked with a warning in stored price rows, so split-sensitive cases still need provider-quality review before any formal validation.
@@ -238,6 +239,8 @@ After `scan`, review:
   observation to official evidence, computed gates, or a review-required blocker;
 - `hindsight_hypotheses` and `hindsight_hypothesis_case_results` for the
   replay hypothesis registry and its per-case matrix.
+- `data/hindsight/reports/hindsight_pattern_playbook_YYYY-MM-DD.md` for the
+  exported research playbook.
 
 Observation links keep promotion discipline visible. Industry/theme observations
 must link to usable point-in-time evidence. Technical/OHLCV observations must
