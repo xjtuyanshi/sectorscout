@@ -1,0 +1,212 @@
+from __future__ import annotations
+
+from dataclasses import asdict, dataclass
+from datetime import date, datetime, timezone
+from pathlib import Path
+from typing import Any
+
+from sectorscout.config import SectorScoutConfig, config_hash
+from sectorscout.db import connect_database
+from sectorscout.hindsight import (
+    DEFAULT_HINDSIGHT_CASES_PATH,
+    build_hindsight_hypothesis_registry,
+    build_hindsight_observation_links,
+    build_hindsight_replay_gates,
+    ensure_hindsight_tables,
+    fetch_hindsight_prices,
+    scan_hindsight_cases,
+    seed_hindsight_cases,
+    seed_hindsight_evidence,
+    seed_hindsight_events,
+    write_default_hindsight_cases,
+)
+from sectorscout.hindsight_playbook import generate_hindsight_pattern_playbook
+from sectorscout.metadata import get_git_commit
+
+
+HINDSIGHT_REFRESH_TABLES = [
+    "hindsight_case_studies",
+    "hindsight_scan_results",
+    "hindsight_pattern_observations",
+    "hindsight_event_ledger",
+    "hindsight_evidence_items",
+    "hindsight_replay_gates",
+    "hindsight_observation_links",
+    "hindsight_hypotheses",
+    "hindsight_hypothesis_case_results",
+]
+
+
+@dataclass(frozen=True)
+class HindsightRefreshStep:
+    step: str
+    status: str
+    detail: str
+    rows: int | None = None
+
+    def to_dict(self) -> dict[str, object]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class HindsightRefreshResult:
+    generated_at_utc: str
+    asof_date: str
+    case_path: str
+    price_provider: str
+    price_rows_fetched: int
+    price_rows_inserted: int
+    playbook_path: str
+    config_hash: str
+    git_commit: str
+    steps: list[HindsightRefreshStep]
+    row_counts: dict[str, int]
+    price_summary: list[dict[str, Any]]
+
+    def to_dict(self) -> dict[str, object]:
+        payload = asdict(self)
+        payload["steps"] = [step.to_dict() for step in self.steps]
+        return payload
+
+
+def run_hindsight_refresh(
+    config: SectorScoutConfig,
+    *,
+    path: Path = DEFAULT_HINDSIGHT_CASES_PATH,
+    output_dir: Path = Path("data/hindsight/reports"),
+    asof_date: date | None = None,
+    fetch_prices: bool = True,
+    provider: str = "yahoo_chart_public",
+    lookback_days: int = 320,
+    include_benchmarks: bool = True,
+    continue_on_price_error: bool = True,
+) -> HindsightRefreshResult:
+    """Run the complete historical-pattern lab refresh without changing live scores."""
+
+    effective_asof = asof_date or date.today()
+    steps: list[HindsightRefreshStep] = []
+    price_summary: list[dict[str, Any]] = []
+    ensure_hindsight_tables(config)
+
+    if not path.exists():
+        write_default_hindsight_cases(path)
+        steps.append(HindsightRefreshStep("case_seed_file", "OK", f"Wrote default case file at {path}."))
+    else:
+        steps.append(HindsightRefreshStep("case_seed_file", "OK", f"Using case file at {path}."))
+
+    case_count = seed_hindsight_cases(config, path)
+    steps.append(HindsightRefreshStep("case_registry", "OK", "Seeded historical leader and control cases.", case_count))
+
+    event_count = seed_hindsight_events(config, path)
+    steps.append(HindsightRefreshStep("event_ledger", "OK", "Seeded point-in-time event rows.", event_count))
+
+    evidence_count = seed_hindsight_evidence(config, path)
+    steps.append(HindsightRefreshStep("evidence_ledger", "OK", "Seeded official industry/fundamental evidence rows.", evidence_count))
+
+    if fetch_prices:
+        try:
+            price_summary = fetch_hindsight_prices(
+                config,
+                path=path,
+                provider=provider,
+                lookback_days=lookback_days,
+                include_benchmarks=include_benchmarks,
+            )
+            rows_inserted = sum(int(row.get("rows_inserted") or 0) for row in price_summary)
+            rows_fetched = sum(int(row.get("rows_fetched") or 0) for row in price_summary)
+            status = "OK" if rows_inserted else "WARNING"
+            detail = (
+                "Fetched public daily prices for cases and fixed replay benchmarks."
+                if rows_inserted
+                else "No public daily price rows were inserted; technical replay gates may remain DATA GAP."
+            )
+            steps.append(HindsightRefreshStep("public_price_history", status, detail, rows_inserted))
+        except Exception as exc:
+            if not continue_on_price_error:
+                raise
+            steps.append(
+                HindsightRefreshStep(
+                    "public_price_history",
+                    "WARNING",
+                    f"Price fetch skipped after provider error: {type(exc).__name__}: {exc}",
+                    0,
+                )
+            )
+    else:
+        steps.append(
+            HindsightRefreshStep(
+                "public_price_history",
+                "SKIPPED",
+                "Price fetch disabled; replay uses any price rows already loaded.",
+                0,
+            )
+        )
+
+    results = scan_hindsight_cases(config, path=path, persist=True)
+    steps.append(
+        HindsightRefreshStep(
+            "case_scan",
+            "OK",
+            "Scanned case windows and wrote pattern observations.",
+            len(results),
+        )
+    )
+
+    gates = build_hindsight_replay_gates(config, path=path, persist=True, asof_date=effective_asof)
+    steps.append(HindsightRefreshStep("replay_gates", "OK", "Built timing, technical, and first-session replay gates.", len(gates)))
+
+    links = build_hindsight_observation_links(config)
+    steps.append(HindsightRefreshStep("observation_links", "OK", "Linked observations to evidence, gates, or blockers.", len(links)))
+
+    hypotheses, case_results = build_hindsight_hypothesis_registry(
+        config,
+        path=path,
+        persist=True,
+        asof_date=effective_asof,
+    )
+    steps.append(
+        HindsightRefreshStep(
+            "hypothesis_registry",
+            "OK",
+            f"Built {len(hypotheses)} candidate mechanisms across {len(case_results)} case rows.",
+            len(case_results),
+        )
+    )
+
+    playbook_path = generate_hindsight_pattern_playbook(config, output_dir=output_dir, asof_date=effective_asof)
+    steps.append(HindsightRefreshStep("pattern_playbook", "OK", f"Generated research playbook at {playbook_path}.", 1))
+
+    return HindsightRefreshResult(
+        generated_at_utc=datetime.now(timezone.utc).isoformat(),
+        asof_date=effective_asof.isoformat(),
+        case_path=str(path),
+        price_provider=provider,
+        price_rows_fetched=sum(int(row.get("rows_fetched") or 0) for row in price_summary),
+        price_rows_inserted=sum(int(row.get("rows_inserted") or 0) for row in price_summary),
+        playbook_path=str(playbook_path),
+        config_hash=config_hash(config),
+        git_commit=get_git_commit() or "unknown",
+        steps=steps,
+        row_counts=_row_counts(config),
+        price_summary=price_summary,
+    )
+
+
+def _row_counts(config: SectorScoutConfig) -> dict[str, int]:
+    ensure_hindsight_tables(config)
+    return {table: _row_count(config, table) for table in HINDSIGHT_REFRESH_TABLES}
+
+
+def _row_count(config: SectorScoutConfig, table: str) -> int:
+    with connect_database(config.database.path) as connection:
+        exists = connection.execute(
+            """
+            SELECT table_name
+            FROM information_schema.tables
+            WHERE table_schema = 'main' AND table_name = ?
+            """,
+            [table],
+        ).fetchone()
+        if exists is None:
+            return 0
+        return int(connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])

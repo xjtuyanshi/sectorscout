@@ -35,6 +35,7 @@ from sectorscout.hindsight_playbook import (
     build_hindsight_pattern_playbook_markdown,
     generate_hindsight_pattern_playbook,
 )
+from sectorscout.hindsight_workflow import run_hindsight_refresh
 from sectorscout.intel.chandler_seed import load_chandler_fixture, seed_chandler_fixture
 from sectorscout.intel.capture_inbox import capture_markdown_text
 from sectorscout.intel.manual_inbox import parse_manual_markdown
@@ -1480,6 +1481,31 @@ def test_hindsight_pattern_playbook_exports_markdown(tmp_path: Path) -> None:
     written = path.read_text(encoding="utf-8")
     assert "# SectorScout Hindsight Pattern Playbook" in written
     assert "H2 - Downstream revenue conversion" in written
+
+
+def test_hindsight_refresh_runs_pipeline_without_network(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    result = run_hindsight_refresh(
+        config,
+        path=tmp_path / "leader_cases.csv",
+        output_dir=tmp_path / "reports",
+        asof_date=date(2026, 5, 31),
+        fetch_prices=False,
+    )
+    payload = result.to_dict()
+    assert payload["asof_date"] == "2026-05-31"
+    assert Path(str(payload["case_path"])).exists()
+    assert Path(str(payload["playbook_path"])).exists()
+    assert payload["price_rows_inserted"] == 0
+    steps = {str(step["step"]): step for step in payload["steps"]}
+    assert steps["public_price_history"]["status"] == "SKIPPED"
+    assert steps["hypothesis_registry"]["rows"] == 28
+    assert result.row_counts["hindsight_hypotheses"] == 4
+    assert result.row_counts["hindsight_hypothesis_case_results"] == 28
+    written = Path(result.playbook_path).read_text(encoding="utf-8")
+    assert "H3 - Industry evidence plus pre-event technical strength" in written
+    forbidden = ["buy signal", "sell signal", "win rate", "Sharpe", "CAGR", "profit factor", "strategy edge"]
+    assert not any(term.lower() in json.dumps(payload).lower() for term in forbidden)
 
 
 def test_hindsight_event_ledger_blocks_date_only_reaction(tmp_path: Path) -> None:

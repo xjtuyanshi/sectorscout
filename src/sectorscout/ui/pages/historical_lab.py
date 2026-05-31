@@ -29,6 +29,7 @@ from sectorscout.hindsight import (
     seed_hindsight_cases,
 )
 from sectorscout.hindsight_playbook import generate_hindsight_pattern_playbook
+from sectorscout.hindsight_workflow import run_hindsight_refresh
 from sectorscout.intel.storage import insert_review_mark
 from sectorscout.ui.data import UIContext, row_count, table_exists
 from sectorscout.ui.hindsight_presenter import (
@@ -91,6 +92,7 @@ def render(ctx: UIContext) -> None:
         "Research guardrail: evidence and price data must be visible before the claimed decision point. "
         "Default official event seeds resolve known first-tradable sessions; date-only custom events stay blocked."
     )
+    _render_lab_refresh(ctx)
     st.subheader("Methodology guardrails")
     st.dataframe(build_methodology_guardrail_rows(), use_container_width=True, hide_index=True)
 
@@ -267,6 +269,33 @@ def _render_hindsight_review_board(events: pd.DataFrame, gates: pd.DataFrame) ->
         else [row for row in review_rows if str(row["Symbol"]) == selected_symbol]
     )
     st.dataframe(filtered_rows, use_container_width=True, hide_index=True)
+
+
+def _render_lab_refresh(ctx: UIContext) -> None:
+    with st.expander("Refresh lab + playbook", expanded=True):
+        st.write(
+            "Runs the full historical lab pipeline: cases, event ledger, evidence ledger, optional public price "
+            "refresh, case scan, replay gates, observation links, hypothesis registry, and Markdown playbook export."
+        )
+        st.info(
+            "Case-study research refresh only. This does not modify SectorScout base scores or report validation results."
+        )
+        controls = st.columns([1, 1, 1, 1])
+        fetch_prices = controls[0].checkbox("Fetch public prices", value=True)
+        include_benchmarks = controls[1].checkbox("Include fixed benchmarks", value=True)
+        lookback_days = controls[2].number_input("Lookback days", min_value=0, max_value=1200, value=320, step=20)
+        refresh_asof = controls[3].date_input("Refresh as-of", value=date.today())
+        if st.button("Run full historical refresh", use_container_width=True):
+            with st.spinner("Refreshing historical lab artifacts..."):
+                result = run_hindsight_refresh(
+                    ctx.config,
+                    asof_date=refresh_asof,
+                    fetch_prices=fetch_prices,
+                    include_benchmarks=include_benchmarks,
+                    lookback_days=int(lookback_days),
+                )
+            st.success(f"Refresh complete. Playbook: {result.playbook_path}")
+            st.dataframe([step.to_dict() for step in result.steps], use_container_width=True, hide_index=True)
 
 
 def _render_observation_link_panel(ctx: UIContext) -> None:

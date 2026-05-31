@@ -518,6 +518,36 @@ def hindsight_playbook(
     typer.echo(str(path))
 
 
+@hindsight_app.command("refresh")
+def hindsight_refresh(
+    path: Path = typer.Option(DEFAULT_HINDSIGHT_CASES_PATH, "--path"),
+    output_dir: Path = typer.Option(Path("data/hindsight/reports"), "--output-dir"),
+    asof: str | None = typer.Option(None, "--asof"),
+    fetch_prices: bool = typer.Option(True, "--fetch-prices/--no-fetch-prices"),
+    provider: str = typer.Option("yahoo_chart_public", "--provider"),
+    lookback_days: int = typer.Option(320, "--lookback-days", min=0),
+    include_benchmarks: bool = typer.Option(True, "--include-benchmarks/--no-include-benchmarks"),
+    strict_price_fetch: bool = typer.Option(False, "--strict-price-fetch/--no-strict-price-fetch"),
+    config: Path = typer.Option(Path("config.yaml"), "--config"),
+) -> None:
+    """Run the complete hindsight lab refresh and export the research playbook."""
+    from sectorscout.hindsight_workflow import run_hindsight_refresh
+
+    loaded = _load(config)
+    result = run_hindsight_refresh(
+        loaded,
+        path=path,
+        output_dir=output_dir,
+        asof_date=_parse_iso_date(asof),
+        fetch_prices=fetch_prices,
+        provider=provider,
+        lookback_days=lookback_days,
+        include_benchmarks=include_benchmarks,
+        continue_on_price_error=not strict_price_fetch,
+    )
+    typer.echo(json.dumps(result.to_dict(), indent=2, sort_keys=True))
+
+
 @app.command("execution-decisions")
 def execution_decisions(
     asof: str = typer.Option(..., "--asof"),

@@ -223,9 +223,17 @@ or a computed replay gate link.
 .venv/bin/sectorscout hindsight build-observation-links
 .venv/bin/sectorscout hindsight build-hypotheses
 .venv/bin/sectorscout hindsight playbook
+.venv/bin/sectorscout hindsight refresh --asof 2026-05-31
 ```
 
 `fetch-prices` defaults to the public Yahoo chart JSON endpoint for case-study diagnostics and fetches a 320-calendar-day pre-event lookback by default. That lookback is required for pre-event technical replay gates such as trend, relative strength, and price coverage. Stooq remains available with `--provider stooq_public` when `STOOQ_API_KEY` is configured. Corporate-action adjustment status is marked with a warning in stored price rows, so split-sensitive cases still need provider-quality review before any formal validation.
+
+`refresh` is the open-the-box path for the Historical Lab. It seeds the leader
+and control cases, writes the event and evidence ledgers, optionally refreshes
+public daily prices, runs the case scan, rebuilds replay gates, links
+observations, rebuilds the hypothesis registry, and exports the Markdown
+playbook. Use `--no-fetch-prices` when working offline; missing price history
+will stay visible as `DATA_GAP`.
 
 After `scan`, review:
 
