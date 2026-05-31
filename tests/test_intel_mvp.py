@@ -1308,6 +1308,63 @@ def test_first_tradable_date_resolver_respects_market_session() -> None:
     assert resolve_first_tradable_date(date(2024, 2, 21), "date_only_ambiguous", trading_days) is None
 
 
+def test_hindsight_pre_event_technical_gate_uses_loaded_lookback_rows(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    case_file = tmp_path / "cases.csv"
+    case_file.write_text(
+        "\n".join(
+            [
+                "symbol,label,start_date,end_date,theme,hindsight_reason,anchor_event,source_url",
+                "NVDA,NVDA test,2024-09-01,2024-12-31,AI semiconductors,Study test case,AI demand,https://example.com",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    rows = []
+    start = date(2024, 1, 1)
+    for offset in range(240):
+        current = start + timedelta(days=offset)
+        close = 100.0 + offset
+        rows.append(
+            [
+                "NVDA",
+                current,
+                close,
+                close,
+                close,
+                close,
+                1_000_000 + offset,
+                close,
+                close,
+                close,
+                close,
+                1_000_000 + offset,
+                "fixture",
+                True,
+                False,
+                datetime.now(timezone.utc),
+            ]
+        )
+    with connect_database(config.database.path) as connection:
+        connection.executemany(
+            """
+            INSERT INTO daily_prices (
+                symbol, price_date, open, high, low, close, volume,
+                adj_open, adj_high, adj_low, adj_close, adj_volume,
+                provider, is_adjusted, adjustment_warning, ingested_at_utc
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            rows,
+        )
+
+    seed_hindsight_events(config, path=case_file)
+    gates = build_hindsight_replay_gates(config, path=case_file, persist=False, asof_date=date(2024, 12, 31))
+    by_name = {gate.gate_name: gate for gate in gates}
+    assert by_name["Pre-event price coverage"].gate_status == "PASS"
+    assert by_name["Stage 2 trend explain"].gate_status == "PASS"
+    assert by_name["Event timestamp available"].gate_status == "DATA_GAP"
+
+
 def test_historical_pattern_summary_separates_industry_and_technical_patterns(tmp_path: Path) -> None:
     config = _config(tmp_path)
     results = scan_hindsight_cases(config, path=tmp_path / "leader_cases.csv", persist=False)
@@ -1349,6 +1406,8 @@ def test_hindsight_fetch_prices_inserts_public_rows(tmp_path: Path, monkeypatch:
 
     monkeypatch.setattr("sectorscout.hindsight.urlopen", lambda *_args, **_kwargs: FakeResponse())
     summary = fetch_hindsight_prices(config, path=case_file)
+    assert summary[0]["fetch_start"] == "2023-02-16"
+    assert summary[0]["lookback_days"] == 320
     assert summary[0]["rows_inserted"] == 2
     with connect_database(config.database.path) as connection:
         rows = connection.execute(

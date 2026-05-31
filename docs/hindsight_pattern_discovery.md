@@ -132,7 +132,7 @@ uses a fixed primary benchmark and does not silently fall back to another index.
 .venv/bin/sectorscout hindsight build-gates
 ```
 
-`fetch-prices` defaults to the public Yahoo chart JSON endpoint for case-study diagnostics. Stooq remains available with `--provider stooq_public` when `STOOQ_API_KEY` is configured. Corporate-action adjustment status is marked with a warning in stored price rows, so split-sensitive cases still need provider-quality review before any formal validation.
+`fetch-prices` defaults to the public Yahoo chart JSON endpoint for case-study diagnostics and fetches a 320-calendar-day pre-event lookback by default. That lookback is required for pre-event technical replay gates such as trend, relative strength, and price coverage. Stooq remains available with `--provider stooq_public` when `STOOQ_API_KEY` is configured. Corporate-action adjustment status is marked with a warning in stored price rows, so split-sensitive cases still need provider-quality review before any formal validation.
 
 After `scan`, review:
 

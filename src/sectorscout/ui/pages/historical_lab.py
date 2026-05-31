@@ -109,7 +109,10 @@ def render(ctx: UIContext) -> None:
         results = scan_hindsight_cases(ctx.config)
         st.success(f"Scanned {len(results)} hindsight cases.")
         st.dataframe([_display_result(result.to_dict()) for result in results], use_container_width=True, hide_index=True)
-    st.caption("Case-study diagnostics only. This does not validate a strategy or change SectorScout scores.")
+    st.caption(
+        "Case-study diagnostics only. Price fetch includes a pre-event lookback window so technical gates can "
+        "inspect what was visible before the case anchor."
+    )
 
     st.subheader("Event Ledger")
     event_cols = st.columns([1, 2])

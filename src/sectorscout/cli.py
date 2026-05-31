@@ -434,13 +434,14 @@ def hindsight_build_gates(
 def hindsight_fetch_prices(
     path: Path = typer.Option(DEFAULT_HINDSIGHT_CASES_PATH, "--path"),
     provider: str = typer.Option("yahoo_chart_public", "--provider"),
+    lookback_days: int = typer.Option(320, "--lookback-days", min=0),
     config: Path = typer.Option(Path("config.yaml"), "--config"),
 ) -> None:
     """Fetch public daily prices for the configured historical pattern cases."""
     from sectorscout.hindsight import fetch_hindsight_prices
 
     loaded = _load(config)
-    result = fetch_hindsight_prices(loaded, path=path, provider=provider)
+    result = fetch_hindsight_prices(loaded, path=path, provider=provider, lookback_days=lookback_days)
     typer.echo(json.dumps(result, indent=2, sort_keys=True))
 
 

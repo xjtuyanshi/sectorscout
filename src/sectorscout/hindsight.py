@@ -493,15 +493,17 @@ def fetch_hindsight_prices(
     *,
     path: Path = DEFAULT_HINDSIGHT_CASES_PATH,
     provider: str = "yahoo_chart_public",
+    lookback_days: int = 320,
     timeout: int = 20,
 ) -> list[dict[str, Any]]:
     cases = load_hindsight_cases(path)
     summaries: list[dict[str, Any]] = []
     for case in cases:
+        fetch_start = case.start_date - timedelta(days=max(0, lookback_days))
         if provider == "stooq_public":
-            rows = fetch_stooq_daily_rows(case.symbol, case.start_date, case.end_date, timeout=timeout)
+            rows = fetch_stooq_daily_rows(case.symbol, fetch_start, case.end_date, timeout=timeout)
         elif provider == "yahoo_chart_public":
-            rows = fetch_yahoo_chart_daily_rows(case.symbol, case.start_date, case.end_date, timeout=timeout)
+            rows = fetch_yahoo_chart_daily_rows(case.symbol, fetch_start, case.end_date, timeout=timeout)
         else:
             raise ValueError(f"Unsupported hindsight price provider: {provider}")
         inserted = _insert_price_rows(config, case.symbol, rows, provider=provider)
@@ -511,11 +513,13 @@ def fetch_hindsight_prices(
                 "label": case.label,
                 "start_date": case.start_date.isoformat(),
                 "end_date": case.end_date.isoformat(),
+                "fetch_start": fetch_start.isoformat(),
+                "lookback_days": max(0, lookback_days),
                 "provider": provider,
                 "rows_fetched": len(rows),
                 "rows_inserted": inserted,
                 "data_quality_note": (
-                    "Public daily price rows loaded; corporate-action adjustment status is provider-dependent."
+                    "Public daily price rows loaded with pre-event lookback; corporate-action adjustment status is provider-dependent."
                     if inserted
                     else "No public daily price rows returned for this case window."
                 ),
