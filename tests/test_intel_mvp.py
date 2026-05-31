@@ -61,10 +61,13 @@ from sectorscout.intel.x_collector import (
 )
 from sectorscout.ui.data import latest_asof_date
 from sectorscout.ui.hindsight_presenter import (
+    build_case_story_cards,
     build_case_pattern_map_rows,
     build_case_readiness_rows,
     build_gate_review_rows,
+    build_hindsight_readout_summary_cards,
     build_methodology_guardrail_rows,
+    build_pattern_story_cards,
     build_pattern_insight_rows,
 )
 from sectorscout.ui.workbench import build_symbol_rows
@@ -1424,6 +1427,26 @@ def test_hindsight_presenter_builds_plain_language_pattern_readout(tmp_path: Pat
     amd = next(row for row in case_map if row["Symbol"] == "AMD")
     assert amd["Role"] == "Peer control"
     assert "Control case" in amd["Plain-English read"] or "controls" in amd["Plain-English read"]
+
+    summary_cards = build_hindsight_readout_summary_cards(insights, case_map)
+    assert {card["Label"] for card in summary_cards} == {
+        "Pattern candidates",
+        "Industry + technical aligned",
+        "Needs data review",
+        "Control coverage",
+    }
+    assert next(card for card in summary_cards if card["Label"] == "Pattern candidates")["Value"] == "4"
+    assert int(next(card for card in summary_cards if card["Label"] == "Needs data review")["Value"]) >= 1
+
+    pattern_cards = build_pattern_story_cards(insights)
+    assert len(pattern_cards) == 4
+    assert pattern_cards[0]["Lane"] == "Industry mechanism"
+    assert all(card["Tone"] in {"green", "blue", "amber", "red", "purple"} for card in pattern_cards)
+
+    case_cards = build_case_story_cards(case_map)
+    assert len(case_cards) == 7
+    assert next(card for card in case_cards if card["Symbol"] == "NVDA")["Technical"]
+    assert next(card for card in case_cards if card["Symbol"] == "SNDK")["Tone"] == "amber"
 
 
 def test_hindsight_event_ledger_blocks_date_only_reaction(tmp_path: Path) -> None:

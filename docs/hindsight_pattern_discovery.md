@@ -159,6 +159,13 @@ The Historical Lab now includes a presenter-only readout layer. It does not add
 schema and does not change hypothesis promotion logic. It translates the current
 audit tables into two reviewer views:
 
+- Summary cards for pattern count, industry/technical alignment, data-review
+  burden, and control coverage.
+- Visual hypothesis cards that show support, gaps, control interpretation,
+  takeaway, and next research action without requiring the reviewer to decode
+  raw IDs first.
+- Visual case cards for leaders and controls, including the industry lane,
+  technical lane, timing lane, plain-English read, and next data task.
 - `Pattern Readout`: one row per replay hypothesis, including current read,
   leader support, blocked leaders, data gaps, control check, next research
   action, and replay boundary.

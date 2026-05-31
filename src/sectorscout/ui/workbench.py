@@ -235,6 +235,83 @@ def inject_tradingview_styles() -> None:
           line-height: 1.35;
           margin-bottom: 12px;
         }
+        .ss-hindsight-summary {
+          display: grid;
+          grid-template-columns: repeat(4, minmax(0, 1fr));
+          gap: 10px;
+          margin: 8px 0 14px;
+        }
+        .ss-research-card-grid {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 10px;
+          margin: 8px 0 14px;
+        }
+        .ss-case-card-grid {
+          display: grid;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          gap: 10px;
+          margin: 8px 0 14px;
+        }
+        .ss-research-card {
+          border: 1px solid var(--ss-border);
+          background: var(--ss-panel);
+          border-radius: 8px;
+          padding: 12px;
+          min-height: 126px;
+          box-shadow: none;
+          overflow-wrap: anywhere;
+        }
+        .ss-research-card.ss-tone-green { border-left: 4px solid var(--ss-green); }
+        .ss-research-card.ss-tone-blue { border-left: 4px solid var(--ss-blue); }
+        .ss-research-card.ss-tone-amber { border-left: 4px solid var(--ss-amber); }
+        .ss-research-card.ss-tone-red { border-left: 4px solid var(--ss-red); }
+        .ss-research-card.ss-tone-purple { border-left: 4px solid var(--ss-purple); }
+        .ss-card-kicker {
+          color: var(--ss-muted);
+          font-size: .68rem;
+          font-weight: 700;
+          text-transform: uppercase;
+          letter-spacing: .04em;
+          margin-bottom: 6px;
+        }
+        .ss-card-title {
+          color: var(--ss-text);
+          font-size: .92rem;
+          font-weight: 760;
+          line-height: 1.22;
+          margin-bottom: 8px;
+        }
+        .ss-card-value {
+          color: var(--ss-text);
+          font-size: 1.25rem;
+          font-weight: 780;
+          line-height: 1.2;
+          margin-bottom: 6px;
+        }
+        .ss-card-body {
+          color: var(--ss-muted);
+          font-size: .76rem;
+          line-height: 1.35;
+          margin-bottom: 8px;
+        }
+        .ss-card-line {
+          display: grid;
+          grid-template-columns: 74px minmax(0, 1fr);
+          gap: 8px;
+          border-top: 1px solid var(--ss-border-soft);
+          padding-top: 6px;
+          margin-top: 6px;
+          font-size: .72rem;
+          line-height: 1.3;
+        }
+        .ss-card-line span:first-child {
+          color: var(--ss-muted);
+          font-weight: 650;
+        }
+        .ss-card-line span:last-child {
+          color: var(--ss-text);
+        }
         .ss-empty-note {
           border: 1px dashed var(--ss-border);
           background: var(--ss-panel-soft);
@@ -300,6 +377,11 @@ def inject_tradingview_styles() -> None:
           .ss-topbar-meta { justify-content: flex-start; }
           .ss-focus-strip { align-items: flex-start; flex-direction: column; }
           .ss-focus-meta { justify-content: flex-start; }
+          .ss-hindsight-summary,
+          .ss-research-card-grid,
+          .ss-case-card-grid {
+            grid-template-columns: 1fr;
+          }
         }
         </style>
         """,

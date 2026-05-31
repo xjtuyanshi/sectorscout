@@ -35,10 +35,17 @@ def main() -> None:
     args = _parse_args()
     st.set_page_config(page_title="SectorScout Intel", layout="wide", initial_sidebar_state="collapsed")
     inject_tradingview_styles()
+    requested_page = str(st.query_params.get("page") or "")
+    default_page = requested_page if requested_page in PAGES else "Overview"
     with st.sidebar:
         st.title("SectorScout")
         config_path = st.text_input("Config path", value=str(args.config))
-        selected = st.radio("Page", list(PAGES), label_visibility="collapsed")
+        selected = st.radio(
+            "Page",
+            list(PAGES),
+            index=list(PAGES).index(default_page),
+            label_visibility="collapsed",
+        )
     ctx = load_ui_context(Path(config_path))
     render_top_bar(ctx, page=selected)
     module = importlib.import_module(f"sectorscout.ui.pages.{PAGES[selected]}")

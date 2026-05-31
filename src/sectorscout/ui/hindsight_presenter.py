@@ -117,6 +117,93 @@ def build_case_pattern_map_rows(
     return rows
 
 
+def build_hindsight_readout_summary_cards(
+    pattern_rows: list[dict[str, Any]],
+    case_rows: list[dict[str, Any]],
+) -> list[dict[str, str]]:
+    composite_aligned = [
+        row for row in case_rows if str(row.get("Plain-English read") or "").startswith("Industry evidence and pre-event")
+    ]
+    needs_data = [
+        row
+        for row in case_rows
+        if "DATA GAP" in " ".join(str(value) for value in row.values())
+        or "REVIEW" in str(row.get("Industry evidence") or "")
+    ]
+    controls = [row for row in case_rows if "control" in str(row.get("Role") or "").lower()]
+    control_warning = any("False-positive" in str(row.get("Control check") or "") for row in pattern_rows)
+    return [
+        {
+            "Label": "Pattern candidates",
+            "Value": str(len(pattern_rows)),
+            "Detail": "Mechanisms under review, not validated rules.",
+            "Tone": "blue",
+        },
+        {
+            "Label": "Industry + technical aligned",
+            "Value": ", ".join(str(row.get("Symbol")) for row in composite_aligned) if composite_aligned else "-",
+            "Detail": "Cases where both evidence lanes are currently auditable.",
+            "Tone": "green" if composite_aligned else "amber",
+        },
+        {
+            "Label": "Needs data review",
+            "Value": str(len(needs_data)),
+            "Detail": "Rows with missing timing, evidence, or pre-event technical coverage.",
+            "Tone": "amber" if needs_data else "green",
+        },
+        {
+            "Label": "Control coverage",
+            "Value": str(len(controls)),
+            "Detail": "Control cases remain visible to detect broad mechanisms.",
+            "Tone": "red" if control_warning else "purple",
+        },
+    ]
+
+
+def build_pattern_story_cards(pattern_rows: list[dict[str, Any]]) -> list[dict[str, str]]:
+    cards: list[dict[str, str]] = []
+    for row in pattern_rows:
+        candidate = str(row.get("Pattern candidate") or "")
+        support = str(row.get("Leader support") or "-")
+        data_gaps = str(row.get("Leader data gaps") or "-")
+        control = str(row.get("Control check") or "")
+        cards.append(
+            {
+                "Title": candidate,
+                "Lane": _pattern_lane(candidate),
+                "Status": str(row.get("Current read") or "-"),
+                "Support": support,
+                "Gaps": data_gaps,
+                "Control": control,
+                "Takeaway": str(row.get("What this teaches") or "-"),
+                "Next": str(row.get("Next research action") or "-"),
+                "Tone": _pattern_card_tone(row),
+            }
+        )
+    return cards
+
+
+def build_case_story_cards(case_rows: list[dict[str, Any]]) -> list[dict[str, str]]:
+    cards: list[dict[str, str]] = []
+    for row in case_rows:
+        industry = str(row.get("Industry evidence") or "-")
+        stage2 = str(row.get("Stage 2") or "-")
+        benchmark = str(row.get("Benchmark RS") or "-")
+        cards.append(
+            {
+                "Symbol": str(row.get("Symbol") or "-"),
+                "Role": str(row.get("Role") or "-"),
+                "Industry": industry,
+                "Technical": _technical_lane_summary(stage2, benchmark),
+                "Timing": str(row.get("Event timing") or "-"),
+                "Read": str(row.get("Plain-English read") or "-"),
+                "Next": str(row.get("Next data task") or "-"),
+                "Tone": _case_card_tone(row),
+            }
+        )
+    return cards
+
+
 def build_case_readiness_rows(events: pd.DataFrame, gates: pd.DataFrame) -> list[dict[str, Any]]:
     if events.empty:
         return []
@@ -384,6 +471,52 @@ def _hypothesis_order_key(name: str) -> int:
         if name.startswith(prefix):
             return index
     return 99
+
+
+def _pattern_lane(candidate: str) -> str:
+    if candidate.startswith("H1") or candidate.startswith("H2"):
+        return "Industry mechanism"
+    if candidate.startswith("H3"):
+        return "Composite mechanism"
+    if candidate.startswith("H4"):
+        return "Mixed analog"
+    return "Research mechanism"
+
+
+def _pattern_card_tone(row: dict[str, Any]) -> str:
+    text = " ".join(str(value) for value in row.values()).lower()
+    if "false-positive" in text or "control case also supports" in text:
+        return "red"
+    if "blocked" in text or "data gap" in text:
+        return "amber"
+    if "replay rule" in text or "align" in text or "promising" in text:
+        return "green"
+    return "blue"
+
+
+def _technical_lane_summary(stage2: str, benchmark: str) -> str:
+    if "PASS" in stage2 and "PASS" in benchmark:
+        return "PASS - Stage 2 and benchmark RS align"
+    if "FAIL" in stage2 or "FAIL" in benchmark:
+        return "FAIL - required technical gate did not support"
+    if "DATA GAP" in stage2 or "DATA GAP" in benchmark:
+        return "DATA GAP - technical coverage incomplete"
+    return "Needs review"
+
+
+def _case_card_tone(row: dict[str, Any]) -> str:
+    role = str(row.get("Role") or "").lower()
+    read = str(row.get("Plain-English read") or "").lower()
+    combined = " ".join(str(value) for value in row.values()).lower()
+    if "control" in role:
+        return "purple"
+    if "data gap" in combined or "not pit-usable" in combined:
+        return "amber"
+    if "align" in read:
+        return "green"
+    if "fail" in combined:
+        return "red"
+    return "blue"
 
 
 def _symbols_for_status(

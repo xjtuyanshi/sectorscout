@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import date
+from html import escape
 
 import pandas as pd
 import streamlit as st
@@ -30,10 +31,13 @@ from sectorscout.hindsight import (
 from sectorscout.intel.storage import insert_review_mark
 from sectorscout.ui.data import UIContext, row_count, table_exists
 from sectorscout.ui.hindsight_presenter import (
+    build_case_story_cards,
     build_case_readiness_rows,
     build_case_pattern_map_rows,
     build_gate_review_rows,
+    build_hindsight_readout_summary_cards,
     build_methodology_guardrail_rows,
+    build_pattern_story_cards,
     build_pattern_insight_rows,
     build_status_summary_rows,
 )
@@ -316,21 +320,104 @@ def _render_hypothesis_registry(ctx: UIContext) -> None:
         "and where controls warn that the mechanism may be too broad."
     )
     insight_rows = build_pattern_insight_rows(hypotheses, case_results)
+    pattern_map_rows = build_case_pattern_map_rows(events, evidence, gates, hypotheses, case_results)
+    summary_cards = build_hindsight_readout_summary_cards(insight_rows, pattern_map_rows)
+    if summary_cards:
+        _render_summary_cards(summary_cards)
     if insight_rows:
+        _render_pattern_cards(build_pattern_story_cards(insight_rows))
         st.dataframe(insight_rows, use_container_width=True, hide_index=True)
     st.markdown("#### Industry + Technical Map")
     st.write(
         "This separates industry evidence from pre-event technical gates for each leader and control case. "
         "A case only teaches a composite pattern when both lanes are auditable."
     )
-    pattern_map_rows = build_case_pattern_map_rows(events, evidence, gates, hypotheses, case_results)
     if pattern_map_rows:
+        _render_case_cards(build_case_story_cards(pattern_map_rows))
         st.dataframe(pattern_map_rows, use_container_width=True, hide_index=True)
     st.dataframe(_display_hypotheses_frame(hypotheses, case_results), use_container_width=True, hide_index=True)
     st.markdown("#### Case Matrix")
     st.dataframe(_display_hypothesis_case_matrix(hypotheses, case_results), use_container_width=True, hide_index=True)
     st.markdown("#### Case Result Detail")
     st.dataframe(_display_hypothesis_case_results(case_results), use_container_width=True, hide_index=True)
+
+
+def _render_summary_cards(cards: list[dict[str, str]]) -> None:
+    html = ['<div class="ss-hindsight-summary">']
+    for card in cards:
+        tone = _safe_tone(card.get("Tone"))
+        html.append(
+            f"""
+            <div class="ss-research-card ss-tone-{tone}">
+              <div class="ss-card-kicker">{escape(str(card.get("Label") or ""))}</div>
+              <div class="ss-card-value">{escape(str(card.get("Value") or "-"))}</div>
+              <div class="ss-card-body">{escape(str(card.get("Detail") or ""))}</div>
+            </div>
+            """
+        )
+    html.append("</div>")
+    st.markdown("".join(html), unsafe_allow_html=True)
+
+
+def _render_pattern_cards(cards: list[dict[str, str]]) -> None:
+    if not cards:
+        return
+    html = ['<div class="ss-research-card-grid">']
+    for card in cards:
+        tone = _safe_tone(card.get("Tone"))
+        html.append(
+            f"""
+            <div class="ss-research-card ss-tone-{tone}">
+              <div class="ss-card-kicker">{escape(str(card.get("Lane") or ""))}</div>
+              <div class="ss-card-title">{escape(str(card.get("Title") or ""))}</div>
+              <div class="ss-card-body">{escape(str(card.get("Status") or ""))}</div>
+              {_card_line("Support", card.get("Support"))}
+              {_card_line("Gaps", card.get("Gaps"))}
+              {_card_line("Control", card.get("Control"))}
+              {_card_line("Takeaway", card.get("Takeaway"))}
+              {_card_line("Next", card.get("Next"))}
+            </div>
+            """
+        )
+    html.append("</div>")
+    st.markdown("".join(html), unsafe_allow_html=True)
+
+
+def _render_case_cards(cards: list[dict[str, str]]) -> None:
+    if not cards:
+        return
+    html = ['<div class="ss-case-card-grid">']
+    for card in cards:
+        tone = _safe_tone(card.get("Tone"))
+        html.append(
+            f"""
+            <div class="ss-research-card ss-tone-{tone}">
+              <div class="ss-card-kicker">{escape(str(card.get("Role") or ""))}</div>
+              <div class="ss-card-title">{escape(str(card.get("Symbol") or ""))}</div>
+              <div class="ss-card-body">{escape(str(card.get("Read") or ""))}</div>
+              {_card_line("Industry", card.get("Industry"))}
+              {_card_line("Technical", card.get("Technical"))}
+              {_card_line("Timing", card.get("Timing"))}
+              {_card_line("Next", card.get("Next"))}
+            </div>
+            """
+        )
+    html.append("</div>")
+    st.markdown("".join(html), unsafe_allow_html=True)
+
+
+def _card_line(label: str, value: object) -> str:
+    return (
+        '<div class="ss-card-line">'
+        f"<span>{escape(label)}</span>"
+        f"<span>{escape(str(value or '-'))}</span>"
+        "</div>"
+    )
+
+
+def _safe_tone(value: object) -> str:
+    text = str(value or "").lower()
+    return text if text in {"green", "blue", "amber", "red", "purple"} else "blue"
 
 
 def _table_meaning(table: str) -> str:
