@@ -40,6 +40,10 @@ from sectorscout.hindsight_companyfacts import (
     extract_companyfacts_candidates,
     sec_companyfacts_url,
 )
+from sectorscout.hindsight_industry_profile import (
+    build_hindsight_industry_profiles,
+    industry_profile_summary,
+)
 from sectorscout.hindsight_sec_metadata import (
     build_hindsight_sec_filing_metadata,
     parse_sec_archive_url,
@@ -1476,6 +1480,8 @@ def test_hindsight_pattern_playbook_exports_markdown(tmp_path: Path) -> None:
     assert "## Pattern Candidates" in markdown
     assert "H2 - Downstream revenue conversion" in markdown
     assert "## Case Map" in markdown
+    assert "## Industry Evidence Profiles" in markdown
+    assert "AI data-center compute demand" in markdown
     assert "NVDA - Anchor leader" in markdown
     assert "SNDK" in markdown
     assert "## Official Source Audit" in markdown
@@ -1630,6 +1636,7 @@ def test_hindsight_refresh_runs_pipeline_without_network(tmp_path: Path) -> None
     assert Path(str(payload["playbook_path"])).exists()
     assert payload["price_rows_inserted"] == 0
     steps = {str(step["step"]): step for step in payload["steps"]}
+    assert steps["industry_profiles"]["rows"] == 7
     assert steps["public_price_history"]["status"] == "SKIPPED"
     assert steps["source_audit"]["rows"] >= 5
     assert steps["sec_filing_metadata"]["rows"] == 4
@@ -1638,6 +1645,12 @@ def test_hindsight_refresh_runs_pipeline_without_network(tmp_path: Path) -> None
     assert steps["hypothesis_registry"]["rows"] == 28
     assert payload["source_snapshots"] == []
     assert payload["sec_filing_metadata_summary"]["parsed_only_filings"] == 4
+    assert payload["industry_profile_summary"]["profiles"] == 7
+    assert payload["industry_profile_summary"]["pit_ready_profiles"] == 4
+    assert any(
+        row["symbol"] == "SNDK" and row["profile_status"] == "PIT_USABLE_WITH_FUTURE_CONTEXT"
+        for row in payload["industry_profiles"]
+    )
     assert payload["companyfacts_summary"]["remote_not_requested"] == 4
     assert payload["companyfacts_candidates"] == []
     assert any(row["symbol"] == "NVDA" for row in payload["companyfacts_status"])
@@ -1738,6 +1751,31 @@ def test_hindsight_evidence_ledger_tracks_pit_usability(tmp_path: Path) -> None:
     assert not bool(future_growth["usable_in_replay"])
     assert future_growth["evidence_status"] == "REQUIRES_REVIEW"
     assert "Future-only" in future_growth["review_note"]
+
+
+def test_hindsight_industry_profiles_structure_drivers_and_pit_status(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    seed_hindsight_events(config, tmp_path / "leader_cases.csv")
+    seed_hindsight_evidence(config, tmp_path / "leader_cases.csv")
+
+    profiles = build_hindsight_industry_profiles(config, path=tmp_path / "leader_cases.csv")
+    assert len(profiles) == 7
+    by_symbol = {profile.symbol: profile for profile in profiles}
+    assert by_symbol["NVDA"].demand_driver == "AI data-center compute demand"
+    assert "ai_data_center" in by_symbol["NVDA"].mechanism_tags
+    assert by_symbol["NVDA"].profile_status == "PIT_USABLE"
+    assert by_symbol["MU"].demand_driver == "AI memory / HBM demand"
+    assert "hbm_memory" in by_symbol["MU"].mechanism_tags
+    assert by_symbol["LITE"].demand_driver == "AI optical infrastructure demand"
+    assert "backlog_or_orders" in by_symbol["LITE"].mechanism_tags
+    assert by_symbol["SNDK"].profile_status == "PIT_USABLE_WITH_FUTURE_CONTEXT"
+    assert by_symbol["SNDK"].future_context_count == 1
+    assert by_symbol["AMD"].profile_status == "DATA_GAP"
+    assert "Control row is not evaluable" in by_symbol["AMD"].review_note
+    summary = industry_profile_summary(profiles)
+    assert summary["profiles"] == 7
+    assert summary["pit_ready_profiles"] == 4
+    assert summary["data_gap_profiles"] == 3
 
 
 def test_hindsight_source_audit_classifies_official_and_future_only_sources(tmp_path: Path) -> None:

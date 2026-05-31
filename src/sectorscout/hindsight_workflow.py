@@ -21,6 +21,7 @@ from sectorscout.hindsight import (
     write_default_hindsight_cases,
 )
 from sectorscout.hindsight_companyfacts import build_hindsight_companyfacts, companyfacts_summary
+from sectorscout.hindsight_industry_profile import build_hindsight_industry_profiles, industry_profile_summary
 from sectorscout.hindsight_playbook import generate_hindsight_pattern_playbook
 from sectorscout.hindsight_sec_metadata import build_hindsight_sec_filing_metadata, sec_filing_metadata_summary
 from sectorscout.hindsight_source_audit import build_hindsight_source_audit, source_audit_summary
@@ -77,6 +78,8 @@ class HindsightRefreshResult:
     companyfacts_candidates: list[dict[str, object]]
     companyfacts_status: list[dict[str, object]]
     companyfacts_summary: dict[str, object]
+    industry_profiles: list[dict[str, object]]
+    industry_profile_summary: dict[str, object]
 
     def to_dict(self) -> dict[str, object]:
         payload = asdict(self)
@@ -122,6 +125,17 @@ def run_hindsight_refresh(
 
     evidence_count = seed_hindsight_evidence(config, path)
     steps.append(HindsightRefreshStep("evidence_ledger", "OK", "Seeded official industry/fundamental evidence rows.", evidence_count))
+
+    industry_profiles = build_hindsight_industry_profiles(config, path=path)
+    industry_profile_summary_payload = industry_profile_summary(industry_profiles)
+    steps.append(
+        HindsightRefreshStep(
+            "industry_profiles",
+            "OK",
+            "Built industry evidence profiles from PIT event and evidence ledgers.",
+            len(industry_profiles),
+        )
+    )
 
     if fetch_prices:
         try:
@@ -281,6 +295,8 @@ def run_hindsight_refresh(
         companyfacts_candidates=[item.to_dict() for item in companyfacts],
         companyfacts_status=[item.to_dict() for item in companyfacts_status],
         companyfacts_summary=companyfacts_summary_payload,
+        industry_profiles=[item.to_dict() for item in industry_profiles],
+        industry_profile_summary=industry_profile_summary_payload,
     )
 
 

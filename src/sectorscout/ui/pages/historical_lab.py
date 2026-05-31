@@ -29,6 +29,10 @@ from sectorscout.hindsight import (
     seed_hindsight_cases,
 )
 from sectorscout.hindsight_companyfacts import build_hindsight_companyfacts
+from sectorscout.hindsight_industry_profile import (
+    build_hindsight_industry_profiles,
+    industry_profiles_to_frame,
+)
 from sectorscout.hindsight_playbook import generate_hindsight_pattern_playbook
 from sectorscout.hindsight_sec_metadata import build_hindsight_sec_filing_metadata
 from sectorscout.hindsight_source_audit import build_hindsight_source_audit_rows
@@ -184,6 +188,12 @@ def render(ctx: UIContext) -> None:
             "Industry and fundamental claims must have source, timestamp, and replay usability before they support a pattern."
         )
         st.dataframe(_display_evidence_frame(evidence), use_container_width=True, hide_index=True)
+        st.markdown("#### Industry Evidence Profiles")
+        st.caption(
+            "These profiles turn evidence rows into reviewable industry mechanisms. They do not change SectorScout scores."
+        )
+        profiles = build_hindsight_industry_profiles(ctx.config)
+        st.dataframe(industry_profiles_to_frame(profiles), use_container_width=True, hide_index=True)
     _render_source_audit(ctx)
 
     st.subheader("Gate Explain Panel")
@@ -312,6 +322,9 @@ def _render_lab_refresh(ctx: UIContext) -> None:
             if result.source_audit:
                 st.markdown("#### Official Source Audit")
                 st.dataframe(_display_source_audit_rows(result.source_audit), use_container_width=True, hide_index=True)
+            if result.industry_profiles:
+                st.markdown("#### Industry Evidence Profiles")
+                st.dataframe(pd.DataFrame(result.industry_profiles), use_container_width=True, hide_index=True)
             if result.sec_filing_metadata:
                 st.markdown("#### SEC Filing Metadata")
                 st.dataframe(_display_sec_metadata_rows(result.sec_filing_metadata), use_container_width=True, hide_index=True)

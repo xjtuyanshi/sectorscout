@@ -14,6 +14,7 @@ from sectorscout.hindsight import (
     latest_hindsight_replay_gates,
 )
 from sectorscout.hindsight_companyfacts import build_hindsight_companyfacts, companyfacts_summary
+from sectorscout.hindsight_industry_profile import build_hindsight_industry_profiles, industry_profile_summary
 from sectorscout.hindsight_sec_metadata import build_hindsight_sec_filing_metadata
 from sectorscout.hindsight_source_audit import build_hindsight_source_audit
 from sectorscout.hindsight_source_snapshot import DEFAULT_SOURCE_SNAPSHOT_DIR
@@ -65,6 +66,7 @@ def build_hindsight_pattern_playbook_markdown(
     pattern_rows = build_pattern_insight_rows(hypotheses, case_results)
     case_rows = build_case_pattern_map_rows(events, evidence, gates, hypotheses, case_results)
     source_audit = build_hindsight_source_audit(config)
+    industry_profiles = build_hindsight_industry_profiles(config)
     sec_metadata = build_hindsight_sec_filing_metadata(config)
     companyfacts, companyfacts_status = build_hindsight_companyfacts(config)
     summary_cards = build_hindsight_readout_summary_cards(pattern_rows, case_rows)
@@ -122,6 +124,8 @@ def build_hindsight_pattern_playbook_markdown(
         lines.extend(["## Case Map", ""])
         for card in case_cards:
             lines.extend(_case_card_lines(card))
+        lines.extend(["## Industry Evidence Profiles", ""])
+        lines.extend(_industry_profile_lines(industry_profiles))
         lines.extend(["## Official Source Audit", ""])
         lines.extend(_source_audit_lines(source_audit))
         lines.extend(["## SEC Filing Metadata", ""])
@@ -203,6 +207,41 @@ def _source_audit_lines(items: list[Any]) -> list[str]:
                     _md(item.remote_status),
                     _md(item.source_url),
                     f"{_md(item.reviewer_note)} |",
+                ]
+            )
+        )
+    lines.append("")
+    return lines
+
+
+def _industry_profile_lines(profiles: list[Any]) -> list[str]:
+    summary = industry_profile_summary(profiles)
+    lines = [
+        f"- Profiles: {_md(summary.get('profiles'))}",
+        f"- PIT-ready profiles: {_md(summary.get('pit_ready_profiles'))}",
+        f"- Data-gap profiles: {_md(summary.get('data_gap_profiles'))}",
+        f"- Future-context profiles: {_md(summary.get('future_context_profiles'))}",
+        "",
+    ]
+    if not profiles:
+        return lines + ["No industry evidence profiles are available yet.", ""]
+    lines.extend(
+        [
+            "| Symbol | Industry node | Demand driver | Demand stage | Status | Mechanism tags | Review note |",
+            "| --- | --- | --- | --- | --- | --- | --- |",
+        ]
+    )
+    for profile in profiles:
+        lines.append(
+            " | ".join(
+                [
+                    f"| {_md(profile.symbol)}",
+                    _md(profile.industry_chain_node),
+                    _md(profile.demand_driver),
+                    _md(profile.demand_stage),
+                    _md(profile.profile_status),
+                    _md(", ".join(profile.mechanism_tags) or "-"),
+                    f"{_md(profile.review_note)} |",
                 ]
             )
         )

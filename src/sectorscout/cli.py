@@ -443,6 +443,26 @@ def hindsight_seed_evidence(
     typer.echo(json.dumps({"seeded_evidence": count, "path": str(path)}, indent=2, sort_keys=True))
 
 
+@hindsight_app.command("industry-profiles")
+def hindsight_industry_profiles(
+    path: Path = typer.Option(DEFAULT_HINDSIGHT_CASES_PATH, "--path"),
+    config: Path = typer.Option(Path("config.yaml"), "--config"),
+) -> None:
+    """Build structured industry evidence profiles for hindsight cases."""
+    from sectorscout.hindsight_industry_profile import (
+        build_hindsight_industry_profiles,
+        industry_profile_summary,
+    )
+
+    loaded = _load(config)
+    profiles = build_hindsight_industry_profiles(loaded, path=path)
+    payload = {
+        "summary": industry_profile_summary(profiles),
+        "profiles": [profile.to_dict() for profile in profiles],
+    }
+    typer.echo(json.dumps(payload, indent=2, sort_keys=True))
+
+
 @hindsight_app.command("build-observation-links")
 def hindsight_build_observation_links(
     config: Path = typer.Option(Path("config.yaml"), "--config"),
