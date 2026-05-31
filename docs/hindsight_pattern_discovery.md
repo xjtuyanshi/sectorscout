@@ -35,6 +35,21 @@ Technical:
 
 This module follows a research-log design, not a validation design:
 
+- Case-study discipline: case studies can help identify mechanisms and the
+  conditions under which mechanisms may operate, but they require clear
+  reporting of what the case is a case of and why the causal inference is
+  plausible. The Historical Lab therefore phrases outputs as hypotheses and
+  case-readouts, not confirmed rules:
+  https://link.springer.com/article/10.1186/s12874-022-01790-8
+- Control discipline: negative and peer controls are included to detect overly
+  broad mechanisms and selection bias. A control that also supports a candidate
+  hypothesis forces false-positive review; a control with missing evidence is
+  not counted as failure:
+  https://arxiv.org/abs/2009.05641
+- Backtest hygiene discipline: even before formal validation, the lab must show
+  look-ahead risk, survivorship risk, benchmark choice, and data coverage. These
+  are separated from future outcomes and are not summarized as performance:
+  https://www.quantstart.com/articles/Should-You-Build-Your-Own-Backtester/
 - Event-study discipline: define the case window and event context separately
   from what happened afterward. See MacKinlay's event-study framework:
   https://www.bu.edu/econ/files/2011/01/MacKinlay-1996-Event-Studies-in-Economics-and-Finance.pdf
@@ -137,6 +152,31 @@ The UI adds a reviewer layer above the raw gate table:
 Every visible gate should let the reviewer answer five questions without leaving
 the page: what is the claim, what evidence supports it, when was it knowable,
 what gate status was assigned, and why that status was assigned.
+
+## Plain-Language Pattern Readout
+
+The Historical Lab now includes a presenter-only readout layer. It does not add
+schema and does not change hypothesis promotion logic. It translates the current
+audit tables into two reviewer views:
+
+- `Pattern Readout`: one row per replay hypothesis, including current read,
+  leader support, blocked leaders, data gaps, control check, next research
+  action, and replay boundary.
+- `Industry + Technical Map`: one row per symbol, separating PIT industry
+  evidence, event timing, Stage 2 trend, fixed-benchmark relative strength,
+  first-session data, industry hypothesis status, composite hypothesis status,
+  and mixed-analog status.
+
+This layer is intentionally phrased in research language. Examples:
+
+- NVDA can show anchor demand evidence plus pre-event technical strength.
+- MU and LITE can show downstream demand conversion when official PIT evidence
+  and technical gates are both auditable.
+- SNDK can remain context-only or timing-limited until evidence is usable at
+  the replay point.
+- AMD, INTC, and MRVL remain controls. If they pass technical gates without
+  PIT industry evidence, that is a warning that technical strength alone may be
+  too broad to explain the leader pattern.
 
 ## Evidence Ledger
 

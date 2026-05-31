@@ -60,7 +60,13 @@ from sectorscout.intel.x_collector import (
     x_api_status,
 )
 from sectorscout.ui.data import latest_asof_date
-from sectorscout.ui.hindsight_presenter import build_case_readiness_rows, build_gate_review_rows
+from sectorscout.ui.hindsight_presenter import (
+    build_case_pattern_map_rows,
+    build_case_readiness_rows,
+    build_gate_review_rows,
+    build_methodology_guardrail_rows,
+    build_pattern_insight_rows,
+)
 from sectorscout.ui.workbench import build_symbol_rows
 from sectorscout.ui.pages.capture_inbox import _validate_upload_file
 from sectorscout.ui.pages.notes_review import _valid_follow_up as notes_valid_follow_up
@@ -1383,6 +1389,41 @@ def test_hindsight_control_cases_are_not_false_failures(tmp_path: Path) -> None:
     assert "BLOCKS" not in set(controls["result_status"])
     assert "control_not_evaluable" in set(controls["reason_code"])
     assert all("not a failed pattern" in reason for reason in controls[controls["reason_code"] == "control_not_evaluable"]["reason_text"])
+
+
+def test_hindsight_presenter_builds_plain_language_pattern_readout(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    scan_hindsight_cases(config, path=tmp_path / "leader_cases.csv", persist=True)
+    build_hindsight_hypothesis_registry(config, path=tmp_path / "leader_cases.csv")
+
+    guardrails = build_methodology_guardrail_rows()
+    assert guardrails
+    assert any("Controls expose" in row["Principle"] for row in guardrails)
+
+    hypotheses = latest_hindsight_hypotheses(config)
+    case_results = latest_hindsight_hypothesis_case_results(config)
+    insights = build_pattern_insight_rows(hypotheses, case_results)
+    assert len(insights) == 4
+    h2 = next(row for row in insights if str(row["Pattern candidate"]).startswith("H2"))
+    assert "MU" in h2["Leader support"]
+    assert "LITE" in h2["Leader support"]
+    assert "Controls are present" in h2["Control check"]
+    assert "timing" in h2["Current read"].lower()
+
+    case_map = build_case_pattern_map_rows(
+        latest_hindsight_events(config),
+        latest_hindsight_evidence(config),
+        latest_hindsight_replay_gates(config),
+        hypotheses,
+        case_results,
+    )
+    assert {row["Symbol"] for row in case_map}.issuperset({"NVDA", "MU", "SNDK", "LITE", "AMD", "INTC", "MRVL"})
+    mu = next(row for row in case_map if row["Symbol"] == "MU")
+    assert mu["Industry evidence"] == "PASS - PIT official demand evidence"
+    assert "technical replay evidence is incomplete" in mu["Plain-English read"]
+    amd = next(row for row in case_map if row["Symbol"] == "AMD")
+    assert amd["Role"] == "Peer control"
+    assert "Control case" in amd["Plain-English read"] or "controls" in amd["Plain-English read"]
 
 
 def test_hindsight_event_ledger_blocks_date_only_reaction(tmp_path: Path) -> None:

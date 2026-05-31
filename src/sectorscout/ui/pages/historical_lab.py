@@ -31,7 +31,10 @@ from sectorscout.intel.storage import insert_review_mark
 from sectorscout.ui.data import UIContext, row_count, table_exists
 from sectorscout.ui.hindsight_presenter import (
     build_case_readiness_rows,
+    build_case_pattern_map_rows,
     build_gate_review_rows,
+    build_methodology_guardrail_rows,
+    build_pattern_insight_rows,
     build_status_summary_rows,
 )
 
@@ -83,6 +86,8 @@ def render(ctx: UIContext) -> None:
         "Research guardrail: evidence and price data must be visible before the claimed decision point. "
         "Default official event seeds resolve known first-tradable sessions; date-only custom events stay blocked."
     )
+    st.subheader("Methodology guardrails")
+    st.dataframe(build_methodology_guardrail_rows(), use_container_width=True, hide_index=True)
 
     st.subheader("Data readiness")
     st.dataframe(
@@ -302,6 +307,25 @@ def _render_hypothesis_registry(ctx: UIContext) -> None:
     st.caption(
         "Counts are derived from per-case rows. One case counts once even if it has multiple evidence links."
     )
+    events = latest_hindsight_events(ctx.config)
+    evidence = latest_hindsight_evidence(ctx.config)
+    gates = latest_hindsight_replay_gates(ctx.config)
+    st.markdown("#### Pattern Readout")
+    st.write(
+        "This is the plain-language layer: what the current historical cases suggest, what remains blocked, "
+        "and where controls warn that the mechanism may be too broad."
+    )
+    insight_rows = build_pattern_insight_rows(hypotheses, case_results)
+    if insight_rows:
+        st.dataframe(insight_rows, use_container_width=True, hide_index=True)
+    st.markdown("#### Industry + Technical Map")
+    st.write(
+        "This separates industry evidence from pre-event technical gates for each leader and control case. "
+        "A case only teaches a composite pattern when both lanes are auditable."
+    )
+    pattern_map_rows = build_case_pattern_map_rows(events, evidence, gates, hypotheses, case_results)
+    if pattern_map_rows:
+        st.dataframe(pattern_map_rows, use_container_width=True, hide_index=True)
     st.dataframe(_display_hypotheses_frame(hypotheses, case_results), use_container_width=True, hide_index=True)
     st.markdown("#### Case Matrix")
     st.dataframe(_display_hypothesis_case_matrix(hypotheses, case_results), use_container_width=True, hide_index=True)
