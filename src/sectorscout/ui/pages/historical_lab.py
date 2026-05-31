@@ -7,11 +7,13 @@ import streamlit as st
 
 from sectorscout.db import connect_database
 from sectorscout.hindsight import (
+    build_hindsight_observation_links,
     build_hindsight_replay_gates,
     fetch_hindsight_prices,
     historical_pattern_summary,
     latest_hindsight_evidence,
     latest_hindsight_events,
+    latest_hindsight_observation_links,
     load_hindsight_cases,
     latest_hindsight_pattern_observations,
     latest_hindsight_replay_gates,
@@ -48,6 +50,7 @@ HISTORICAL_TABLES = [
     "hindsight_event_ledger",
     "hindsight_evidence_items",
     "hindsight_replay_gates",
+    "hindsight_observation_links",
 ]
 
 
@@ -184,6 +187,7 @@ def render(ctx: UIContext) -> None:
         )
         review_marks = _latest_observation_review_map(ctx)
         st.dataframe(_display_observations_frame(observations, review_marks), use_container_width=True, hide_index=True)
+        _render_observation_link_panel(ctx)
         _render_observation_review_form(ctx, observations, review_marks)
 
     st.subheader("Next implementation steps")
@@ -238,6 +242,28 @@ def _render_hindsight_review_board(events: pd.DataFrame, gates: pd.DataFrame) ->
         else [row for row in review_rows if str(row["Symbol"]) == selected_symbol]
     )
     st.dataframe(filtered_rows, use_container_width=True, hide_index=True)
+
+
+def _render_observation_link_panel(ctx: UIContext) -> None:
+    st.markdown("#### Observation Evidence Links")
+    if st.button("Build observation links", use_container_width=True):
+        links = build_hindsight_observation_links(ctx.config)
+        st.success(f"Built {len(links)} observation links.")
+    links = latest_hindsight_observation_links(ctx.config)
+    if links.empty:
+        st.info("No observation links yet. Build links after observations, evidence, and gates exist.")
+        return
+    st.caption(
+        "Each observation must point to official evidence, computed gates, or an explicit review-required blocker."
+    )
+    summary = (
+        links.groupby(["link_type", "link_status"], dropna=False)
+        .size()
+        .reset_index(name="count")
+        .sort_values(["link_type", "link_status"])
+    )
+    st.dataframe(_display_observation_link_summary(summary), use_container_width=True, hide_index=True)
+    st.dataframe(_display_observation_links_frame(links), use_container_width=True, hide_index=True)
 
 
 def _table_meaning(table: str) -> str:
@@ -307,6 +333,37 @@ def _display_evidence_frame(frame: pd.DataFrame) -> pd.DataFrame:
                 "Source quality": _friendly_text(row.get("source_quality")),
                 "Needs review": bool(row.get("requires_review")),
                 "Review note": row.get("review_note"),
+            }
+            for _, row in frame.iterrows()
+        ]
+    )
+
+
+def _display_observation_links_frame(frame: pd.DataFrame) -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {
+                "Symbol": row.get("symbol"),
+                "Link type": _friendly_text(row.get("link_type")),
+                "Role": _friendly_text(row.get("link_role")),
+                "Status": _friendly_text(row.get("link_status")),
+                "Reason": row.get("reason"),
+                "Linked table": row.get("linked_table"),
+                "Linked id": row.get("linked_id"),
+                "Observation id": row.get("observation_id"),
+            }
+            for _, row in frame.iterrows()
+        ]
+    )
+
+
+def _display_observation_link_summary(frame: pd.DataFrame) -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {
+                "Link type": _friendly_text(row.get("link_type")),
+                "Status": _friendly_text(row.get("link_status")),
+                "Count": int(row.get("count") or 0),
             }
             for _, row in frame.iterrows()
         ]

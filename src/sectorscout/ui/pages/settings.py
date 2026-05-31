@@ -32,6 +32,7 @@ TABLES = [
     "hindsight_event_ledger",
     "hindsight_evidence_items",
     "hindsight_replay_gates",
+    "hindsight_observation_links",
 ]
 
 

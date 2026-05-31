@@ -296,6 +296,22 @@ class HindsightEvidenceItem:
 
 
 @dataclass(frozen=True)
+class HindsightObservationLink:
+    link_id: str
+    observation_id: str
+    symbol: str
+    link_type: str
+    linked_id: str
+    linked_table: str
+    link_role: str
+    link_status: str
+    reason: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
 class HindsightReplayGate:
     gate_id: str
     event_id: str
@@ -534,6 +550,28 @@ def ensure_hindsight_tables(config: SectorScoutConfig) -> None:
                 universe_version VARCHAR NOT NULL,
                 theme_version VARCHAR NOT NULL,
                 PRIMARY KEY (gate_id)
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS hindsight_observation_links (
+                link_id VARCHAR NOT NULL,
+                observation_id VARCHAR NOT NULL,
+                symbol VARCHAR NOT NULL,
+                link_type VARCHAR NOT NULL,
+                linked_id VARCHAR NOT NULL,
+                linked_table VARCHAR NOT NULL,
+                link_role VARCHAR NOT NULL,
+                link_status VARCHAR NOT NULL,
+                reason VARCHAR NOT NULL,
+                generated_at_utc TIMESTAMPTZ NOT NULL,
+                config_hash VARCHAR NOT NULL,
+                git_commit VARCHAR NOT NULL,
+                data_snapshot_id VARCHAR NOT NULL,
+                universe_version VARCHAR NOT NULL,
+                theme_version VARCHAR NOT NULL,
+                PRIMARY KEY (link_id)
             )
             """
         )
@@ -792,6 +830,35 @@ def latest_hindsight_replay_gates(config: SectorScoutConfig, *, limit: int = 500
         ).fetchdf()
 
 
+def build_hindsight_observation_links(config: SectorScoutConfig) -> list[HindsightObservationLink]:
+    ensure_hindsight_tables(config)
+    observations = latest_hindsight_pattern_observations(config)
+    if observations.empty:
+        return []
+    evidence = latest_hindsight_evidence(config)
+    gates = latest_hindsight_replay_gates(config)
+    links: list[HindsightObservationLink] = []
+    for _, observation in observations.iterrows():
+        links.extend(_links_for_observation(observation, evidence, gates))
+    _persist_hindsight_observation_links(config, links)
+    return links
+
+
+def latest_hindsight_observation_links(config: SectorScoutConfig, *, limit: int = 1000) -> pd.DataFrame:
+    ensure_hindsight_tables(config)
+    with connect_database(config.database.path) as connection:
+        return connection.execute(
+            """
+            SELECT *
+            FROM hindsight_observation_links
+            QUALIFY dense_rank() OVER (ORDER BY generated_at_utc DESC) = 1
+            ORDER BY symbol, observation_id, link_type, link_role
+            LIMIT ?
+            """,
+            [limit],
+        ).fetchdf()
+
+
 def fetch_hindsight_prices(
     config: SectorScoutConfig,
     *,
@@ -919,6 +986,7 @@ def scan_hindsight_cases(
         seed_hindsight_events(config, path)
         seed_hindsight_evidence(config, path)
         build_hindsight_replay_gates(config, path=path, persist=True)
+        build_hindsight_observation_links(config)
     return results
 
 
@@ -1303,6 +1371,118 @@ def _technical_flag_observation(
         source="daily_prices",
         extraction_method="daily_ohlcv_rule_v1",
         requires_review=requires_review,
+    )
+
+
+def _links_for_observation(
+    observation: pd.Series,
+    evidence: pd.DataFrame,
+    gates: pd.DataFrame,
+) -> list[HindsightObservationLink]:
+    group = str(observation.get("observation_group") or "")
+    if group == "industry":
+        return _industry_observation_links(observation, evidence)
+    if group == "technical":
+        return _technical_observation_links(observation, gates)
+    return [_review_required_link(observation, "Manual or narrative observation needs official evidence or computed gates.")]
+
+
+def _industry_observation_links(observation: pd.Series, evidence: pd.DataFrame) -> list[HindsightObservationLink]:
+    symbol = str(observation.get("symbol") or "")
+    if evidence.empty:
+        return [_review_required_link(observation, "No official evidence rows are available for this industry observation.")]
+    symbol_evidence = evidence[evidence["symbol"].astype(str) == symbol]
+    usable = symbol_evidence[symbol_evidence["usable_in_replay"].astype(bool)] if not symbol_evidence.empty else symbol_evidence
+    if usable.empty:
+        return [_review_required_link(observation, "No usable point-in-time official evidence is linked.")]
+    return [
+        _observation_link(
+            observation=observation,
+            link_type="evidence",
+            linked_id=str(row["evidence_id"]),
+            linked_table="hindsight_evidence_items",
+            link_role="supports" if bool(row.get("supports_pattern")) else "context",
+            link_status=str(row.get("evidence_status") or ""),
+            reason=f"{row.get('evidence_kind')} evidence was usable at the replay decision time.",
+        )
+        for _, row in usable.iterrows()
+    ]
+
+
+def _technical_observation_links(observation: pd.Series, gates: pd.DataFrame) -> list[HindsightObservationLink]:
+    symbol = str(observation.get("symbol") or "")
+    pattern_name = str(observation.get("pattern_name") or "")
+    if gates.empty:
+        return [_review_required_link(observation, "No computed replay gates are available for this technical observation.")]
+    symbol_gates = gates[gates["symbol"].astype(str) == symbol]
+    candidates = _matching_gates_for_pattern(pattern_name, symbol_gates)
+    if candidates.empty:
+        return [_review_required_link(observation, "No matching computed gate is available for this technical observation.")]
+    return [
+        _observation_link(
+            observation=observation,
+            link_type="gate",
+            linked_id=str(row["gate_id"]),
+            linked_table="hindsight_replay_gates",
+            link_role="supports" if row.get("gate_status") == "PASS" else "blocks",
+            link_status=str(row.get("gate_status") or ""),
+            reason=f"{row.get('gate_name')} is the computed replay gate for this observation.",
+        )
+        for _, row in candidates.iterrows()
+    ]
+
+
+def _matching_gates_for_pattern(pattern_name: str, gates: pd.DataFrame) -> pd.DataFrame:
+    if gates.empty:
+        return gates
+    mapping = {
+        "Stage 2 trend proxy": "Stage 2 trend explain",
+        "Relative strength near case start": "Benchmark RS",
+        "OHLCV coverage": "Pre-event price coverage",
+    }
+    gate_match = mapping.get(pattern_name)
+    if not gate_match:
+        return gates.iloc[0:0]
+    if gate_match == "Benchmark RS":
+        return gates[gates["gate_name"].astype(str).str.startswith("Benchmark RS")]
+    return gates[gates["gate_name"] == gate_match]
+
+
+def _review_required_link(observation: pd.Series, reason: str) -> HindsightObservationLink:
+    return _observation_link(
+        observation=observation,
+        link_type="review_required",
+        linked_id=str(observation.get("observation_id") or ""),
+        linked_table="hindsight_pattern_observations",
+        link_role="needs_review",
+        link_status="REQUIRES_REVIEW",
+        reason=reason,
+    )
+
+
+def _observation_link(
+    *,
+    observation: pd.Series,
+    link_type: str,
+    linked_id: str,
+    linked_table: str,
+    link_role: str,
+    link_status: str,
+    reason: str,
+) -> HindsightObservationLink:
+    observation_id = str(observation.get("observation_id") or "")
+    symbol = str(observation.get("symbol") or "")
+    link_key = "|".join([observation_id, link_type, linked_table, linked_id, link_role])
+    return HindsightObservationLink(
+        link_id=str(uuid.uuid5(uuid.NAMESPACE_URL, link_key)),
+        observation_id=observation_id,
+        symbol=symbol,
+        link_type=link_type,
+        linked_id=linked_id,
+        linked_table=linked_table,
+        link_role=link_role,
+        link_status=link_status,
+        reason=reason,
     )
 
 
@@ -2104,6 +2284,43 @@ def _persist_results(config: SectorScoutConfig, results: list[HindsightResult]) 
                     json.dumps(result.flags, sort_keys=True),
                     result.data_quality,
                     result.notes,
+                    now,
+                    cfg_hash,
+                    git_commit,
+                    config.reproducibility.data_snapshot_id,
+                    config.reproducibility.universe_version,
+                    config.reproducibility.theme_version,
+                ],
+            )
+
+
+def _persist_hindsight_observation_links(config: SectorScoutConfig, links: list[HindsightObservationLink]) -> None:
+    if not links:
+        return
+    now = datetime.now(timezone.utc)
+    git_commit = get_git_commit()
+    cfg_hash = config_hash(config)
+    with connect_database(config.database.path) as connection:
+        for link in links:
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO hindsight_observation_links (
+                    link_id, observation_id, symbol, link_type, linked_id,
+                    linked_table, link_role, link_status, reason,
+                    generated_at_utc, config_hash, git_commit, data_snapshot_id,
+                    universe_version, theme_version
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    link.link_id,
+                    link.observation_id,
+                    link.symbol,
+                    link.link_type,
+                    link.linked_id,
+                    link.linked_table,
+                    link.link_role,
+                    link.link_status,
+                    link.reason,
                     now,
                     cfg_hash,
                     git_commit,

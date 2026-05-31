@@ -10,6 +10,7 @@ from sectorscout.config import SectorScoutConfig
 from sectorscout.db import connect_database, initialize_database
 from sectorscout.demo import demo_readiness, run_demo_init
 from sectorscout.hindsight import (
+    build_hindsight_observation_links,
     build_hindsight_pattern_observations,
     build_hindsight_replay_gates,
     default_hindsight_cases,
@@ -17,6 +18,7 @@ from sectorscout.hindsight import (
     historical_pattern_summary,
     latest_hindsight_evidence,
     latest_hindsight_events,
+    latest_hindsight_observation_links,
     latest_hindsight_pattern_observations,
     latest_hindsight_replay_gates,
     resolve_first_tradable_date,
@@ -1280,6 +1282,36 @@ def test_hindsight_pattern_observations_enter_review_queue(tmp_path: Path) -> No
         item["bucket"] == "hindsight_pattern_review" and item["object_id"] == first["object_id"]
         for item in after_review
     )
+
+
+def test_hindsight_observation_links_connect_patterns_to_evidence_and_gates(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    scan_hindsight_cases(config, path=tmp_path / "leader_cases.csv", persist=True)
+    built_links = build_hindsight_observation_links(config)
+    assert built_links
+
+    links = latest_hindsight_observation_links(config)
+    assert not links.empty
+    assert {"evidence", "gate", "review_required"}.issubset(set(links["link_type"]))
+
+    evidence_links = links[links["link_type"] == "evidence"]
+    assert not evidence_links.empty
+    assert set(evidence_links["linked_table"]) == {"hindsight_evidence_items"}
+    assert set(evidence_links["link_role"]).issubset({"supports", "context"})
+
+    gate_links = links[links["link_type"] == "gate"]
+    assert not gate_links.empty
+    assert set(gate_links["linked_table"]) == {"hindsight_replay_gates"}
+    blocked_gate_links = gate_links[gate_links["link_status"].isin(["DATA_GAP", "FAIL", "PENDING", "REQUIRES_REVIEW"])]
+    assert not blocked_gate_links.empty
+    assert set(blocked_gate_links["link_role"]) == {"blocks"}
+
+    review_links = links[links["link_type"] == "review_required"]
+    assert not review_links.empty
+    assert set(review_links["linked_table"]) == {"hindsight_pattern_observations"}
+    assert set(review_links["link_role"]) == {"needs_review"}
+    assert set(review_links["link_status"]) == {"REQUIRES_REVIEW"}
+    assert "supports" not in set(review_links["link_role"])
 
 
 def test_hindsight_event_ledger_blocks_date_only_reaction(tmp_path: Path) -> None:

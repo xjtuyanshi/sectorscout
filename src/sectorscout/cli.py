@@ -443,6 +443,18 @@ def hindsight_seed_evidence(
     typer.echo(json.dumps({"seeded_evidence": count, "path": str(path)}, indent=2, sort_keys=True))
 
 
+@hindsight_app.command("build-observation-links")
+def hindsight_build_observation_links(
+    config: Path = typer.Option(Path("config.yaml"), "--config"),
+) -> None:
+    """Link pattern observations to official evidence and computed replay gates."""
+    from sectorscout.hindsight import build_hindsight_observation_links
+
+    loaded = _load(config)
+    links = build_hindsight_observation_links(loaded)
+    typer.echo(json.dumps([link.to_dict() for link in links], indent=2, sort_keys=True))
+
+
 @hindsight_app.command("fetch-prices")
 def hindsight_fetch_prices(
     path: Path = typer.Option(DEFAULT_HINDSIGHT_CASES_PATH, "--path"),
