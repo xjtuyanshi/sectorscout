@@ -1126,15 +1126,20 @@ def test_ui_and_intel_modules_import() -> None:
 def test_hindsight_default_cases_include_requested_symbols() -> None:
     symbols = {case.symbol for case in default_hindsight_cases()}
     assert {"NVDA", "MU", "SNDK", "LITE"}.issubset(symbols)
+    roles = {case.symbol: case.case_role for case in default_hindsight_cases()}
+    assert roles["NVDA"] == "anchor"
+    assert roles["AMD"] == "peer_control"
+    assert roles["INTC"] == "negative_control"
+    assert roles["MRVL"] == "peer_control"
 
 
 def test_hindsight_scan_marks_missing_price_history(tmp_path: Path) -> None:
     config = _config(tmp_path)
     count = seed_hindsight_cases(config, tmp_path / "leader_cases.csv")
     results = scan_hindsight_cases(config, path=tmp_path / "leader_cases.csv", persist=False)
-    assert count == 4
-    assert len(results) == 4
-    assert {result.symbol for result in results} == {"NVDA", "MU", "SNDK", "LITE"}
+    assert count == 7
+    assert len(results) == 7
+    assert {result.symbol for result in results} == {"NVDA", "MU", "SNDK", "LITE", "AMD", "INTC", "MRVL"}
     assert all(result.data_quality == "missing_price_history" for result in results)
 
 
@@ -1323,7 +1328,7 @@ def test_hindsight_hypothesis_registry_builds_cross_case_matrix(tmp_path: Path) 
     hypotheses, case_results = build_hindsight_hypothesis_registry(config, path=tmp_path / "leader_cases.csv")
 
     assert len(hypotheses) == 4
-    assert len(case_results) == 16
+    assert len(case_results) == 28
     assert {hypothesis.hypothesis_name.split(" - ")[0] for hypothesis in hypotheses} == {"H1", "H2", "H3", "H4"}
 
     latest_hypotheses = latest_hindsight_hypotheses(config)
@@ -1340,6 +1345,8 @@ def test_hindsight_hypothesis_registry_builds_cross_case_matrix(tmp_path: Path) 
     assert h2_results.loc["LITE", "result_status"] == "SUPPORTS"
     assert h2_results.loc["SNDK", "result_status"] in {"TIMING_GAP", "REQUIRES_REVIEW"}
     assert h2_results.loc["SNDK", "reason_code"] == "downstream_demand_not_pit_usable"
+    assert h2_results.loc["AMD", "result_status"] == "DATA_GAP"
+    assert h2_results.loc["AMD", "reason_code"] == "control_not_evaluable"
 
 
 def test_hindsight_hypothesis_registry_blocks_data_gaps_and_context_only_support(tmp_path: Path) -> None:
@@ -1361,6 +1368,20 @@ def test_hindsight_hypothesis_registry_blocks_data_gaps_and_context_only_support
     assert "spin-off" not in h2_results.loc["SNDK", "reason_text"].lower() or h2_results.loc[
         "SNDK", "result_status"
     ] == "TIMING_GAP"
+
+
+def test_hindsight_control_cases_are_not_false_failures(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    scan_hindsight_cases(config, path=tmp_path / "leader_cases.csv", persist=True)
+    build_hindsight_hypothesis_registry(config, path=tmp_path / "leader_cases.csv")
+
+    results = latest_hindsight_hypothesis_case_results(config)
+    controls = results[results["case_role"].isin(["peer_control", "negative_control"])]
+    assert not controls.empty
+    assert "SUPPORTS" not in set(controls["result_status"])
+    assert "BLOCKS" not in set(controls["result_status"])
+    assert "control_not_evaluable" in set(controls["reason_code"])
+    assert all("not a failed pattern" in reason for reason in controls[controls["reason_code"] == "control_not_evaluable"]["reason_text"])
 
 
 def test_hindsight_event_ledger_blocks_date_only_reaction(tmp_path: Path) -> None:
@@ -1397,17 +1418,21 @@ def test_hindsight_event_ledger_blocks_date_only_reaction(tmp_path: Path) -> Non
 def test_default_hindsight_events_use_official_timing_seeds(tmp_path: Path) -> None:
     config = _config(tmp_path)
     count = seed_hindsight_events(config, tmp_path / "leader_cases.csv")
-    assert count == 4
+    assert count == 7
 
     events = latest_hindsight_events(config)
     assert not events.empty
-    assert set(events["symbol"]) == {"NVDA", "MU", "SNDK", "LITE"}
-    assert set(events["timing_status"]) == {"TIMING_RESOLVED"}
-    assert set(events["source_quality"]) == {"sec_8k_official"}
-    assert events["published_at_utc"].notna().all()
-    assert not events["requires_review"].astype(bool).any()
+    assert {"NVDA", "MU", "SNDK", "LITE", "AMD", "INTC", "MRVL"}.issubset(set(events["symbol"]))
+    official = events[events["symbol"].isin(["NVDA", "MU", "SNDK", "LITE"])]
+    controls = events[events["symbol"].isin(["AMD", "INTC", "MRVL"])]
+    assert set(official["timing_status"]) == {"TIMING_RESOLVED"}
+    assert set(official["source_quality"]) == {"sec_8k_official"}
+    assert official["published_at_utc"].notna().all()
+    assert not official["requires_review"].astype(bool).any()
+    assert set(controls["timing_status"]) == {"DATA_GAP"}
+    assert controls["requires_review"].astype(bool).all()
 
-    by_symbol = events.set_index("symbol")
+    by_symbol = official.set_index("symbol")
     assert str(by_symbol.loc["NVDA", "first_tradable_date"])[:10] == "2024-02-22"
     assert str(by_symbol.loc["MU", "first_tradable_date"])[:10] == "2025-09-24"
     assert str(by_symbol.loc["SNDK", "first_tradable_date"])[:10] == "2025-02-24"
@@ -1416,8 +1441,10 @@ def test_default_hindsight_events_use_official_timing_seeds(tmp_path: Path) -> N
 
     gates = build_hindsight_replay_gates(config, path=tmp_path / "leader_cases.csv", persist=False)
     first_tradable_gates = [gate for gate in gates if gate.gate_name == "First tradable date resolved"]
-    assert len(first_tradable_gates) == 4
-    assert {gate.gate_status for gate in first_tradable_gates} == {"PASS"}
+    assert len(first_tradable_gates) == 7
+    status_by_symbol = {gate.symbol: gate.gate_status for gate in first_tradable_gates}
+    assert {status_by_symbol[symbol] for symbol in ["NVDA", "MU", "SNDK", "LITE"]} == {"PASS"}
+    assert {status_by_symbol[symbol] for symbol in ["AMD", "INTC", "MRVL"]} == {"DATA_GAP"}
 
 
 def test_hindsight_evidence_ledger_tracks_pit_usability(tmp_path: Path) -> None:

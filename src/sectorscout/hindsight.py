@@ -175,6 +175,9 @@ class HindsightCase:
     hindsight_reason: str
     anchor_event: str
     source_url: str
+    case_role: str = "watchlist"
+    outcome_bucket: str = "unknown"
+    control_reason: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
@@ -391,6 +394,9 @@ def default_hindsight_cases() -> list[HindsightCase]:
             hindsight_reason="Study whether SectorScout-style theme strength, relative strength, and setup structure would have surfaced the 2024 leader early enough.",
             anchor_event="AI accelerator demand and repeated earnings revisions.",
             source_url="https://www.nvidia.com/en-us/data-center/",
+            case_role="anchor",
+            outcome_bucket="leader",
+            control_reason="Anchor case for AI accelerator demand shock.",
         ),
         HindsightCase(
             symbol="MU",
@@ -401,6 +407,9 @@ def default_hindsight_cases() -> list[HindsightCase]:
             hindsight_reason="Study whether a memory-cycle leader would be caught by theme rotation, relative strength, and fundamental acceleration signals.",
             anchor_event="AI server memory demand and high-bandwidth memory cycle.",
             source_url="https://www.micron.com/products/memory/hbm",
+            case_role="downstream_node",
+            outcome_bucket="leader",
+            control_reason="Downstream memory node after AI accelerator demand became visible.",
         ),
         HindsightCase(
             symbol="SNDK",
@@ -411,6 +420,9 @@ def default_hindsight_cases() -> list[HindsightCase]:
             hindsight_reason="Study whether a storage-cycle case would appear as external-only context first, then graduate into internal ranking after price and theme evidence improved.",
             anchor_event="Standalone SanDisk trading history and NAND/storage cycle.",
             source_url="https://www.sandisk.com/",
+            case_role="downstream_node",
+            outcome_bucket="leader",
+            control_reason="Downstream storage node; initial replay must not splice pre-spin history.",
         ),
         HindsightCase(
             symbol="LITE",
@@ -421,6 +433,48 @@ def default_hindsight_cases() -> list[HindsightCase]:
             hindsight_reason="Study whether optical networking beneficiaries show up through relative strength, theme breadth, and setup candidates.",
             anchor_event="AI data-center optical component demand.",
             source_url="https://www.lumentum.com/en/markets/cloud-data-center",
+            case_role="downstream_node",
+            outcome_bucket="leader",
+            control_reason="Downstream optical networking node after AI infrastructure demand broadened.",
+        ),
+        HindsightCase(
+            symbol="AMD",
+            label="AMD 2024 AI accelerator peer control",
+            start_date=date(2024, 1, 2),
+            end_date=date(2024, 12, 31),
+            theme="AI semiconductors",
+            hindsight_reason="Control case for a same-theme AI accelerator peer so the lab does not learn from NVDA alone.",
+            anchor_event="AI accelerator peer narrative; official PIT evidence is intentionally not seeded in MVP.",
+            source_url="https://www.amd.com/en/solutions/ai.html",
+            case_role="peer_control",
+            outcome_bucket="control",
+            control_reason="Same industry pool as NVDA; requires separate PIT evidence before it can support a hypothesis.",
+        ),
+        HindsightCase(
+            symbol="INTC",
+            label="INTC 2024 semiconductor peer control",
+            start_date=date(2024, 1, 2),
+            end_date=date(2024, 12, 31),
+            theme="AI semiconductors",
+            hindsight_reason="Negative-control case for broad semiconductor exposure without seeded AI accelerator leadership evidence.",
+            anchor_event="Semiconductor peer context; official PIT demand evidence is intentionally not seeded in MVP.",
+            source_url="https://www.intel.com/content/www/us/en/artificial-intelligence/overview.html",
+            case_role="negative_control",
+            outcome_bucket="control",
+            control_reason="Same broad semiconductor population, included to expose winner-only selection bias.",
+        ),
+        HindsightCase(
+            symbol="MRVL",
+            label="MRVL 2025 AI infrastructure peer control",
+            start_date=date(2025, 1, 2),
+            end_date=date(2026, 5, 29),
+            theme="AI networking and custom silicon",
+            hindsight_reason="Peer-control case for AI networking/custom silicon so downstream hypotheses require explicit evidence.",
+            anchor_event="AI infrastructure peer narrative; official PIT conversion evidence is intentionally not seeded in MVP.",
+            source_url="https://www.marvell.com/solutions/artificial-intelligence.html",
+            case_role="peer_control",
+            outcome_bucket="control",
+            control_reason="Adjacent AI infrastructure node; matrix should show evidence gaps until official evidence is linked.",
         ),
     ]
 
@@ -438,11 +492,17 @@ def ensure_hindsight_tables(config: SectorScoutConfig) -> None:
                 hindsight_reason VARCHAR NOT NULL,
                 anchor_event VARCHAR NOT NULL,
                 source_url VARCHAR NOT NULL,
+                case_role VARCHAR NOT NULL DEFAULT 'watchlist',
+                outcome_bucket VARCHAR NOT NULL DEFAULT 'unknown',
+                control_reason VARCHAR NOT NULL DEFAULT '',
                 created_at_utc TIMESTAMPTZ NOT NULL,
                 PRIMARY KEY (symbol, label, start_date)
             )
             """
         )
+        connection.execute("ALTER TABLE hindsight_case_studies ADD COLUMN IF NOT EXISTS case_role VARCHAR DEFAULT 'watchlist'")
+        connection.execute("ALTER TABLE hindsight_case_studies ADD COLUMN IF NOT EXISTS outcome_bucket VARCHAR DEFAULT 'unknown'")
+        connection.execute("ALTER TABLE hindsight_case_studies ADD COLUMN IF NOT EXISTS control_reason VARCHAR DEFAULT ''")
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS hindsight_scan_results (
@@ -683,6 +743,9 @@ def load_hindsight_cases(path: Path = DEFAULT_HINDSIGHT_CASES_PATH) -> list[Hind
                     hindsight_reason=str(row["hindsight_reason"]),
                     anchor_event=str(row["anchor_event"]),
                     source_url=str(row.get("source_url") or ""),
+                    case_role=str(row.get("case_role") or _default_case_role(str(row["symbol"]), str(row["theme"]))),
+                    outcome_bucket=str(row.get("outcome_bucket") or "unknown"),
+                    control_reason=str(row.get("control_reason") or ""),
                 )
             )
     return cases
@@ -711,8 +774,9 @@ def seed_hindsight_cases(config: SectorScoutConfig, path: Path = DEFAULT_HINDSIG
                 """
                 INSERT OR REPLACE INTO hindsight_case_studies (
                     symbol, label, start_date, end_date, theme, hindsight_reason,
-                    anchor_event, source_url, created_at_utc
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    anchor_event, source_url, case_role, outcome_bucket,
+                    control_reason, created_at_utc
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 [
                     case.symbol,
@@ -723,6 +787,9 @@ def seed_hindsight_cases(config: SectorScoutConfig, path: Path = DEFAULT_HINDSIG
                     case.hindsight_reason,
                     case.anchor_event,
                     case.source_url,
+                    case.case_role,
+                    case.outcome_bucket,
+                    case.control_reason,
                     now,
                 ],
             )
@@ -770,7 +837,7 @@ def build_hindsight_events_from_cases(cases: list[HindsightCase]) -> list[Hindsi
                 source_url=case.source_url,
                 source_quality="case_metadata_needs_source_review",
                 evidence_type="theme_or_catalyst_seed",
-                evidence_summary=case.anchor_event,
+                evidence_summary=_case_seed_summary(case),
                 fundamental_evidence_available_at=None,
                 first_tradable_date=None,
                 first_tradable_bar_policy="unresolved_until_timestamp_reviewed",
@@ -1258,6 +1325,7 @@ def historical_pattern_summary(
             {
                 "Industry / theme pattern": theme,
                 "Symbols": ", ".join(case.symbol for case in theme_cases),
+                "Case roles": ", ".join(f"{case.symbol}:{_case_role(case)}" for case in theme_cases),
                 "What to study": "; ".join(sorted({case.anchor_event for case in theme_cases})),
                 "Cases with price data": len(usable_results),
                 "Status": "ready_to_analyze" if usable_results else "needs_historical_data",
@@ -1764,11 +1832,15 @@ def _hypothesis_promotion_status(
     hypothesis: HindsightHypothesis,
     case_results: list[HindsightHypothesisCaseResult],
 ) -> str:
-    supports = [result for result in case_results if result.result_status == "SUPPORTS"]
-    blockers = [result for result in case_results if result.result_status == "BLOCKS"]
-    data_gaps = [result for result in case_results if result.result_status == "DATA_GAP"]
-    timing_gaps = [result for result in case_results if result.result_status == "TIMING_GAP"]
-    reviews = [result for result in case_results if result.result_status == "REQUIRES_REVIEW"]
+    controls = [result for result in case_results if result.case_role in {"negative_control", "peer_control"}]
+    if any(result.result_status == "SUPPORTS" for result in controls):
+        return "CONTROL_SUPPORT_REVIEW"
+    evaluated = [result for result in case_results if result.case_role not in {"negative_control", "peer_control"}]
+    supports = [result for result in evaluated if result.result_status == "SUPPORTS"]
+    blockers = [result for result in evaluated if result.result_status == "BLOCKS"]
+    data_gaps = [result for result in evaluated if result.result_status == "DATA_GAP"]
+    timing_gaps = [result for result in evaluated if result.result_status == "TIMING_GAP"]
+    reviews = [result for result in evaluated if result.result_status == "REQUIRES_REVIEW"]
     if hypothesis.hypothesis_name.startswith("H4") and supports:
         return "MIXED_ANALOG_REVIEW"
     if blockers:
@@ -1791,6 +1863,7 @@ def _hypothesis_next_evidence(status: str, default_note: str) -> str:
         "REQUIRES_REVIEW": "Attach official timestamped evidence or computed gates before review can proceed.",
         "PARTIAL_SUPPORT_TIMING_GAP": "Keep supporting cases, but resolve future-only or timing-incompatible evidence before replay design.",
         "TIMING_GAP_REVIEW": "Resolve announcement timing and evidence availability before interpreting the hypothesis.",
+        "CONTROL_SUPPORT_REVIEW": "A control case supports under the same rules; review for false-positive or overly broad mechanism risk.",
         "NEEDS_MORE_CASES": "Add comparable leaders and controls before this becomes a replay design candidate.",
         "MIXED_ANALOG_REVIEW": "Review as a mixed analog; do not use as a replay-ready rule.",
         "ELIGIBLE_FOR_REPLAY_DESIGN": "Translate into a replay rule and then validate separately.",
@@ -1885,6 +1958,17 @@ def _evaluate_downstream_evidence_hypothesis(
 ) -> tuple[str, str, str, list[str], list[str]]:
     if _case_role(case) == "anchor":
         return "NOT_APPLICABLE", "anchor_not_downstream", "The anchor case is not counted as downstream conversion.", [], []
+    if _case_role(case) in {"negative_control", "peer_control"}:
+        usable_control = _usable_customer_demand_evidence(evidence, case.symbol)
+        if usable_control.empty:
+            pending_control = _pending_customer_demand_evidence(evidence, case.symbol)
+            return (
+                "DATA_GAP",
+                "control_not_evaluable",
+                "Control case lacks PIT-usable official demand evidence; this is not a failed pattern.",
+                _ids(pending_control, "evidence_id"),
+                [],
+            )
     usable = _usable_customer_demand_evidence(evidence, case.symbol)
     if not usable.empty:
         return (
@@ -2080,11 +2164,10 @@ def _linked_observation_ids(
 
 
 def _case_role(case: HindsightCase) -> str:
-    if case.symbol.upper() == "NVDA":
-        return "anchor"
-    if any(word in case.theme.lower() for word in ["memory", "hbm", "storage", "nand", "optical", "network"]):
-        return "downstream_node"
-    return "watchlist"
+    role = str(getattr(case, "case_role", "") or "").strip()
+    if role:
+        return role
+    return _default_case_role(case.symbol, case.theme)
 
 
 def _ids(frame: pd.DataFrame, column: str) -> list[str]:
@@ -2140,6 +2223,25 @@ def _industry_cluster(theme: str) -> str:
     if "ai" in lowered:
         return "AI infrastructure / other"
     return "Other industry theme"
+
+
+def _default_case_role(symbol: str, theme: str) -> str:
+    symbol_upper = symbol.upper()
+    if symbol_upper == "NVDA":
+        return "anchor"
+    lowered = theme.lower()
+    if any(word in lowered for word in ["memory", "hbm", "storage", "nand", "optical", "network"]):
+        return "downstream_node"
+    return "watchlist"
+
+
+def _case_seed_summary(case: HindsightCase) -> str:
+    parts = [case.anchor_event]
+    if case.case_role in {"negative_control", "peer_control"}:
+        parts.append(f"Control role: {case.case_role}.")
+    if case.control_reason:
+        parts.append(case.control_reason)
+    return " ".join(part for part in parts if part)
 
 
 def _event_type_from_theme(theme: str) -> str:

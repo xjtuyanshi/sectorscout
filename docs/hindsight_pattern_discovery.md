@@ -206,6 +206,14 @@ industry-only mixed analogs. Each case gets one result row per hypothesis:
 `NOT_APPLICABLE`. Counts in the UI are derived from those case rows so multiple
 links from the same symbol do not inflate support.
 
+Default cases include leader examples and controls. NVDA is the anchor case;
+MU, SNDK, and LITE are downstream leader nodes; AMD, INTC, and MRVL are peer or
+negative controls. Control rows are included to expose winner-only selection
+bias. A control `DATA_GAP` means the same point-in-time evidence has not been
+loaded yet, not that the control failed. If a control later supports a
+hypothesis under the same rules, the registry must move to control review before
+any future replay promotion.
+
 ## Safety Rules
 
 - Mark missing price history explicitly.

@@ -114,6 +114,10 @@ def render(ctx: UIContext) -> None:
     case_objects = load_hindsight_cases()
     cases = pd.DataFrame([case.to_dict() for case in case_objects])
     st.dataframe(cases, use_container_width=True, hide_index=True)
+    st.caption(
+        "Case roles separate anchor leaders, downstream nodes, peer controls, and negative controls. "
+        "Control DATA GAP means the control is not yet evaluable under PIT rules; it is not treated as a failed setup."
+    )
     action_cols = st.columns([1, 1, 2])
     if action_cols[0].button("Seed cases", use_container_width=True):
         count = seed_hindsight_cases(ctx.config)
@@ -279,6 +283,10 @@ def _render_hypothesis_registry(ctx: UIContext) -> None:
         "This matrix turns individual observations into cross-case hypotheses. It does not confirm a rule; "
         "it shows which cases support, block, or still lack evidence for a future replay design."
     )
+    st.info(
+        "Controls are displayed in the matrix to expose winner-only selection bias. They do not count as failed "
+        "patterns unless the same required evidence and gates are loaded and evaluated."
+    )
     if st.button("Build replay hypothesis registry", use_container_width=True):
         hypotheses, case_results = build_hindsight_hypothesis_registry(ctx.config)
         st.success(f"Built {len(hypotheses)} hypotheses and {len(case_results)} case results.")
@@ -310,6 +318,9 @@ def _table_meaning(table: str) -> str:
         "exit_decisions": "Exit decision trace rows.",
         "trade_ledger": "Row-level lifecycle QA ledger.",
         "lifecycle_qa": "Lifecycle coverage and warning rows.",
+        "hindsight_case_studies": "Historical leader, peer-control, and negative-control case definitions.",
+        "hindsight_hypotheses": "Candidate replay mechanisms, not confirmed patterns.",
+        "hindsight_hypothesis_case_results": "Per-case hypothesis support, blocker, and data-gap matrix.",
     }.get(table, "Supporting dataset.")
 
 
@@ -410,7 +421,9 @@ def _display_hypothesis_case_matrix(hypotheses: pd.DataFrame, case_results: pd.D
             "Replay readiness": _friendly_text(hypothesis.get("promotion_status")),
         }
         for _, result in result_rows.iterrows():
-            row[str(result.get("symbol"))] = _friendly_text(result.get("result_status"))
+            row[str(result.get("symbol"))] = (
+                f"{_friendly_text(result.get('result_status'))} ({_friendly_text(result.get('case_role'))})"
+            )
         rows.append(row)
     return pd.DataFrame(rows)
 
@@ -424,6 +437,7 @@ def _display_hypothesis_case_results(case_results: pd.DataFrame) -> pd.DataFrame
                 "Role": _friendly_text(row.get("case_role")),
                 "Status": _friendly_text(row.get("result_status")),
                 "Reason": row.get("reason_text"),
+                "Control interpretation": _control_interpretation(row),
                 "Evidence links": _json_count(row.get("linked_evidence_ids_json")),
                 "Gate links": _json_count(row.get("linked_gate_ids_json")),
                 "Observation links": _json_count(row.get("linked_observation_ids_json")),
@@ -431,6 +445,16 @@ def _display_hypothesis_case_results(case_results: pd.DataFrame) -> pd.DataFrame
             for _, row in case_results.iterrows()
         ]
     )
+
+
+def _control_interpretation(row: pd.Series) -> str:
+    role = str(row.get("case_role") or "")
+    status = str(row.get("result_status") or "")
+    if role in {"negative_control", "peer_control"} and status in {"DATA_GAP", "TIMING_GAP", "REQUIRES_REVIEW"}:
+        return "Control is not evaluable yet; do not treat as failure."
+    if role in {"negative_control", "peer_control"} and status == "SUPPORTS":
+        return "Control supports under same PIT rules; review for false-positive risk."
+    return "-"
 
 
 def _display_observation_links_frame(frame: pd.DataFrame) -> pd.DataFrame:
