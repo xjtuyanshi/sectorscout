@@ -502,6 +502,26 @@ def hindsight_pattern_diagnostics(
     typer.echo(json.dumps(payload, indent=2, sort_keys=True))
 
 
+@hindsight_app.command("pattern-candidates")
+def hindsight_pattern_candidates(
+    path: Path = typer.Option(DEFAULT_HINDSIGHT_CASES_PATH, "--path"),
+    config: Path = typer.Option(Path("config.yaml"), "--config"),
+) -> None:
+    """Build discovery rule cards from historical leader, downstream, guardrail, and control rows."""
+    from sectorscout.hindsight_pattern_candidates import (
+        build_hindsight_pattern_candidates,
+        pattern_candidates_summary,
+    )
+
+    loaded = _load(config)
+    candidates = build_hindsight_pattern_candidates(loaded, path=path)
+    payload = {
+        "summary": pattern_candidates_summary(candidates),
+        "candidates": [item.to_dict() for item in candidates],
+    }
+    typer.echo(json.dumps(payload, indent=2, sort_keys=True))
+
+
 @hindsight_app.command("build-observation-links")
 def hindsight_build_observation_links(
     config: Path = typer.Option(Path("config.yaml"), "--config"),

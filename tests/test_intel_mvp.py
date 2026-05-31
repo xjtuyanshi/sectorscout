@@ -44,6 +44,10 @@ from sectorscout.hindsight_industry_profile import (
     build_hindsight_industry_profiles,
     industry_profile_summary,
 )
+from sectorscout.hindsight_pattern_candidates import (
+    build_hindsight_pattern_candidates,
+    pattern_candidates_summary,
+)
 from sectorscout.hindsight_pattern_matrix import (
     build_hindsight_pattern_diagnostics,
     build_hindsight_pattern_matrix,
@@ -1535,6 +1539,10 @@ def test_hindsight_pattern_playbook_exports_markdown(tmp_path: Path) -> None:
     assert "## Case Map" in markdown
     assert "## Industry Evidence Profiles" in markdown
     assert "AI data-center compute demand" in markdown
+    assert "## Pattern Candidate Cards" in markdown
+    assert "Anchor compute demand shock" in markdown
+    assert "Storage context split" in markdown
+    assert "Control comparability check" in markdown
     assert "## Industry + Technical Matrix" in markdown
     assert "INDUSTRY_READY_TECHNICAL_DATA_GAP" in markdown
     assert "NVDA - Anchor leader" in markdown
@@ -1594,6 +1602,39 @@ def test_hindsight_pattern_diagnostics_turn_matrix_into_review_cards(tmp_path: P
     assert summary["diagnostics"] == 5
     assert summary["high_review_items"] == 1
     assert summary["data_tasks"] == 2
+
+
+def test_hindsight_pattern_candidates_turn_cases_into_rule_cards(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    scan_hindsight_cases(config, path=tmp_path / "leader_cases.csv", persist=True)
+    build_hindsight_hypothesis_registry(config, path=tmp_path / "leader_cases.csv")
+
+    candidates = build_hindsight_pattern_candidates(config, path=tmp_path / "leader_cases.csv")
+    by_id = {candidate.candidate_id: candidate for candidate in candidates}
+
+    assert set(by_id) == {
+        "P1_ANCHOR_COMPUTE_SHOCK",
+        "P2_DOWNSTREAM_MEMORY_CONVERSION",
+        "P3_STORAGE_CONTEXT_SPLIT",
+        "P4_OPTICAL_INTERCONNECT_TRANSFER",
+        "P5_CONTROL_COMPARABILITY",
+    }
+    assert by_id["P1_ANCHOR_COMPUTE_SHOCK"].supporting_symbols == ["NVDA"]
+    assert by_id["P2_DOWNSTREAM_MEMORY_CONVERSION"].supporting_symbols == ["MU"]
+    assert by_id["P4_OPTICAL_INTERCONNECT_TRANSFER"].supporting_symbols == ["LITE"]
+    assert by_id["P3_STORAGE_CONTEXT_SPLIT"].supporting_symbols == ["SNDK"]
+    assert by_id["P3_STORAGE_CONTEXT_SPLIT"].blocked_symbols == ["SNDK"]
+    assert by_id["P3_STORAGE_CONTEXT_SPLIT"].readiness_status == "FUTURE_CONTEXT_GUARDRAIL"
+    assert "Future-only" in by_id["P3_STORAGE_CONTEXT_SPLIT"].anti_hindsight_guardrail
+    assert by_id["P5_CONTROL_COMPARABILITY"].candidate_type == "control_check"
+    assert by_id["P5_CONTROL_COMPARABILITY"].control_symbols == ["AMD", "INTC", "MRVL"]
+    assert by_id["P5_CONTROL_COMPARABILITY"].readiness_status == "CONTROL_COMPARABILITY_CHECK"
+
+    summary = pattern_candidates_summary(candidates)
+    assert summary["candidates"] == 5
+    assert summary["guardrail_items"] == 1
+    assert summary["control_checks"] == 1
+    assert summary["technical_data_tasks"] >= 3
 
 
 def test_hindsight_sec_metadata_parses_archive_urls_and_matches_submission_json(
@@ -1727,6 +1768,7 @@ def test_hindsight_refresh_runs_pipeline_without_network(tmp_path: Path) -> None
     assert steps["public_price_history"]["status"] == "SKIPPED"
     assert steps["pattern_matrix"]["rows"] == 7
     assert steps["pattern_diagnostics"]["rows"] == 5
+    assert steps["pattern_candidates"]["rows"] == 5
     assert steps["source_audit"]["rows"] >= 5
     assert steps["sec_filing_metadata"]["rows"] == 4
     assert steps["sec_companyfacts"]["status"] == "SKIPPED"
@@ -1739,6 +1781,11 @@ def test_hindsight_refresh_runs_pipeline_without_network(tmp_path: Path) -> None
     assert payload["pattern_matrix_summary"]["rows"] == 7
     assert payload["pattern_matrix_summary"]["control_review_rows"] == 3
     assert payload["pattern_diagnostics_summary"]["diagnostics"] == 5
+    assert payload["pattern_candidates_summary"]["candidates"] == 5
+    assert any(
+        row["candidate_id"] == "P3_STORAGE_CONTEXT_SPLIT" and row["readiness_status"] == "FUTURE_CONTEXT_GUARDRAIL"
+        for row in payload["pattern_candidates"]
+    )
     assert any(
         row["diagnostic_id"] == "D2_FUTURE_CONTEXT_GUARDRAIL" and row["symbols"] == ["SNDK"]
         for row in payload["pattern_diagnostics"]
@@ -1761,6 +1808,7 @@ def test_hindsight_refresh_runs_pipeline_without_network(tmp_path: Path) -> None
     assert result.row_counts["hindsight_hypothesis_case_results"] == 28
     written = Path(result.playbook_path).read_text(encoding="utf-8")
     assert "H3 - Industry evidence plus pre-event technical strength" in written
+    assert "## Pattern Candidate Cards" in written
     forbidden = ["buy signal", "sell signal", "win rate", "Sharpe", "CAGR", "profit factor", "strategy edge"]
     assert not any(term.lower() in json.dumps(payload).lower() for term in forbidden)
 

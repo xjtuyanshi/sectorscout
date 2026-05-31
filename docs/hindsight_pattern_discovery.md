@@ -225,6 +225,7 @@ or a computed replay gate link.
 .venv/bin/sectorscout hindsight industry-profiles
 .venv/bin/sectorscout hindsight pattern-matrix
 .venv/bin/sectorscout hindsight pattern-diagnostics
+.venv/bin/sectorscout hindsight pattern-candidates
 .venv/bin/sectorscout hindsight fetch-prices
 .venv/bin/sectorscout hindsight scan
 .venv/bin/sectorscout hindsight build-gates
@@ -290,6 +291,11 @@ After `scan`, review:
   coverage, technical gap, and technical-only risk diagnostics;
 - the Historical Lab `Matrix Diagnostics` cards for the default human-readable
   view; the raw diagnostic table stays behind a detail expander;
+- `hindsight pattern-candidates` for discovery rule cards that turn NVDA, MU,
+  SNDK, LITE, and the controls into explicit mechanism, evidence, technical,
+  guardrail, and next-step review objects;
+- the Historical Lab `Pattern Candidate Cards` section for a less machine-like
+  explanation of what each case currently teaches and what still blocks it;
 - `hindsight_replay_gates` for PASS / FAIL / DATA_GAP / PENDING explain rows;
 - `hindsight_observation_links` for the explicit connection from each pattern
   observation to official evidence, computed gates, or a review-required blocker;

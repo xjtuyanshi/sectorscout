@@ -33,6 +33,10 @@ from sectorscout.hindsight_industry_profile import (
     build_hindsight_industry_profiles,
     industry_profiles_to_frame,
 )
+from sectorscout.hindsight_pattern_candidates import (
+    build_hindsight_pattern_candidates,
+    pattern_candidates_to_frame,
+)
 from sectorscout.hindsight_pattern_matrix import (
     build_hindsight_pattern_diagnostics,
     build_hindsight_pattern_matrix,
@@ -214,6 +218,14 @@ def render(ctx: UIContext) -> None:
         _render_matrix_diagnostic_cards(diagnostics)
         with st.expander("Diagnostic detail table", expanded=False):
             st.dataframe(pattern_diagnostics_to_frame(diagnostics), use_container_width=True, hide_index=True)
+        st.markdown("#### Pattern Candidate Cards")
+        st.caption(
+            "These cards translate historical cases into candidate discovery rules. They are review objects, not live scoring inputs."
+        )
+        candidates = build_hindsight_pattern_candidates(ctx.config)
+        _render_pattern_candidate_cards(candidates)
+        with st.expander("Candidate detail table", expanded=False):
+            st.dataframe(pattern_candidates_to_frame(candidates), use_container_width=True, hide_index=True)
     _render_source_audit(ctx)
 
     st.subheader("Gate Explain Panel")
@@ -353,6 +365,11 @@ def _render_lab_refresh(ctx: UIContext) -> None:
                 _render_matrix_diagnostic_cards(result.pattern_diagnostics)
                 with st.expander("Diagnostic detail table", expanded=False):
                     st.dataframe(pd.DataFrame(result.pattern_diagnostics), use_container_width=True, hide_index=True)
+            if result.pattern_candidates:
+                st.markdown("#### Pattern Candidate Cards")
+                _render_pattern_candidate_cards(result.pattern_candidates)
+                with st.expander("Candidate detail table", expanded=False):
+                    st.dataframe(pd.DataFrame(result.pattern_candidates), use_container_width=True, hide_index=True)
             if result.sec_filing_metadata:
                 st.markdown("#### SEC Filing Metadata")
                 st.dataframe(_display_sec_metadata_rows(result.sec_filing_metadata), use_container_width=True, hide_index=True)
@@ -607,6 +624,53 @@ def _render_matrix_diagnostic_cards(items: list[object]) -> None:
             """
         )
     st.markdown(f"<div class='ss-research-card-grid'>{''.join(cards)}</div>", unsafe_allow_html=True)
+
+
+def _render_pattern_candidate_cards(items: list[object]) -> None:
+    if not items:
+        st.info("No pattern candidate cards available yet.")
+        return
+    cards: list[str] = []
+    for item in items:
+        row = item.to_dict() if hasattr(item, "to_dict") else dict(item)
+        support = _join_list(row.get("supporting_symbols")) or "-"
+        blocked = _join_list(row.get("blocked_symbols")) or "-"
+        controls = _join_list(row.get("control_symbols")) or "-"
+        status = str(row.get("readiness_status") or "")
+        cards.append(
+            "<div class=\"ss-research-card ss-tone-"
+            f"{_safe_tone(row.get('tone'))}\">"
+            f"<div class=\"ss-card-kicker\">{escape(_friendly_text(row.get('candidate_type')))}</div>"
+            f"<div class=\"ss-card-title\">{escape(str(row.get('title') or 'Pattern candidate'))}</div>"
+            f"<div class=\"ss-card-value\">{escape(_friendly_candidate_status(status))}</div>"
+            f"<div class=\"ss-card-body\">{escape(_clip(row.get('reviewer_readout'), 180))}</div>"
+            f"<div class=\"ss-card-line\"><span>Mechanism</span><span>{escape(_clip(row.get('mechanism'), 140))}</span></div>"
+            f"<div class=\"ss-card-line\"><span>Support</span><span>{escape(support)}</span></div>"
+            f"<div class=\"ss-card-line\"><span>Blocked</span><span>{escape(blocked)}</span></div>"
+            f"<div class=\"ss-card-line\"><span>Controls</span><span>{escape(controls)}</span></div>"
+            f"<div class=\"ss-card-line\"><span>Guardrail</span><span>{escape(_clip(row.get('anti_hindsight_guardrail'), 130))}</span></div>"
+            f"<div class=\"ss-card-line\"><span>Next</span><span>{escape(_clip(row.get('next_research_step'), 130))}</span></div>"
+            "</div>"
+        )
+    st.markdown(f"<div class='ss-research-card-grid'>{''.join(cards)}</div>", unsafe_allow_html=True)
+
+
+def _friendly_candidate_status(status: str) -> str:
+    return {
+        "REPLAY_DESIGN_REVIEW_READY": "Ready for replay-design review",
+        "NEEDS_TECHNICAL_COVERAGE": "Needs technical coverage",
+        "FUTURE_CONTEXT_GUARDRAIL": "Keep future context separate",
+        "CONTROL_COMPARABILITY_CHECK": "Control comparison required",
+        "COUNTER_EVIDENCE_REVIEW": "Counter-evidence review",
+        "NEEDS_EVIDENCE": "Needs timestamped evidence",
+    }.get(status, status.replace("_", " ").title())
+
+
+def _clip(value: object, limit: int) -> str:
+    text = str(value or "-").strip()
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 1)].rstrip() + "..."
 
 
 def _friendly_diagnostic_type(value: object) -> str:

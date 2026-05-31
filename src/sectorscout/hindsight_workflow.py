@@ -22,6 +22,10 @@ from sectorscout.hindsight import (
 )
 from sectorscout.hindsight_companyfacts import build_hindsight_companyfacts, companyfacts_summary
 from sectorscout.hindsight_industry_profile import build_hindsight_industry_profiles, industry_profile_summary
+from sectorscout.hindsight_pattern_candidates import (
+    build_hindsight_pattern_candidates,
+    pattern_candidates_summary,
+)
 from sectorscout.hindsight_pattern_matrix import (
     build_hindsight_pattern_diagnostics,
     build_hindsight_pattern_matrix,
@@ -90,6 +94,8 @@ class HindsightRefreshResult:
     pattern_matrix_summary: dict[str, object]
     pattern_diagnostics: list[dict[str, object]]
     pattern_diagnostics_summary: dict[str, object]
+    pattern_candidates: list[dict[str, object]]
+    pattern_candidates_summary: dict[str, object]
 
     def to_dict(self) -> dict[str, object]:
         payload = asdict(self)
@@ -203,6 +209,8 @@ def run_hindsight_refresh(
     pattern_matrix_summary_payload = pattern_matrix_summary(pattern_matrix)
     pattern_diagnostics = build_hindsight_pattern_diagnostics(pattern_matrix)
     pattern_diagnostics_summary_payload = pattern_diagnostics_summary(pattern_diagnostics)
+    pattern_candidates = build_hindsight_pattern_candidates(config, path=path)
+    pattern_candidates_summary_payload = pattern_candidates_summary(pattern_candidates)
     steps.append(
         HindsightRefreshStep(
             "pattern_matrix",
@@ -217,6 +225,14 @@ def run_hindsight_refresh(
             "OK",
             "Built review diagnostics from the industry plus technical matrix.",
             len(pattern_diagnostics),
+        )
+    )
+    steps.append(
+        HindsightRefreshStep(
+            "pattern_candidates",
+            "OK",
+            "Built discovery rule cards from leader, downstream, guardrail, and control rows.",
+            len(pattern_candidates),
         )
     )
 
@@ -332,6 +348,8 @@ def run_hindsight_refresh(
         pattern_matrix_summary=pattern_matrix_summary_payload,
         pattern_diagnostics=[item.to_dict() for item in pattern_diagnostics],
         pattern_diagnostics_summary=pattern_diagnostics_summary_payload,
+        pattern_candidates=[item.to_dict() for item in pattern_candidates],
+        pattern_candidates_summary=pattern_candidates_summary_payload,
     )
 
 

@@ -15,6 +15,10 @@ from sectorscout.hindsight import (
 )
 from sectorscout.hindsight_companyfacts import build_hindsight_companyfacts, companyfacts_summary
 from sectorscout.hindsight_industry_profile import build_hindsight_industry_profiles, industry_profile_summary
+from sectorscout.hindsight_pattern_candidates import (
+    build_hindsight_pattern_candidates,
+    pattern_candidates_summary,
+)
 from sectorscout.hindsight_pattern_matrix import (
     build_hindsight_pattern_diagnostics,
     build_hindsight_pattern_matrix,
@@ -75,6 +79,7 @@ def build_hindsight_pattern_playbook_markdown(
     industry_profiles = build_hindsight_industry_profiles(config)
     pattern_matrix = build_hindsight_pattern_matrix(config)
     pattern_diagnostics = build_hindsight_pattern_diagnostics(pattern_matrix)
+    discovery_candidates = build_hindsight_pattern_candidates(config)
     sec_metadata = build_hindsight_sec_filing_metadata(config)
     companyfacts, companyfacts_status = build_hindsight_companyfacts(config)
     summary_cards = build_hindsight_readout_summary_cards(pattern_rows, case_rows)
@@ -134,6 +139,8 @@ def build_hindsight_pattern_playbook_markdown(
             lines.extend(_case_card_lines(card))
         lines.extend(["## Industry Evidence Profiles", ""])
         lines.extend(_industry_profile_lines(industry_profiles))
+        lines.extend(["## Pattern Candidate Cards", ""])
+        lines.extend(_pattern_candidate_lines(discovery_candidates))
         lines.extend(["## Industry + Technical Matrix", ""])
         lines.extend(_pattern_matrix_lines(pattern_matrix))
         lines.extend(["## Matrix Diagnostics", ""])
@@ -327,6 +334,39 @@ def _pattern_diagnostic_lines(items: list[Any]) -> list[str]:
             )
         )
     lines.append("")
+    return lines
+
+
+def _pattern_candidate_lines(items: list[Any]) -> list[str]:
+    summary = pattern_candidates_summary(items)
+    lines = [
+        f"- Cards: {_md(summary.get('candidates'))}",
+        f"- Ready for replay-design review: {_md(summary.get('review_ready'))}",
+        f"- Technical data tasks: {_md(summary.get('technical_data_tasks'))}",
+        f"- Guardrail items: {_md(summary.get('guardrail_items'))}",
+        f"- Control checks: {_md(summary.get('control_checks'))}",
+        "",
+    ]
+    if not items:
+        return lines + ["No pattern candidate cards are available yet.", ""]
+    for item in items:
+        lines.extend(
+            [
+                f"### {_md(item.title)}",
+                "",
+                f"- Status: {_md(item.readiness_status)}",
+                f"- Mechanism: {_md(item.mechanism)}",
+                f"- Current read: {_md(item.reviewer_readout)}",
+                f"- Supporting symbols: {_md(', '.join(item.supporting_symbols) or '-')}",
+                f"- Blocked symbols: {_md(', '.join(item.blocked_symbols) or '-')}",
+                f"- Controls to compare: {_md(', '.join(item.control_symbols) or '-')}",
+                f"- Industry evidence required: {_md('; '.join(item.industry_evidence_required))}",
+                f"- Technical confirmation required: {_md('; '.join(item.technical_confirmation_required))}",
+                f"- Guardrail: {_md(item.anti_hindsight_guardrail)}",
+                f"- Next research step: {_md(item.next_research_step)}",
+                "",
+            ]
+        )
     return lines
 
 

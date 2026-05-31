@@ -192,22 +192,167 @@
     <section class="grid grid-3">
       <div class="card">
         <div class="kicker">Current focus</div>
-        <div class="metric">UI cards</div>
-        <div class="note">把二维矩阵和首页状态进一步聚合成可读的 review cards / metric cards。</div>
+        <div class="metric">rule cards</div>
+        <div class="note">把 NVDA、MU、SNDK、LITE 和控制组转成候选规律卡片，方便逐条 review。</div>
       </div>
       <div class="card">
         <div class="kicker">Coverage impact</div>
-        <div class="metric">5 diagnostics</div>
-        <div class="note">新增 aligned cluster、future context、control coverage、technical gap、technical-only risk 五类诊断，并清理报告机器标签。</div>
+        <div class="metric">5 candidates</div>
+        <div class="note">新增 anchor compute、memory、storage guardrail、optical、control comparability 五类候选卡。</div>
       </div>
       <div class="card">
         <div class="kicker">Boundary</div>
         <div class="metric">overlay</div>
-        <div class="note">诊断卡只排序 review 工作，不是验证结论，也不改变 live scoring。</div>
+        <div class="note">候选卡只表达研究假设、证据要求和下一步，不改变 live scoring。</div>
       </div>
     </section>
 
     <section class="timeline">
+      <article class="entry">
+        <div class="entry-head">
+          <div>
+            <div class="kicker">Update 2026-05-31</div>
+            <div class="entry-title">Discovery Rule Cards for Historical Cases</div>
+          </div>
+          <div class="entry-meta">
+            Source basis: leader/downstream/control matrix<br>
+            Verification: targeted tests and full regression passed
+          </div>
+        </div>
+
+        <div class="grid grid-2">
+          <div>
+            <h2>1. 这一版做了什么功能</h2>
+            <table>
+              <thead>
+                <tr><th>Card</th><th>What it explains</th><th>Review state</th></tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Anchor compute demand shock</td>
+                  <td>NVDA 这类 AI compute leader 的官方需求证据和 pre-event 技术确认怎么结合。</td>
+                  <td><span class="status blue">candidate</span></td>
+                </tr>
+                <tr>
+                  <td>Downstream memory conversion</td>
+                  <td>MU 是否代表 AI compute demand 向 HBM / memory revenue 传导。</td>
+                  <td><span class="status blue">candidate</span></td>
+                </tr>
+                <tr>
+                  <td>Storage context split</td>
+                  <td>SNDK 必须把 first regular-way trading 和后来的 2026 storage confirmation 分开。</td>
+                  <td><span class="status amber">guardrail</span></td>
+                </tr>
+                <tr>
+                  <td>Optical interconnect transfer</td>
+                  <td>LITE 是否代表 AI buildout 向 optical backlog / orders 传导。</td>
+                  <td><span class="status blue">candidate</span></td>
+                </tr>
+                <tr>
+                  <td>Control comparability check</td>
+                  <td>AMD、INTC、MRVL 是否有同等级 PIT evidence；没有就不能当成反证或支持。</td>
+                  <td><span class="status purple">control</span></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div>
+            <h2>2. Performance 改进了多少</h2>
+            <table>
+              <thead>
+                <tr><th>Review workflow</th><th>Before</th><th>After</th></tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>理解历史案例</td>
+                  <td>先读矩阵标签，再自己推断含义</td>
+                  <td>每张卡直接说明机制、证据要求、技术要求和 guardrail</td>
+                </tr>
+                <tr>
+                  <td>避免 hindsight leakage</td>
+                  <td>SNDK 的 later context 容易和最初 replay 混在一起</td>
+                  <td>Storage context split 单独阻断未来证据混入原始决策点</td>
+                </tr>
+                <tr>
+                  <td>控制组约束</td>
+                  <td>控制组只是矩阵里的三行</td>
+                  <td>Control comparability card 明确要求同等级证据再比较</td>
+                </tr>
+                <tr>
+                  <td>下一步行动</td>
+                  <td>需要人工从多个表里找下一步</td>
+                  <td>每张候选卡都有 next research step</td>
+                </tr>
+              </tbody>
+            </table>
+            <p class="note" style="margin-top:10px;">这里的 Performance 是研究工作流和理解成本，不是策略验证或收益统计。</p>
+          </div>
+        </div>
+
+        <div class="grid grid-2" style="margin-top:14px;">
+          <div>
+            <h2>3. 逻辑上哪里改变了</h2>
+            <div class="diagram" aria-label="Pattern candidate workflow diagram">
+              <svg viewBox="0 0 820 230" role="img">
+                <defs>
+                  <marker id="arrow5" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+                    <path d="M0,0 L0,6 L9,3 z" fill="#5b6572"></path>
+                  </marker>
+                </defs>
+                <rect x="28" y="54" width="155" height="70" rx="8" fill="#ffffff" stroke="#d9dee7"></rect>
+                <text x="105" y="82" text-anchor="middle" font-weight="700" fill="#101418">Cases</text>
+                <text x="105" y="104" text-anchor="middle" font-size="12" fill="#5b6572">NVDA / MU / SNDK / LITE</text>
+                <line x1="183" y1="89" x2="266" y2="89" stroke="#5b6572" stroke-width="2" marker-end="url(#arrow5)"></line>
+
+                <rect x="266" y="54" width="155" height="70" rx="8" fill="#ffffff" stroke="#d9dee7"></rect>
+                <text x="343" y="82" text-anchor="middle" font-weight="700" fill="#101418">Matrix + profiles</text>
+                <text x="343" y="104" text-anchor="middle" font-size="12" fill="#5b6572">industry + technical</text>
+                <line x1="421" y1="89" x2="504" y2="89" stroke="#5b6572" stroke-width="2" marker-end="url(#arrow5)"></line>
+
+                <rect x="504" y="54" width="155" height="70" rx="8" fill="#ffffff" stroke="#d9dee7"></rect>
+                <text x="581" y="82" text-anchor="middle" font-weight="700" fill="#101418">Rule cards</text>
+                <text x="581" y="104" text-anchor="middle" font-size="12" fill="#5b6572">mechanism + guardrail</text>
+                <line x1="581" y1="124" x2="581" y2="164" stroke="#5b6572" stroke-width="2" marker-end="url(#arrow5)"></line>
+
+                <rect x="486" y="164" width="190" height="44" rx="8" fill="#f8fbff" stroke="#b8d4ff"></rect>
+                <text x="581" y="191" text-anchor="middle" font-weight="700" fill="#174ea6">Human review queue</text>
+
+                <rect x="92" y="164" width="210" height="44" rx="8" fill="#fff7ed" stroke="#fed7aa"></rect>
+                <text x="197" y="191" text-anchor="middle" font-weight="700" fill="#9a6700">No score changes</text>
+                <line x1="302" y1="186" x2="486" y2="186" stroke="#5b6572" stroke-width="2" marker-end="url(#arrow5)"></line>
+              </svg>
+            </div>
+          </div>
+          <div>
+            <h2>4. Boundary check</h2>
+            <table>
+              <thead>
+                <tr><th>Question</th><th>Answer</th></tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>有没有新增 formal validation？</td>
+                  <td>没有；仍然只是 discovery / review layer。</td>
+                </tr>
+                <tr>
+                  <td>有没有把候选卡接入 live score？</td>
+                  <td>没有；候选卡只进 CLI、UI、refresh payload 和 playbook。</td>
+                </tr>
+                <tr>
+                  <td>有没有把 SNDK later evidence 当作原始 replay evidence？</td>
+                  <td>没有；Storage context split 明确标为 guardrail。</td>
+                </tr>
+                <tr>
+                  <td>接下来该做什么？</td>
+                  <td>补更多同类历史案例和控制组，然后再考虑单独的验证模块。</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </article>
+
       <article class="entry">
         <div class="entry-head">
           <div>
