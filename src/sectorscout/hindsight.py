@@ -1097,25 +1097,32 @@ def fetch_hindsight_prices(
     provider: str = "yahoo_chart_public",
     lookback_days: int = 320,
     timeout: int = 20,
+    include_benchmarks: bool = True,
 ) -> list[dict[str, Any]]:
     cases = load_hindsight_cases(path)
     summaries: list[dict[str, Any]] = []
-    for case in cases:
-        fetch_start = case.start_date - timedelta(days=max(0, lookback_days))
+    for request in _hindsight_price_fetch_requests(cases, lookback_days, include_benchmarks=include_benchmarks):
+        symbol = str(request["symbol"])
+        fetch_start = request["fetch_start"]
+        fetch_end = request["fetch_end"]
         if provider == "stooq_public":
-            rows = fetch_stooq_daily_rows(case.symbol, fetch_start, case.end_date, timeout=timeout)
+            rows = fetch_stooq_daily_rows(symbol, fetch_start, fetch_end, timeout=timeout)
         elif provider == "yahoo_chart_public":
-            rows = fetch_yahoo_chart_daily_rows(case.symbol, fetch_start, case.end_date, timeout=timeout)
+            rows = fetch_yahoo_chart_daily_rows(symbol, fetch_start, fetch_end, timeout=timeout)
         else:
             raise ValueError(f"Unsupported hindsight price provider: {provider}")
-        inserted = _insert_price_rows(config, case.symbol, rows, provider=provider)
+        inserted = _insert_price_rows(config, symbol, rows, provider=provider)
+        symbol_type = str(request["symbol_type"])
         summaries.append(
             {
-                "symbol": case.symbol,
-                "label": case.label,
-                "start_date": case.start_date.isoformat(),
-                "end_date": case.end_date.isoformat(),
+                "symbol": symbol,
+                "symbol_type": symbol_type,
+                "label": request["label"],
+                "for_cases": request["for_cases"],
+                "start_date": request["start_date"].isoformat(),
+                "end_date": request["end_date"].isoformat(),
                 "fetch_start": fetch_start.isoformat(),
+                "fetch_end": fetch_end.isoformat(),
                 "lookback_days": max(0, lookback_days),
                 "provider": provider,
                 "rows_fetched": len(rows),
@@ -1123,11 +1130,64 @@ def fetch_hindsight_prices(
                 "data_quality_note": (
                     "Public daily price rows loaded with pre-event lookback; corporate-action adjustment status is provider-dependent."
                     if inserted
-                    else "No public daily price rows returned for this case window."
+                    else f"No public daily price rows returned for this {symbol_type} window."
                 ),
             }
         )
     return summaries
+
+
+def _hindsight_price_fetch_requests(
+    cases: list[HindsightCase],
+    lookback_days: int,
+    *,
+    include_benchmarks: bool,
+) -> list[dict[str, Any]]:
+    lookback = max(0, lookback_days)
+    requests: list[dict[str, Any]] = []
+    benchmark_windows: dict[str, dict[str, Any]] = {}
+    for case in cases:
+        fetch_start = case.start_date - timedelta(days=lookback)
+        requests.append(
+            {
+                "symbol": case.symbol,
+                "symbol_type": "case",
+                "label": case.label,
+                "for_cases": case.symbol,
+                "start_date": case.start_date,
+                "end_date": case.end_date,
+                "fetch_start": fetch_start,
+                "fetch_end": case.end_date,
+            }
+        )
+        if not include_benchmarks:
+            continue
+        benchmark = _primary_benchmark(case)
+        if benchmark == case.symbol:
+            continue
+        existing = benchmark_windows.get(benchmark)
+        if existing is None:
+            benchmark_windows[benchmark] = {
+                "symbol": benchmark,
+                "symbol_type": "benchmark",
+                "label": f"Fixed benchmark for replay gates: {benchmark}",
+                "for_cases": {case.symbol},
+                "start_date": case.start_date,
+                "end_date": case.end_date,
+                "fetch_start": fetch_start,
+                "fetch_end": case.end_date,
+            }
+            continue
+        existing["for_cases"].add(case.symbol)
+        existing["start_date"] = min(existing["start_date"], case.start_date)
+        existing["end_date"] = max(existing["end_date"], case.end_date)
+        existing["fetch_start"] = min(existing["fetch_start"], fetch_start)
+        existing["fetch_end"] = max(existing["fetch_end"], case.end_date)
+    for benchmark in sorted(benchmark_windows):
+        request = benchmark_windows[benchmark]
+        request["for_cases"] = ",".join(sorted(request["for_cases"]))
+        requests.append(request)
+    return requests
 
 
 def fetch_stooq_daily_rows(symbol: str, start: date, end: date, *, timeout: int = 20) -> list[dict[str, Any]]:
@@ -2526,6 +2586,12 @@ def _benchmark_rs_gate(
     benchmark_prices = _price_rows_before_event(config, benchmark, event.event_date).tail(63)
     required = 63
     if len(symbol_prices) < required or len(benchmark_prices) < required:
+        if len(symbol_prices) < required and len(benchmark_prices) < required:
+            missing_detail = "Symbol and fixed benchmark pre-event price coverage are incomplete."
+        elif len(symbol_prices) < required:
+            missing_detail = "Symbol pre-event price coverage is incomplete."
+        else:
+            missing_detail = "Fixed benchmark pre-event price coverage is incomplete."
         return _gate(
             event=event,
             case=case,
@@ -2538,8 +2604,8 @@ def _benchmark_rs_gate(
             data_used=f"daily_prices for {event.symbol} and fixed benchmark {benchmark}",
             required_rows=required * 2,
             available_rows=len(symbol_prices) + len(benchmark_prices),
-            missing_detail="Primary benchmark coverage is incomplete; no benchmark fallback is applied.",
-            reason="Relative strength cannot be evaluated without the fixed primary benchmark.",
+            missing_detail=missing_detail,
+            reason="Relative strength cannot be evaluated without both symbol and fixed primary benchmark price coverage.",
             asof_date=asof_date,
             source="daily_prices",
             requires_review=False,

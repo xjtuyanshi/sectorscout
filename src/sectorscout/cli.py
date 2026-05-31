@@ -483,13 +483,24 @@ def hindsight_fetch_prices(
     path: Path = typer.Option(DEFAULT_HINDSIGHT_CASES_PATH, "--path"),
     provider: str = typer.Option("yahoo_chart_public", "--provider"),
     lookback_days: int = typer.Option(320, "--lookback-days", min=0),
+    include_benchmarks: bool = typer.Option(
+        True,
+        "--include-benchmarks/--no-include-benchmarks",
+        help="Also fetch fixed benchmark symbols used by replay gates, such as SMH or QQQ.",
+    ),
     config: Path = typer.Option(Path("config.yaml"), "--config"),
 ) -> None:
-    """Fetch public daily prices for the configured historical pattern cases."""
+    """Fetch public daily prices for historical cases and fixed replay benchmarks."""
     from sectorscout.hindsight import fetch_hindsight_prices
 
     loaded = _load(config)
-    result = fetch_hindsight_prices(loaded, path=path, provider=provider, lookback_days=lookback_days)
+    result = fetch_hindsight_prices(
+        loaded,
+        path=path,
+        provider=provider,
+        lookback_days=lookback_days,
+        include_benchmarks=include_benchmarks,
+    )
     typer.echo(json.dumps(result, indent=2, sort_keys=True))
 
 

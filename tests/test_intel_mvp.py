@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ipaddress
+import json
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
@@ -1622,7 +1623,7 @@ def test_hindsight_fetch_prices_inserts_public_rows(tmp_path: Path, monkeypatch:
             ).encode("utf-8")
 
     monkeypatch.setattr("sectorscout.hindsight.urlopen", lambda *_args, **_kwargs: FakeResponse())
-    summary = fetch_hindsight_prices(config, path=case_file)
+    summary = fetch_hindsight_prices(config, path=case_file, include_benchmarks=False)
     assert summary[0]["fetch_start"] == "2023-02-16"
     assert summary[0]["lookback_days"] == 320
     assert summary[0]["rows_inserted"] == 2
@@ -1635,3 +1636,62 @@ def test_hindsight_fetch_prices_inserts_public_rows(tmp_path: Path, monkeypatch:
     assert rows[0][2] == 10.5
     assert rows[0][3] == "yahoo_chart_public"
     assert rows[0][4] is True
+
+
+def test_hindsight_fetch_prices_loads_fixed_benchmark_for_rs_gate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = _config(tmp_path)
+    case_file = tmp_path / "cases.csv"
+    case_file.write_text(
+        "\n".join(
+            [
+                "symbol,label,start_date,end_date,theme,hindsight_reason,anchor_event,source_url",
+                "NVDA,NVDA test,2024-01-02,2024-01-04,AI chips,Study test case,AI demand,https://example.com",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeResponse:
+        def __init__(self, symbol: str) -> None:
+            self.symbol = symbol
+
+        def __enter__(self) -> "FakeResponse":
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def read(self) -> bytes:
+            start_ts = int(datetime(2023, 10, 2, tzinfo=timezone.utc).timestamp())
+            timestamps = [start_ts + index * 86400 for index in range(80)]
+            base = 100.0
+            step = 2.0 if self.symbol == "NVDA" else 0.2
+            closes = [base + index * step for index in range(80)]
+            quote = {
+                "open": closes,
+                "high": [price + 1.0 for price in closes],
+                "low": [price - 1.0 for price in closes],
+                "close": closes,
+                "volume": [1000 + index for index in range(80)],
+            }
+            payload = {"chart": {"result": [{"timestamp": timestamps, "indicators": {"quote": [quote]}}], "error": None}}
+            return json.dumps(payload).encode("utf-8")
+
+    def fake_urlopen(request: object, **_kwargs: object) -> FakeResponse:
+        url = getattr(request, "full_url", str(request))
+        symbol = "SMH" if "/SMH?" in url else "NVDA"
+        return FakeResponse(symbol)
+
+    monkeypatch.setattr("sectorscout.hindsight.urlopen", fake_urlopen)
+    summary = fetch_hindsight_prices(config, path=case_file, lookback_days=90)
+
+    assert [row["symbol"] for row in summary] == ["NVDA", "SMH"]
+    assert summary[1]["symbol_type"] == "benchmark"
+    assert summary[1]["for_cases"] == "NVDA"
+    seed_hindsight_events(config, path=case_file)
+    gates = build_hindsight_replay_gates(config, path=case_file, persist=False, asof_date=date(2024, 12, 31))
+    rs_gate = next(gate for gate in gates if gate.gate_name == "Benchmark RS vs SMH")
+    assert rs_gate.gate_status == "PASS"
+    assert "benchmark_rows=0" not in rs_gate.computed_value

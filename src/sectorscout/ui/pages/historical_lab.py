@@ -124,15 +124,19 @@ def render(ctx: UIContext) -> None:
         st.success(f"Seeded {count} hindsight cases.")
     if action_cols[1].button("Fetch public prices", use_container_width=True):
         fetched = fetch_hindsight_prices(ctx.config)
-        st.success(f"Fetched public price history for {len(fetched)} cases.")
+        case_count = sum(1 for row in fetched if row.get("symbol_type") == "case")
+        benchmark_count = sum(1 for row in fetched if row.get("symbol_type") == "benchmark")
+        st.success(
+            f"Fetched public price history for {case_count} cases and {benchmark_count} fixed benchmarks."
+        )
         st.dataframe(fetched, use_container_width=True, hide_index=True)
     if action_cols[2].button("Run scan", use_container_width=True):
         results = scan_hindsight_cases(ctx.config)
         st.success(f"Scanned {len(results)} hindsight cases.")
         st.dataframe([_display_result(result.to_dict()) for result in results], use_container_width=True, hide_index=True)
     st.caption(
-        "Case-study diagnostics only. Price fetch includes a pre-event lookback window so technical gates can "
-        "inspect what was visible before the case anchor."
+        "Case-study diagnostics only. Price fetch includes a pre-event lookback window and fixed benchmark "
+        "symbols so technical gates can inspect what was visible before the case anchor."
     )
 
     st.subheader("Event Ledger")
