@@ -1251,6 +1251,29 @@ def test_hindsight_pattern_observations_split_industry_technical_and_manual(tmp_
     assert "outcome_only_not_predictive" in set(latest["status"])
 
 
+def test_hindsight_pattern_observations_enter_review_queue(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    scan_hindsight_cases(config, path=tmp_path / "leader_cases.csv", persist=True)
+    queue = build_research_queue(config)
+    hindsight_items = [item for item in queue if item["bucket"] == "hindsight_pattern_review"]
+    assert hindsight_items
+    assert {item["object_type"] for item in hindsight_items} == {"hindsight_pattern_observation"}
+    assert any(item["page"] == "Historical Pattern Discovery" for item in hindsight_items)
+
+    first = hindsight_items[0]
+    insert_review_mark(
+        config,
+        object_type="hindsight_pattern_observation",
+        object_id=str(first["object_id"]),
+        review_status="confirmed_hypothesis",
+    )
+    after_review = build_research_queue(config)
+    assert not any(
+        item["bucket"] == "hindsight_pattern_review" and item["object_id"] == first["object_id"]
+        for item in after_review
+    )
+
+
 def test_historical_pattern_summary_separates_industry_and_technical_patterns(tmp_path: Path) -> None:
     config = _config(tmp_path)
     results = scan_hindsight_cases(config, path=tmp_path / "leader_cases.csv", persist=False)

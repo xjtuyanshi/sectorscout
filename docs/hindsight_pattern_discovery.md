@@ -68,6 +68,23 @@ Observation statuses are not validation outcomes. Current statuses include:
 - `needs_manual_review`
 - `outcome_only_not_predictive`
 
+## Observation Review Workflow
+
+Pattern observations are routed into the Research Checklist as
+`hindsight_pattern_review` items when `requires_review = true`.
+
+The user review status is stored in `intel_review_marks` with
+`object_type = hindsight_pattern_observation`. Current user decisions:
+
+- `confirmed_hypothesis`: useful enough to keep as a future research hypothesis.
+- `rejected_hypothesis`: not supported or too hindsight-dependent.
+- `needs_more_data`: keep open until more source/data evidence is collected.
+- `unclear`: cannot classify yet.
+- `not_applicable`: not useful for this research system.
+
+Confirmed, rejected, and not-applicable observations leave the open review queue.
+Future follow-up dates defer the queue item until due.
+
 ## Current Commands
 
 ```bash
@@ -92,6 +109,7 @@ After `scan`, review:
 - Do not convert hindsight findings into live instructions.
 - Keep point-in-time data, universe membership, provider mix, and config hash visible.
 - Treat external intel as context only.
+- Treat confirmed observations as hypotheses, not validated rules.
 
 ## ChatGPT Pro Review Prompt
 

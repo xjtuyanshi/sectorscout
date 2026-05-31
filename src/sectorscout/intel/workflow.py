@@ -36,6 +36,14 @@ QUEUE_LABELS = {
     "overlap_needs_review": "Unclear overlap",
     "overlap_external_only": "External mention not in SectorScout",
     "overlap_internal_only": "SectorScout item needs outside context",
+    "hindsight_pattern_review": "Review historical pattern observation",
+}
+
+
+HINDSIGHT_DONE_STATUSES = {
+    "confirmed_hypothesis",
+    "rejected_hypothesis",
+    "not_applicable",
 }
 
 
@@ -299,6 +307,63 @@ def _overlap_items(
     return items
 
 
+def _hindsight_pattern_items(
+    config: SectorScoutConfig,
+    latest_marks: dict[tuple[str, str], dict[str, Any]],
+    asof_date: date | None,
+) -> list[ResearchQueueItem]:
+    rows = _safe_df(
+        config,
+        """
+        SELECT observation_id, symbol, observation_group, pattern_name,
+               observation_value, status, evidence, source, requires_review
+        FROM hindsight_pattern_observations
+        WHERE requires_review = true
+        QUALIFY dense_rank() OVER (ORDER BY generated_at_utc DESC, scan_id DESC) = 1
+        ORDER BY symbol, observation_group, pattern_name
+        """,
+    )
+    items: list[ResearchQueueItem] = []
+    for _, row in rows.iterrows():
+        object_id = str(row["observation_id"])
+        mark = latest_marks.get(("hindsight_pattern_observation", object_id))
+        if mark and str(mark.get("review_status") or "") in HINDSIGHT_DONE_STATUSES:
+            continue
+        if _is_deferred_or_dismissed(
+            latest_marks,
+            object_type="hindsight_pattern_observation",
+            object_id=object_id,
+            asof_date=asof_date,
+        ):
+            continue
+        group = str(row.get("observation_group") or "")
+        priority = {
+            "manual_or_llm_required": 25,
+            "industry": 30,
+            "technical": 45,
+        }.get(group, 50)
+        items.append(
+            ResearchQueueItem(
+                priority=priority,
+                bucket="hindsight_pattern_review",
+                object_type="hindsight_pattern_observation",
+                object_id=object_id,
+                symbol=str(row.get("symbol") or ""),
+                source=str(row.get("source") or ""),
+                page="Historical Pattern Discovery",
+                reason=(
+                    f"Historical observation needs review: {row.get('pattern_name')} "
+                    f"({row.get('status')}). Evidence: {row.get('evidence')}"
+                ),
+                next_step=(
+                    "Confirm whether this is a useful research hypothesis, reject it, "
+                    "or mark that more point-in-time evidence is needed."
+                ),
+            )
+        )
+    return items
+
+
 def _due_follow_up_items(config: SectorScoutConfig, asof_date: date | None) -> list[ResearchQueueItem]:
     if asof_date is None or not _table_exists(config, "intel_review_marks"):
         return []
@@ -344,6 +409,7 @@ def build_research_queue(config: SectorScoutConfig, *, asof_date: date | None = 
     items.extend(_image_review_items(config, latest_marks, asof_date))
     items.extend(_external_view_items(config, latest_marks, asof_date))
     items.extend(_overlap_items(config, latest_marks, asof_date))
+    items.extend(_hindsight_pattern_items(config, latest_marks, asof_date))
     rows = [item.to_dict() for item in items]
     return sorted(rows, key=lambda row: (row["priority"], row["bucket"], str(row.get("symbol") or "")))
 

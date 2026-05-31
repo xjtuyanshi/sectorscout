@@ -5,6 +5,7 @@ from datetime import date
 import pandas as pd
 import streamlit as st
 
+from sectorscout.db import connect_database
 from sectorscout.hindsight import (
     fetch_hindsight_prices,
     historical_pattern_summary,
@@ -14,6 +15,7 @@ from sectorscout.hindsight import (
     scan_hindsight_cases,
     seed_hindsight_cases,
 )
+from sectorscout.intel.storage import insert_review_mark
 from sectorscout.ui.data import UIContext, row_count, table_exists
 
 
@@ -120,7 +122,9 @@ def render(ctx: UIContext) -> None:
         st.caption(
             "These rows are hypothesis observations. Industry and catalyst fields require review; daily OHLCV fields are rule-derived."
         )
-        st.dataframe(_display_observations_frame(observations), use_container_width=True, hide_index=True)
+        review_marks = _latest_observation_review_map(ctx)
+        st.dataframe(_display_observations_frame(observations, review_marks), use_container_width=True, hide_index=True)
+        _render_observation_review_form(ctx, observations, review_marks)
 
     st.subheader("Next implementation steps")
     st.dataframe(
@@ -182,7 +186,7 @@ def _display_results_frame(frame: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame([_display_result(row.to_dict()) for _, row in frame.iterrows()])
 
 
-def _display_observations_frame(frame: pd.DataFrame) -> pd.DataFrame:
+def _display_observations_frame(frame: pd.DataFrame, review_marks: dict[str, dict]) -> pd.DataFrame:
     return pd.DataFrame(
         [
             {
@@ -191,6 +195,9 @@ def _display_observations_frame(frame: pd.DataFrame) -> pd.DataFrame:
                 "Observation": row.get("pattern_name"),
                 "Observed value": row.get("observation_value"),
                 "Review status": _friendly_observation_status(row.get("status")),
+                "Latest user review": _friendly_user_review(
+                    review_marks.get(str(row.get("observation_id")), {}).get("review_status")
+                ),
                 "Needs review": bool(row.get("requires_review")),
                 "Evidence": row.get("evidence"),
                 "Source": row.get("source"),
@@ -198,6 +205,68 @@ def _display_observations_frame(frame: pd.DataFrame) -> pd.DataFrame:
             for _, row in frame.iterrows()
         ]
     )
+
+
+def _render_observation_review_form(
+    ctx: UIContext,
+    observations: pd.DataFrame,
+    review_marks: dict[str, dict],
+) -> None:
+    reviewable = observations[observations["requires_review"] == True]  # noqa: E712
+    if reviewable.empty:
+        return
+    st.subheader("Review a Pattern Observation")
+    labels = [
+        f"{row['symbol']} / {_friendly_observation_group(row['observation_group'])} / {row['pattern_name']}"
+        for _, row in reviewable.iterrows()
+    ]
+    selected_label = st.selectbox("Observation", labels)
+    selected = reviewable.iloc[labels.index(selected_label)].to_dict()
+    object_id = str(selected["observation_id"])
+    latest_mark = review_marks.get(object_id)
+    if latest_mark:
+        st.caption(
+            f"Latest user review: {_friendly_user_review(latest_mark.get('review_status'))}; "
+            f"follow-up: {latest_mark.get('follow_up_date') or '-'}"
+        )
+    st.write(f"Evidence: {selected.get('evidence')}")
+    with st.form("hindsight_observation_review_form"):
+        review_status = st.selectbox(
+            "Review decision",
+            [
+                "needs_more_data",
+                "confirmed_hypothesis",
+                "rejected_hypothesis",
+                "unclear",
+                "not_applicable",
+            ],
+        )
+        notes = st.text_area(
+            "Review note",
+            placeholder="Why this should or should not become a future research hypothesis.",
+        )
+        plan = st.text_area(
+            "Research plan",
+            placeholder="What data or source would prove this was visible at the time?",
+        )
+        follow_up = st.text_input("Follow-up date", placeholder="YYYY-MM-DD")
+        submitted = st.form_submit_button("Save observation review")
+    if submitted:
+        parsed_follow_up = _parse_optional_date(follow_up)
+        if parsed_follow_up is False:
+            st.error("Follow-up date must use YYYY-MM-DD.")
+            return
+        review_id = insert_review_mark(
+            ctx.config,
+            object_type="hindsight_pattern_observation",
+            object_id=object_id,
+            review_status=review_status,
+            notes=notes or None,
+            personal_plan=plan or None,
+            follow_up_date=parsed_follow_up,
+        )
+        st.success(f"Saved pattern observation review {review_id}.")
+        st.rerun()
 
 
 def _friendly_observation_group(value: object) -> str:
@@ -217,6 +286,43 @@ def _friendly_observation_status(value: object) -> str:
         "needs_manual_review": "Needs manual review",
         "outcome_only_not_predictive": "Outcome descriptor only",
     }.get(str(value or ""), str(value or "-").replace("_", " ").title())
+
+
+def _friendly_user_review(value: object) -> str:
+    return {
+        "confirmed_hypothesis": "Confirmed hypothesis",
+        "rejected_hypothesis": "Rejected hypothesis",
+        "needs_more_data": "Needs more data",
+        "unclear": "Unclear",
+        "not_applicable": "Not applicable",
+    }.get(str(value or ""), "Not reviewed")
+
+
+def _latest_observation_review_map(ctx: UIContext) -> dict[str, dict]:
+    if not table_exists(ctx.config, "intel_review_marks"):
+        return {}
+    with connect_database(ctx.config.database.path) as connection:
+        rows = connection.execute(
+            """
+            SELECT object_id, review_status, notes, personal_plan, follow_up_date, reviewed_at
+            FROM intel_review_marks
+            WHERE object_type = 'hindsight_pattern_observation'
+            QUALIFY row_number() OVER (
+                PARTITION BY object_id
+                ORDER BY reviewed_at DESC
+            ) = 1
+            """
+        ).fetchdf()
+    return {str(row["object_id"]): row.to_dict() for _, row in rows.iterrows()}
+
+
+def _parse_optional_date(value: str) -> str | None | bool:
+    if not value.strip():
+        return None
+    try:
+        return date.fromisoformat(value.strip()).isoformat()
+    except ValueError:
+        return False
 
 
 def _round_or_none(value: object) -> float | None:
