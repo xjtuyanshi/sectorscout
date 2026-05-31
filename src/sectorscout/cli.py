@@ -527,6 +527,7 @@ def hindsight_refresh(
     provider: str = typer.Option("yahoo_chart_public", "--provider"),
     lookback_days: int = typer.Option(320, "--lookback-days", min=0),
     include_benchmarks: bool = typer.Option(True, "--include-benchmarks/--no-include-benchmarks"),
+    check_sources: bool = typer.Option(False, "--check-sources/--no-check-sources"),
     strict_price_fetch: bool = typer.Option(False, "--strict-price-fetch/--no-strict-price-fetch"),
     config: Path = typer.Option(Path("config.yaml"), "--config"),
 ) -> None:
@@ -544,6 +545,7 @@ def hindsight_refresh(
         lookback_days=lookback_days,
         include_benchmarks=include_benchmarks,
         continue_on_price_error=not strict_price_fetch,
+        check_sources=check_sources,
     )
     typer.echo(json.dumps(result.to_dict(), indent=2, sort_keys=True))
 

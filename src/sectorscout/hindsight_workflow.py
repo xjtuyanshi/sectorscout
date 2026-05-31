@@ -21,6 +21,7 @@ from sectorscout.hindsight import (
     write_default_hindsight_cases,
 )
 from sectorscout.hindsight_playbook import generate_hindsight_pattern_playbook
+from sectorscout.hindsight_source_audit import build_hindsight_source_audit, source_audit_summary
 from sectorscout.metadata import get_git_commit
 
 
@@ -62,6 +63,8 @@ class HindsightRefreshResult:
     steps: list[HindsightRefreshStep]
     row_counts: dict[str, int]
     price_summary: list[dict[str, Any]]
+    source_audit: list[dict[str, object]]
+    source_audit_summary: dict[str, object]
 
     def to_dict(self) -> dict[str, object]:
         payload = asdict(self)
@@ -80,6 +83,7 @@ def run_hindsight_refresh(
     lookback_days: int = 320,
     include_benchmarks: bool = True,
     continue_on_price_error: bool = True,
+    check_sources: bool = False,
 ) -> HindsightRefreshResult:
     """Run the complete historical-pattern lab refresh without changing live scores."""
 
@@ -173,6 +177,17 @@ def run_hindsight_refresh(
         )
     )
 
+    source_audit = build_hindsight_source_audit(config, check_remote=check_sources)
+    source_summary = source_audit_summary(source_audit)
+    steps.append(
+        HindsightRefreshStep(
+            "source_audit",
+            "OK",
+            "Built official source audit from event and evidence ledgers.",
+            len(source_audit),
+        )
+    )
+
     playbook_path = generate_hindsight_pattern_playbook(config, output_dir=output_dir, asof_date=effective_asof)
     steps.append(HindsightRefreshStep("pattern_playbook", "OK", f"Generated research playbook at {playbook_path}.", 1))
 
@@ -189,6 +204,8 @@ def run_hindsight_refresh(
         steps=steps,
         row_counts=_row_counts(config),
         price_summary=price_summary,
+        source_audit=[item.to_dict() for item in source_audit],
+        source_audit_summary=source_summary,
     )
 
 

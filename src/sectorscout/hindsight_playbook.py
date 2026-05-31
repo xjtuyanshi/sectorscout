@@ -12,6 +12,7 @@ from sectorscout.hindsight import (
     latest_hindsight_hypothesis_case_results,
     latest_hindsight_replay_gates,
 )
+from sectorscout.hindsight_source_audit import build_hindsight_source_audit
 from sectorscout.metadata import get_git_commit
 from sectorscout.ui.hindsight_presenter import (
     build_case_pattern_map_rows,
@@ -50,6 +51,7 @@ def build_hindsight_pattern_playbook_markdown(
     case_results = latest_hindsight_hypothesis_case_results(config)
     pattern_rows = build_pattern_insight_rows(hypotheses, case_results)
     case_rows = build_case_pattern_map_rows(events, evidence, gates, hypotheses, case_results)
+    source_audit = build_hindsight_source_audit(config)
     summary_cards = build_hindsight_readout_summary_cards(pattern_rows, case_rows)
     pattern_cards = build_pattern_story_cards(pattern_rows)
     case_cards = build_case_story_cards(case_rows)
@@ -105,6 +107,8 @@ def build_hindsight_pattern_playbook_markdown(
         lines.extend(["## Case Map", ""])
         for card in case_cards:
             lines.extend(_case_card_lines(card))
+        lines.extend(["## Official Source Audit", ""])
+        lines.extend(_source_audit_lines(source_audit))
         lines.extend(["## Research Queue", ""])
         for item in _playbook_research_queue(pattern_cards, case_cards):
             lines.append(f"- {item}")
@@ -158,6 +162,31 @@ def _case_card_lines(card: dict[str, str]) -> list[str]:
         f"- Next data task: {_md(card.get('Next'))}",
         "",
     ]
+
+
+def _source_audit_lines(items: list[Any]) -> list[str]:
+    if not items:
+        return ["No source audit rows are available yet.", ""]
+    lines = [
+        "| Symbols | Source type | Roles | PIT status | Remote status | Source URL | Review note |",
+        "| --- | --- | --- | --- | --- | --- | --- |",
+    ]
+    for item in items:
+        lines.append(
+            " | ".join(
+                [
+                    f"| {_md(', '.join(item.symbols))}",
+                    _md(item.source_type),
+                    _md(", ".join(item.source_roles)),
+                    _md(item.pit_status),
+                    _md(item.remote_status),
+                    _md(item.source_url),
+                    f"{_md(item.reviewer_note)} |",
+                ]
+            )
+        )
+    lines.append("")
+    return lines
 
 
 def _playbook_research_queue(pattern_cards: list[dict[str, str]], case_cards: list[dict[str, str]]) -> list[str]:

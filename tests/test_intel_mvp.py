@@ -35,6 +35,7 @@ from sectorscout.hindsight_playbook import (
     build_hindsight_pattern_playbook_markdown,
     generate_hindsight_pattern_playbook,
 )
+from sectorscout.hindsight_source_audit import build_hindsight_source_audit, source_audit_summary
 from sectorscout.hindsight_workflow import run_hindsight_refresh
 from sectorscout.intel.chandler_seed import load_chandler_fixture, seed_chandler_fixture
 from sectorscout.intel.capture_inbox import capture_markdown_text
@@ -1466,6 +1467,8 @@ def test_hindsight_pattern_playbook_exports_markdown(tmp_path: Path) -> None:
     assert "## Case Map" in markdown
     assert "NVDA - Anchor leader" in markdown
     assert "SNDK" in markdown
+    assert "## Official Source Audit" in markdown
+    assert "official_company_release" in markdown
     assert "Control case" in markdown or "control" in markdown.lower()
     assert "## Promotion Boundary" in markdown
     forbidden = ["buy signal", "sell signal", "win rate", "Sharpe", "CAGR", "profit factor", "strategy edge"]
@@ -1499,7 +1502,10 @@ def test_hindsight_refresh_runs_pipeline_without_network(tmp_path: Path) -> None
     assert payload["price_rows_inserted"] == 0
     steps = {str(step["step"]): step for step in payload["steps"]}
     assert steps["public_price_history"]["status"] == "SKIPPED"
+    assert steps["source_audit"]["rows"] >= 5
     assert steps["hypothesis_registry"]["rows"] == 28
+    assert payload["source_audit_summary"]["pit_usable_sources"] >= 4
+    assert any("NVIDIA" in row["source_url"] or "nvidia" in row["source_url"] for row in payload["source_audit"])
     assert result.row_counts["hindsight_hypotheses"] == 4
     assert result.row_counts["hindsight_hypothesis_case_results"] == 28
     written = Path(result.playbook_path).read_text(encoding="utf-8")
@@ -1594,6 +1600,32 @@ def test_hindsight_evidence_ledger_tracks_pit_usability(tmp_path: Path) -> None:
     assert not bool(future_growth["usable_in_replay"])
     assert future_growth["evidence_status"] == "REQUIRES_REVIEW"
     assert "Future-only" in future_growth["review_note"]
+
+
+def test_hindsight_source_audit_classifies_official_and_future_only_sources(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    seed_hindsight_events(config, tmp_path / "leader_cases.csv")
+    seed_hindsight_evidence(config, tmp_path / "leader_cases.csv")
+
+    audit = build_hindsight_source_audit(config)
+    assert audit
+    rows_by_url = {item.source_url: item for item in audit}
+    nvidia = next(item for item in audit if "nvidia.com/news" in item.source_url)
+    sndk_future = next(item for item in audit if "sandisk-reports-fiscal-third-quarter-2026" in item.source_url)
+    sec_sources = [item for item in audit if item.source_type == "sec_filing"]
+
+    assert nvidia.source_type == "official_company_release"
+    assert nvidia.pit_status == "PIT_USABLE"
+    assert nvidia.remote_status == "NOT_CHECKED"
+    assert "NVDA" in nvidia.symbols
+    assert sndk_future.pit_status == "REQUIRES_REVIEW"
+    assert "future-only" in sndk_future.reviewer_note.lower()
+    assert sec_sources
+    assert all("event_timing" in item.source_roles or "evidence:catalyst" in item.source_roles for item in sec_sources)
+    summary = source_audit_summary(audit)
+    assert summary["sources"] == len(rows_by_url)
+    assert int(summary["pit_usable_sources"]) >= 4
+    assert int(summary["review_required_sources"]) >= 1
 
 
 def test_hindsight_evidence_ledger_keeps_custom_narrative_blocked(tmp_path: Path) -> None:

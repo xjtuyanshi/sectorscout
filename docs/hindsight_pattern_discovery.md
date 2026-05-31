@@ -235,6 +235,11 @@ observations, rebuilds the hypothesis registry, and exports the Markdown
 playbook. Use `--no-fetch-prices` when working offline; missing price history
 will stay visible as `DATA_GAP`.
 
+The refresh also builds an official source audit from event and evidence
+ledgers. By default this is offline metadata only. Add `--check-sources` when
+you want a public URL availability check; the checker does not use login,
+cookies, sessions, private pages, or paywall bypass.
+
 After `scan`, review:
 
 - `hindsight_scan_results` for case-level coverage and path diagnostics;
@@ -249,6 +254,8 @@ After `scan`, review:
   replay hypothesis registry and its per-case matrix.
 - `data/hindsight/reports/hindsight_pattern_playbook_YYYY-MM-DD.md` for the
   exported research playbook.
+- the `Official Source Audit` UI/playbook section for SEC filing, official
+  company release, future-only, and source-review status.
 
 Observation links keep promotion discipline visible. Industry/theme observations
 must link to usable point-in-time evidence. Technical/OHLCV observations must

@@ -29,6 +29,7 @@ from sectorscout.hindsight import (
     seed_hindsight_cases,
 )
 from sectorscout.hindsight_playbook import generate_hindsight_pattern_playbook
+from sectorscout.hindsight_source_audit import build_hindsight_source_audit_rows
 from sectorscout.hindsight_workflow import run_hindsight_refresh
 from sectorscout.intel.storage import insert_review_mark
 from sectorscout.ui.data import UIContext, row_count, table_exists
@@ -180,6 +181,7 @@ def render(ctx: UIContext) -> None:
             "Industry and fundamental claims must have source, timestamp, and replay usability before they support a pattern."
         )
         st.dataframe(_display_evidence_frame(evidence), use_container_width=True, hide_index=True)
+    _render_source_audit(ctx)
 
     st.subheader("Gate Explain Panel")
     gates = latest_hindsight_replay_gates(ctx.config)
@@ -285,6 +287,7 @@ def _render_lab_refresh(ctx: UIContext) -> None:
         include_benchmarks = controls[1].checkbox("Include fixed benchmarks", value=True)
         lookback_days = controls[2].number_input("Lookback days", min_value=0, max_value=1200, value=320, step=20)
         refresh_asof = controls[3].date_input("Refresh as-of", value=date.today())
+        check_sources = st.checkbox("Check official source URLs", value=False)
         if st.button("Run full historical refresh", use_container_width=True):
             with st.spinner("Refreshing historical lab artifacts..."):
                 result = run_hindsight_refresh(
@@ -293,9 +296,27 @@ def _render_lab_refresh(ctx: UIContext) -> None:
                     fetch_prices=fetch_prices,
                     include_benchmarks=include_benchmarks,
                     lookback_days=int(lookback_days),
+                    check_sources=check_sources,
                 )
             st.success(f"Refresh complete. Playbook: {result.playbook_path}")
             st.dataframe([step.to_dict() for step in result.steps], use_container_width=True, hide_index=True)
+            if result.source_audit:
+                st.markdown("#### Official Source Audit")
+                st.dataframe(_display_source_audit_rows(result.source_audit), use_container_width=True, hide_index=True)
+
+
+def _render_source_audit(ctx: UIContext) -> None:
+    st.subheader("Official Source Audit")
+    st.write(
+        "This checks whether industry evidence is backed by official source metadata before it supports a replay hypothesis. "
+        "Remote URL checks are optional and never use login, cookies, or paywall bypass."
+    )
+    check_remote = st.checkbox("Check source URLs now", value=False)
+    rows = build_hindsight_source_audit_rows(ctx.config, check_remote=check_remote)
+    if not rows:
+        st.info("No source audit rows yet. Seed event and evidence ledgers first.")
+        return
+    st.dataframe(_display_source_audit_rows(rows), use_container_width=True, hide_index=True)
 
 
 def _render_observation_link_panel(ctx: UIContext) -> None:
@@ -525,6 +546,25 @@ def _display_evidence_frame(frame: pd.DataFrame) -> pd.DataFrame:
                 "Review note": row.get("review_note"),
             }
             for _, row in frame.iterrows()
+        ]
+    )
+
+
+def _display_source_audit_rows(rows: list[dict[str, object]]) -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {
+                "Symbols": _join_list(row.get("symbols")),
+                "Source type": _friendly_text(row.get("source_type")),
+                "Roles": _join_list(row.get("source_roles")),
+                "Source quality": _join_list(row.get("source_qualities")),
+                "PIT status": row.get("pit_status"),
+                "Remote status": row.get("remote_status"),
+                "HTTP status": row.get("remote_status_code") or "-",
+                "Source URL": row.get("source_url"),
+                "Reviewer note": row.get("reviewer_note"),
+            }
+            for row in rows
         ]
     )
 
@@ -775,6 +815,12 @@ def _friendly_user_review(value: object) -> str:
 
 def _friendly_text(value: object) -> str:
     return str(value or "-").replace("_", " ").title()
+
+
+def _join_list(value: object) -> str:
+    if isinstance(value, list):
+        return ", ".join(str(item) for item in value)
+    return str(value or "-")
 
 
 def _format_metric(row: pd.Series) -> str:
