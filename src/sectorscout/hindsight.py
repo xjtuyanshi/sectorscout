@@ -19,6 +19,7 @@ from sectorscout.metadata import get_git_commit
 
 
 DEFAULT_HINDSIGHT_CASES_PATH = Path("data/hindsight/leader_cases.csv")
+HINDSIGHT_HYPOTHESIS_RULE_VERSION = "hindsight_hypothesis_registry_v1"
 
 
 OFFICIAL_EVENT_SEEDS: dict[str, dict[str, Any]] = {
@@ -312,6 +313,45 @@ class HindsightObservationLink:
 
 
 @dataclass(frozen=True)
+class HindsightHypothesis:
+    hypothesis_id: str
+    hypothesis_group: str
+    hypothesis_name: str
+    mechanism: str
+    required_evidence: str
+    required_gates: str
+    promotion_status: str
+    minimum_next_evidence: str
+    suggested_replay_rule: str
+    anti_hindsight_notes: str
+    rule_version: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class HindsightHypothesisCaseResult:
+    result_id: str
+    hypothesis_id: str
+    symbol: str
+    label: str
+    case_role: str
+    result_status: str
+    linked_observation_ids_json: str
+    linked_evidence_ids_json: str
+    linked_gate_ids_json: str
+    reason_code: str
+    reason_text: str
+    evaluated_as_of: date
+
+    def to_dict(self) -> dict[str, Any]:
+        payload = asdict(self)
+        payload["evaluated_as_of"] = self.evaluated_as_of.isoformat()
+        return payload
+
+
+@dataclass(frozen=True)
 class HindsightReplayGate:
     gate_id: str
     event_id: str
@@ -572,6 +612,56 @@ def ensure_hindsight_tables(config: SectorScoutConfig) -> None:
                 universe_version VARCHAR NOT NULL,
                 theme_version VARCHAR NOT NULL,
                 PRIMARY KEY (link_id)
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS hindsight_hypotheses (
+                hypothesis_id VARCHAR NOT NULL,
+                hypothesis_group VARCHAR NOT NULL,
+                hypothesis_name VARCHAR NOT NULL,
+                mechanism VARCHAR NOT NULL,
+                required_evidence VARCHAR NOT NULL,
+                required_gates VARCHAR NOT NULL,
+                promotion_status VARCHAR NOT NULL,
+                minimum_next_evidence VARCHAR NOT NULL,
+                suggested_replay_rule VARCHAR NOT NULL,
+                anti_hindsight_notes VARCHAR NOT NULL,
+                rule_version VARCHAR NOT NULL,
+                generated_at_utc TIMESTAMPTZ NOT NULL,
+                config_hash VARCHAR NOT NULL,
+                git_commit VARCHAR NOT NULL,
+                data_snapshot_id VARCHAR NOT NULL,
+                universe_version VARCHAR NOT NULL,
+                theme_version VARCHAR NOT NULL,
+                PRIMARY KEY (hypothesis_id, rule_version)
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS hindsight_hypothesis_case_results (
+                result_id VARCHAR NOT NULL,
+                hypothesis_id VARCHAR NOT NULL,
+                symbol VARCHAR NOT NULL,
+                label VARCHAR NOT NULL,
+                case_role VARCHAR NOT NULL,
+                result_status VARCHAR NOT NULL,
+                linked_observation_ids_json VARCHAR NOT NULL,
+                linked_evidence_ids_json VARCHAR NOT NULL,
+                linked_gate_ids_json VARCHAR NOT NULL,
+                reason_code VARCHAR NOT NULL,
+                reason_text VARCHAR NOT NULL,
+                evaluated_as_of DATE NOT NULL,
+                rule_version VARCHAR NOT NULL,
+                generated_at_utc TIMESTAMPTZ NOT NULL,
+                config_hash VARCHAR NOT NULL,
+                git_commit VARCHAR NOT NULL,
+                data_snapshot_id VARCHAR NOT NULL,
+                universe_version VARCHAR NOT NULL,
+                theme_version VARCHAR NOT NULL,
+                PRIMARY KEY (result_id, rule_version)
             )
             """
         )
@@ -859,6 +949,80 @@ def latest_hindsight_observation_links(config: SectorScoutConfig, *, limit: int 
         ).fetchdf()
 
 
+def build_hindsight_hypothesis_registry(
+    config: SectorScoutConfig,
+    *,
+    path: Path = DEFAULT_HINDSIGHT_CASES_PATH,
+    persist: bool = True,
+    asof_date: date | None = None,
+) -> tuple[list[HindsightHypothesis], list[HindsightHypothesisCaseResult]]:
+    ensure_hindsight_tables(config)
+    cases = load_hindsight_cases(path)
+    observations = latest_hindsight_pattern_observations(config)
+    evidence = latest_hindsight_evidence(config)
+    gates = latest_hindsight_replay_gates(config)
+    links = latest_hindsight_observation_links(config)
+    if links.empty and not observations.empty:
+        build_hindsight_observation_links(config)
+        links = latest_hindsight_observation_links(config)
+    evaluated_as_of = asof_date or date.today()
+    case_results: list[HindsightHypothesisCaseResult] = []
+    base_hypotheses = _base_hindsight_hypotheses()
+    for hypothesis in base_hypotheses:
+        for case in cases:
+            case_results.append(
+                _evaluate_hypothesis_case(
+                    hypothesis,
+                    case,
+                    observations=observations,
+                    evidence=evidence,
+                    gates=gates,
+                    links=links,
+                    evaluated_as_of=evaluated_as_of,
+                )
+            )
+    hypotheses = [
+        _hypothesis_with_status(
+            hypothesis,
+            [result for result in case_results if result.hypothesis_id == hypothesis.hypothesis_id],
+        )
+        for hypothesis in base_hypotheses
+    ]
+    if persist:
+        _persist_hindsight_hypothesis_registry(config, hypotheses, case_results)
+    return hypotheses, case_results
+
+
+def latest_hindsight_hypotheses(config: SectorScoutConfig, *, limit: int = 100) -> pd.DataFrame:
+    ensure_hindsight_tables(config)
+    with connect_database(config.database.path) as connection:
+        return connection.execute(
+            """
+            SELECT *
+            FROM hindsight_hypotheses
+            QUALIFY dense_rank() OVER (ORDER BY generated_at_utc DESC) = 1
+            ORDER BY hypothesis_group, hypothesis_name
+            LIMIT ?
+            """,
+            [limit],
+        ).fetchdf()
+
+
+def latest_hindsight_hypothesis_case_results(config: SectorScoutConfig, *, limit: int = 1000) -> pd.DataFrame:
+    ensure_hindsight_tables(config)
+    with connect_database(config.database.path) as connection:
+        return connection.execute(
+            """
+            SELECT *
+            FROM hindsight_hypothesis_case_results
+            QUALIFY dense_rank() OVER (ORDER BY generated_at_utc DESC) = 1
+            ORDER BY hypothesis_id, symbol
+            LIMIT ?
+            """,
+            [limit],
+        ).fetchdf()
+
+
 def fetch_hindsight_prices(
     config: SectorScoutConfig,
     *,
@@ -987,6 +1151,7 @@ def scan_hindsight_cases(
         seed_hindsight_evidence(config, path)
         build_hindsight_replay_gates(config, path=path, persist=True)
         build_hindsight_observation_links(config)
+        build_hindsight_hypothesis_registry(config, path=path, persist=True)
     return results
 
 
@@ -1484,6 +1649,452 @@ def _observation_link(
         link_status=link_status,
         reason=reason,
     )
+
+
+def _base_hindsight_hypotheses() -> list[HindsightHypothesis]:
+    return [
+        _hypothesis(
+            hypothesis_group="industry",
+            hypothesis_name="H1 - Anchor demand shock activates downstream watchlist",
+            mechanism=(
+                "An official anchor-company AI infrastructure demand shock creates a theme map for downstream "
+                "suppliers to monitor, without claiming those suppliers are technically ready."
+            ),
+            required_evidence="Official anchor customer-demand evidence with evidence_status PASS and usable_in_replay true.",
+            required_gates="No downstream technical gate required for this industry watchlist hypothesis.",
+            minimum_next_evidence="Add independent downstream cases and negative controls before replay design.",
+            suggested_replay_rule="When anchor demand evidence is PIT-valid, create a downstream watchlist only; do not modify scores.",
+            anti_hindsight_notes="Anchor evidence cannot prove downstream conversion or technical readiness.",
+        ),
+        _hypothesis(
+            hypothesis_group="industry",
+            hypothesis_name="H2 - Downstream revenue conversion",
+            mechanism=(
+                "A downstream node shows official revenue, backlog, order, or guidance evidence tied to the same "
+                "industry demand chain after the anchor theme appears."
+            ),
+            required_evidence=(
+                "Official downstream customer-demand evidence with evidence_status PASS and usable_in_replay true; "
+                "spin-off/listing evidence is context only."
+            ),
+            required_gates="No technical gate required; this is an industry evidence hypothesis.",
+            minimum_next_evidence="Add source-labeled downstream revenue/backlog/order evidence and one or more non-leader controls.",
+            suggested_replay_rule="Require PIT-valid downstream demand evidence before elevating a supplier from watchlist to replay candidate.",
+            anti_hindsight_notes="Narrative AI labels and spin-off evidence cannot satisfy downstream demand conversion.",
+        ),
+        _hypothesis(
+            hypothesis_group="composite",
+            hypothesis_name="H3 - Industry evidence plus pre-event technical strength",
+            mechanism=(
+                "Official industry evidence and pre-event technical strength appear together before the first tradable "
+                "or replay decision point."
+            ),
+            required_evidence="Official customer-demand evidence with evidence_status PASS and usable_in_replay true.",
+            required_gates="Pre-event price coverage PASS, Stage 2 trend PASS, and fixed benchmark RS PASS.",
+            minimum_next_evidence="Load benchmark coverage and pre-event OHLCV before interpreting this as a replay candidate.",
+            suggested_replay_rule="Only test a replay rule when both PIT industry evidence and required technical gates are auditable.",
+            anti_hindsight_notes="Post-event price path and later validation gates cannot confirm pre-event setup readiness.",
+        ),
+        _hypothesis(
+            hypothesis_group="composite",
+            hypothesis_name="H4 - Industry-only but technical not confirmed",
+            mechanism=(
+                "Official industry evidence exists, but at least one required pre-event technical gate fails. "
+                "This creates a mixed analog bucket rather than a replay-ready candidate."
+            ),
+            required_evidence="Official customer-demand evidence with evidence_status PASS and usable_in_replay true.",
+            required_gates="At least one required pre-event technical gate must be FAIL; DATA_GAP is not a failed gate.",
+            minimum_next_evidence="Use this bucket only after required technical coverage is complete.",
+            suggested_replay_rule="Keep as mixed analog or negative-control candidate; do not treat industry evidence alone as setup readiness.",
+            anti_hindsight_notes="DATA_GAP must remain missing evidence, not a failed technical pattern.",
+        ),
+    ]
+
+
+def _hypothesis(
+    *,
+    hypothesis_group: str,
+    hypothesis_name: str,
+    mechanism: str,
+    required_evidence: str,
+    required_gates: str,
+    minimum_next_evidence: str,
+    suggested_replay_rule: str,
+    anti_hindsight_notes: str,
+) -> HindsightHypothesis:
+    hypothesis_id = str(
+        uuid.uuid5(uuid.NAMESPACE_URL, "|".join([HINDSIGHT_HYPOTHESIS_RULE_VERSION, hypothesis_name]))
+    )
+    return HindsightHypothesis(
+        hypothesis_id=hypothesis_id,
+        hypothesis_group=hypothesis_group,
+        hypothesis_name=hypothesis_name,
+        mechanism=mechanism,
+        required_evidence=required_evidence,
+        required_gates=required_gates,
+        promotion_status="DRAFT",
+        minimum_next_evidence=minimum_next_evidence,
+        suggested_replay_rule=suggested_replay_rule,
+        anti_hindsight_notes=anti_hindsight_notes,
+        rule_version=HINDSIGHT_HYPOTHESIS_RULE_VERSION,
+    )
+
+
+def _hypothesis_with_status(
+    hypothesis: HindsightHypothesis,
+    case_results: list[HindsightHypothesisCaseResult],
+) -> HindsightHypothesis:
+    status = _hypothesis_promotion_status(hypothesis, case_results)
+    return HindsightHypothesis(
+        hypothesis_id=hypothesis.hypothesis_id,
+        hypothesis_group=hypothesis.hypothesis_group,
+        hypothesis_name=hypothesis.hypothesis_name,
+        mechanism=hypothesis.mechanism,
+        required_evidence=hypothesis.required_evidence,
+        required_gates=hypothesis.required_gates,
+        promotion_status=status,
+        minimum_next_evidence=_hypothesis_next_evidence(status, hypothesis.minimum_next_evidence),
+        suggested_replay_rule=hypothesis.suggested_replay_rule,
+        anti_hindsight_notes=hypothesis.anti_hindsight_notes,
+        rule_version=hypothesis.rule_version,
+    )
+
+
+def _hypothesis_promotion_status(
+    hypothesis: HindsightHypothesis,
+    case_results: list[HindsightHypothesisCaseResult],
+) -> str:
+    supports = [result for result in case_results if result.result_status == "SUPPORTS"]
+    blockers = [result for result in case_results if result.result_status == "BLOCKS"]
+    data_gaps = [result for result in case_results if result.result_status == "DATA_GAP"]
+    timing_gaps = [result for result in case_results if result.result_status == "TIMING_GAP"]
+    reviews = [result for result in case_results if result.result_status == "REQUIRES_REVIEW"]
+    if hypothesis.hypothesis_name.startswith("H4") and supports:
+        return "MIXED_ANALOG_REVIEW"
+    if blockers:
+        return "BLOCKED_BY_REQUIRED_GATE"
+    if data_gaps:
+        return "BLOCKED_BY_DATA_GAP"
+    if timing_gaps:
+        return "PARTIAL_SUPPORT_TIMING_GAP" if supports else "TIMING_GAP_REVIEW"
+    if reviews:
+        return "REQUIRES_REVIEW"
+    if len(supports) < 2:
+        return "NEEDS_MORE_CASES"
+    return "ELIGIBLE_FOR_REPLAY_DESIGN"
+
+
+def _hypothesis_next_evidence(status: str, default_note: str) -> str:
+    return {
+        "BLOCKED_BY_REQUIRED_GATE": "Inspect failed required gates and keep the pattern as a blocker or mixed analog.",
+        "BLOCKED_BY_DATA_GAP": "Load missing PIT evidence, benchmark coverage, or pre-event OHLCV before replay design.",
+        "REQUIRES_REVIEW": "Attach official timestamped evidence or computed gates before review can proceed.",
+        "PARTIAL_SUPPORT_TIMING_GAP": "Keep supporting cases, but resolve future-only or timing-incompatible evidence before replay design.",
+        "TIMING_GAP_REVIEW": "Resolve announcement timing and evidence availability before interpreting the hypothesis.",
+        "NEEDS_MORE_CASES": "Add comparable leaders and controls before this becomes a replay design candidate.",
+        "MIXED_ANALOG_REVIEW": "Review as a mixed analog; do not use as a replay-ready rule.",
+        "ELIGIBLE_FOR_REPLAY_DESIGN": "Translate into a replay rule and then validate separately.",
+    }.get(status, default_note)
+
+
+def _evaluate_hypothesis_case(
+    hypothesis: HindsightHypothesis,
+    case: HindsightCase,
+    *,
+    observations: pd.DataFrame,
+    evidence: pd.DataFrame,
+    gates: pd.DataFrame,
+    links: pd.DataFrame,
+    evaluated_as_of: date,
+) -> HindsightHypothesisCaseResult:
+    if hypothesis.hypothesis_name.startswith("H1"):
+        status, reason_code, reason_text, evidence_ids, gate_ids = _evaluate_anchor_hypothesis(case, evidence)
+    elif hypothesis.hypothesis_name.startswith("H2"):
+        status, reason_code, reason_text, evidence_ids, gate_ids = _evaluate_downstream_evidence_hypothesis(
+            case, evidence
+        )
+    elif hypothesis.hypothesis_name.startswith("H3"):
+        status, reason_code, reason_text, evidence_ids, gate_ids = _evaluate_industry_plus_technical_hypothesis(
+            case, evidence, gates
+        )
+    elif hypothesis.hypothesis_name.startswith("H4"):
+        status, reason_code, reason_text, evidence_ids, gate_ids = _evaluate_mixed_analog_hypothesis(
+            case, evidence, gates
+        )
+    else:
+        status, reason_code, reason_text, evidence_ids, gate_ids = (
+            "REQUIRES_REVIEW",
+            "unknown_hypothesis",
+            "Hypothesis rule has no evaluator.",
+            [],
+            [],
+        )
+    observation_ids = _linked_observation_ids(case.symbol, observations, links, evidence_ids, gate_ids)
+    result_id = str(
+        uuid.uuid5(
+            uuid.NAMESPACE_URL,
+            "|".join([HINDSIGHT_HYPOTHESIS_RULE_VERSION, hypothesis.hypothesis_id, case.symbol]),
+        )
+    )
+    return HindsightHypothesisCaseResult(
+        result_id=result_id,
+        hypothesis_id=hypothesis.hypothesis_id,
+        symbol=case.symbol,
+        label=case.label,
+        case_role=_case_role(case),
+        result_status=status,
+        linked_observation_ids_json=_json_list(observation_ids),
+        linked_evidence_ids_json=_json_list(evidence_ids),
+        linked_gate_ids_json=_json_list(gate_ids),
+        reason_code=reason_code,
+        reason_text=reason_text,
+        evaluated_as_of=evaluated_as_of,
+    )
+
+
+def _evaluate_anchor_hypothesis(
+    case: HindsightCase,
+    evidence: pd.DataFrame,
+) -> tuple[str, str, str, list[str], list[str]]:
+    if _case_role(case) != "anchor":
+        return "NOT_APPLICABLE", "not_anchor_case", "This case is a downstream or watchlist node, not the anchor.", [], []
+    usable = _usable_customer_demand_evidence(evidence, case.symbol)
+    if not usable.empty:
+        return (
+            "SUPPORTS",
+            "official_anchor_demand_pass",
+            "Official anchor demand evidence is PIT-usable.",
+            _ids(usable, "evidence_id"),
+            [],
+        )
+    pending = _pending_customer_demand_evidence(evidence, case.symbol)
+    if not pending.empty:
+        return (
+            _pending_status(pending),
+            "anchor_demand_not_pit_usable",
+            "Anchor demand evidence exists but is not usable at the replay decision time.",
+            _ids(pending, "evidence_id"),
+            [],
+        )
+    return "DATA_GAP", "missing_anchor_demand_evidence", "No PIT-usable official anchor demand evidence is linked.", [], []
+
+
+def _evaluate_downstream_evidence_hypothesis(
+    case: HindsightCase,
+    evidence: pd.DataFrame,
+) -> tuple[str, str, str, list[str], list[str]]:
+    if _case_role(case) == "anchor":
+        return "NOT_APPLICABLE", "anchor_not_downstream", "The anchor case is not counted as downstream conversion.", [], []
+    usable = _usable_customer_demand_evidence(evidence, case.symbol)
+    if not usable.empty:
+        return (
+            "SUPPORTS",
+            "official_downstream_demand_pass",
+            "Official downstream customer-demand evidence is PIT-usable.",
+            _ids(usable, "evidence_id"),
+            [],
+        )
+    pending = _pending_customer_demand_evidence(evidence, case.symbol)
+    if not pending.empty:
+        return (
+            _pending_status(pending),
+            "downstream_demand_not_pit_usable",
+            "Downstream demand evidence exists but cannot support this replay point yet.",
+            _ids(pending, "evidence_id"),
+            [],
+        )
+    context = _context_only_evidence(evidence, case.symbol)
+    if not context.empty:
+        return (
+            "REQUIRES_REVIEW",
+            "context_evidence_not_demand",
+            "Context evidence exists, but spin-off/listing evidence cannot prove demand conversion.",
+            _ids(context, "evidence_id"),
+            [],
+        )
+    return "DATA_GAP", "missing_downstream_demand_evidence", "No official downstream demand evidence is linked.", [], []
+
+
+def _evaluate_industry_plus_technical_hypothesis(
+    case: HindsightCase,
+    evidence: pd.DataFrame,
+    gates: pd.DataFrame,
+) -> tuple[str, str, str, list[str], list[str]]:
+    usable = _usable_customer_demand_evidence(evidence, case.symbol)
+    if usable.empty:
+        pending = _pending_customer_demand_evidence(evidence, case.symbol)
+        if not pending.empty:
+            return (
+                _pending_status(pending),
+                "industry_evidence_not_pit_usable",
+                "Official industry evidence exists but is not PIT-usable for this replay point.",
+                _ids(pending, "evidence_id"),
+                [],
+            )
+        return "DATA_GAP", "missing_industry_evidence", "No PIT-usable official industry evidence is linked.", [], []
+    gate_rows = _required_technical_gate_rows(gates, case.symbol)
+    gate_status, reason_code, reason_text = _technical_gate_rollup(gate_rows)
+    return gate_status, reason_code, reason_text, _ids(usable, "evidence_id"), _ids(gate_rows, "gate_id")
+
+
+def _evaluate_mixed_analog_hypothesis(
+    case: HindsightCase,
+    evidence: pd.DataFrame,
+    gates: pd.DataFrame,
+) -> tuple[str, str, str, list[str], list[str]]:
+    usable = _usable_customer_demand_evidence(evidence, case.symbol)
+    if usable.empty:
+        return (
+            "NOT_APPLICABLE",
+            "no_official_demand_for_mixed_analog",
+            "Mixed analog requires PIT-usable industry evidence first.",
+            _ids(_pending_customer_demand_evidence(evidence, case.symbol), "evidence_id"),
+            [],
+        )
+    gate_rows = _required_technical_gate_rows(gates, case.symbol)
+    if gate_rows.empty or gate_rows["gate_status"].isin(["DATA_GAP", "PENDING", "REQUIRES_REVIEW"]).any():
+        return (
+            "DATA_GAP",
+            "technical_gates_incomplete",
+            "Required technical coverage is incomplete; DATA_GAP is not a failed setup analog.",
+            _ids(usable, "evidence_id"),
+            _ids(gate_rows, "gate_id"),
+        )
+    failed = gate_rows[gate_rows["gate_status"] == "FAIL"]
+    if not failed.empty:
+        return (
+            "SUPPORTS",
+            "industry_pass_technical_fail",
+            "Industry evidence passed, but at least one required technical gate failed.",
+            _ids(usable, "evidence_id"),
+            _ids(failed, "gate_id"),
+        )
+    return (
+        "NOT_APPLICABLE",
+        "technical_gates_not_failed",
+        "Required technical gates did not fail, so this is not an industry-only mixed analog.",
+        _ids(usable, "evidence_id"),
+        _ids(gate_rows, "gate_id"),
+    )
+
+
+def _usable_customer_demand_evidence(evidence: pd.DataFrame, symbol: str) -> pd.DataFrame:
+    if evidence.empty:
+        return evidence
+    symbol_rows = evidence[evidence["symbol"].astype(str).str.upper() == symbol.upper()]
+    if symbol_rows.empty:
+        return symbol_rows
+    demand_rows = symbol_rows[symbol_rows["evidence_lane"].astype(str).isin(["customer_demand"])]
+    return demand_rows[
+        demand_rows["usable_in_replay"].astype(bool)
+        & demand_rows["supports_pattern"].astype(bool)
+        & (demand_rows["evidence_status"].astype(str) == "PASS")
+    ]
+
+
+def _pending_customer_demand_evidence(evidence: pd.DataFrame, symbol: str) -> pd.DataFrame:
+    if evidence.empty:
+        return evidence
+    symbol_rows = evidence[evidence["symbol"].astype(str).str.upper() == symbol.upper()]
+    if symbol_rows.empty:
+        return symbol_rows
+    return symbol_rows[
+        symbol_rows["evidence_lane"].astype(str).isin(["customer_demand"])
+        & ~(
+            symbol_rows["usable_in_replay"].astype(bool)
+            & symbol_rows["supports_pattern"].astype(bool)
+            & (symbol_rows["evidence_status"].astype(str) == "PASS")
+        )
+    ]
+
+
+def _context_only_evidence(evidence: pd.DataFrame, symbol: str) -> pd.DataFrame:
+    if evidence.empty:
+        return evidence
+    symbol_rows = evidence[evidence["symbol"].astype(str).str.upper() == symbol.upper()]
+    if symbol_rows.empty:
+        return symbol_rows
+    return symbol_rows[~symbol_rows["evidence_lane"].astype(str).isin(["customer_demand"])]
+
+
+def _required_technical_gate_rows(gates: pd.DataFrame, symbol: str) -> pd.DataFrame:
+    if gates.empty:
+        return gates
+    symbol_gates = gates[gates["symbol"].astype(str).str.upper() == symbol.upper()]
+    if symbol_gates.empty:
+        return symbol_gates
+    names = symbol_gates["gate_name"].astype(str)
+    return symbol_gates[
+        (names == "Pre-event price coverage")
+        | (names == "Stage 2 trend explain")
+        | names.str.startswith("Benchmark RS")
+    ]
+
+
+def _technical_gate_rollup(gate_rows: pd.DataFrame) -> tuple[str, str, str]:
+    required_names = ["Pre-event price coverage", "Stage 2 trend explain", "Benchmark RS"]
+    if gate_rows.empty:
+        return "DATA_GAP", "missing_required_technical_gates", "No required technical replay gates are available."
+    present_names = set(gate_rows["gate_name"].astype(str))
+    missing = [
+        name
+        for name in required_names
+        if not any(existing == name or (name == "Benchmark RS" and existing.startswith("Benchmark RS")) for existing in present_names)
+    ]
+    if missing:
+        return "DATA_GAP", "missing_required_technical_gates", "Missing required gates: " + ", ".join(missing)
+    statuses = set(gate_rows["gate_status"].astype(str))
+    if "FAIL" in statuses:
+        return "BLOCKS", "required_technical_gate_failed", "At least one required technical replay gate failed."
+    if statuses & {"DATA_GAP", "PENDING", "REQUIRES_REVIEW"}:
+        return "DATA_GAP", "required_technical_gate_data_gap", "At least one required technical replay gate is missing or unresolved."
+    return "SUPPORTS", "required_technical_gates_pass", "All required technical replay gates passed."
+
+
+def _pending_status(evidence: pd.DataFrame) -> str:
+    statuses = set(evidence["evidence_status"].astype(str)) if not evidence.empty else set()
+    if statuses & {"REQUIRES_REVIEW"}:
+        return "TIMING_GAP"
+    return "DATA_GAP"
+
+
+def _linked_observation_ids(
+    symbol: str,
+    observations: pd.DataFrame,
+    links: pd.DataFrame,
+    evidence_ids: list[str],
+    gate_ids: list[str],
+) -> list[str]:
+    ids: set[str] = set()
+    if not links.empty:
+        linked_ids = set(evidence_ids + gate_ids)
+        linked_rows = links[
+            (links["symbol"].astype(str).str.upper() == symbol.upper())
+            & links["linked_id"].astype(str).isin(linked_ids)
+        ]
+        ids.update(str(value) for value in linked_rows.get("observation_id", []))
+    if not ids and not observations.empty:
+        symbol_rows = observations[observations["symbol"].astype(str).str.upper() == symbol.upper()]
+        ids.update(str(value) for value in symbol_rows.get("observation_id", []))
+    return sorted(ids)
+
+
+def _case_role(case: HindsightCase) -> str:
+    if case.symbol.upper() == "NVDA":
+        return "anchor"
+    if any(word in case.theme.lower() for word in ["memory", "hbm", "storage", "nand", "optical", "network"]):
+        return "downstream_node"
+    return "watchlist"
+
+
+def _ids(frame: pd.DataFrame, column: str) -> list[str]:
+    if frame.empty or column not in frame:
+        return []
+    return [str(value) for value in frame[column].dropna().tolist()]
+
+
+def _json_list(values: list[str]) -> str:
+    return json.dumps(sorted({str(value) for value in values if str(value)}), sort_keys=True)
 
 
 def _observation(
@@ -2321,6 +2932,83 @@ def _persist_hindsight_observation_links(config: SectorScoutConfig, links: list[
                     link.link_role,
                     link.link_status,
                     link.reason,
+                    now,
+                    cfg_hash,
+                    git_commit,
+                    config.reproducibility.data_snapshot_id,
+                    config.reproducibility.universe_version,
+                    config.reproducibility.theme_version,
+                ],
+            )
+
+
+def _persist_hindsight_hypothesis_registry(
+    config: SectorScoutConfig,
+    hypotheses: list[HindsightHypothesis],
+    case_results: list[HindsightHypothesisCaseResult],
+) -> None:
+    now = datetime.now(timezone.utc)
+    git_commit = get_git_commit()
+    cfg_hash = config_hash(config)
+    with connect_database(config.database.path) as connection:
+        for hypothesis in hypotheses:
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO hindsight_hypotheses (
+                    hypothesis_id, hypothesis_group, hypothesis_name, mechanism,
+                    required_evidence, required_gates, promotion_status,
+                    minimum_next_evidence, suggested_replay_rule,
+                    anti_hindsight_notes, rule_version, generated_at_utc,
+                    config_hash, git_commit, data_snapshot_id, universe_version,
+                    theme_version
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    hypothesis.hypothesis_id,
+                    hypothesis.hypothesis_group,
+                    hypothesis.hypothesis_name,
+                    hypothesis.mechanism,
+                    hypothesis.required_evidence,
+                    hypothesis.required_gates,
+                    hypothesis.promotion_status,
+                    hypothesis.minimum_next_evidence,
+                    hypothesis.suggested_replay_rule,
+                    hypothesis.anti_hindsight_notes,
+                    hypothesis.rule_version,
+                    now,
+                    cfg_hash,
+                    git_commit,
+                    config.reproducibility.data_snapshot_id,
+                    config.reproducibility.universe_version,
+                    config.reproducibility.theme_version,
+                ],
+            )
+        for result in case_results:
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO hindsight_hypothesis_case_results (
+                    result_id, hypothesis_id, symbol, label, case_role,
+                    result_status, linked_observation_ids_json,
+                    linked_evidence_ids_json, linked_gate_ids_json, reason_code,
+                    reason_text, evaluated_as_of, rule_version, generated_at_utc,
+                    config_hash, git_commit, data_snapshot_id, universe_version,
+                    theme_version
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    result.result_id,
+                    result.hypothesis_id,
+                    result.symbol,
+                    result.label,
+                    result.case_role,
+                    result.result_status,
+                    result.linked_observation_ids_json,
+                    result.linked_evidence_ids_json,
+                    result.linked_gate_ids_json,
+                    result.reason_code,
+                    result.reason_text,
+                    result.evaluated_as_of,
+                    HINDSIGHT_HYPOTHESIS_RULE_VERSION,
                     now,
                     cfg_hash,
                     git_commit,

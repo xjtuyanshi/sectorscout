@@ -174,6 +174,7 @@ or a computed replay gate link.
 .venv/bin/sectorscout hindsight scan
 .venv/bin/sectorscout hindsight build-gates
 .venv/bin/sectorscout hindsight build-observation-links
+.venv/bin/sectorscout hindsight build-hypotheses
 ```
 
 `fetch-prices` defaults to the public Yahoo chart JSON endpoint for case-study diagnostics and fetches a 320-calendar-day pre-event lookback by default. That lookback is required for pre-event technical replay gates such as trend, relative strength, and price coverage. Stooq remains available with `--provider stooq_public` when `STOOQ_API_KEY` is configured. Corporate-action adjustment status is marked with a warning in stored price rows, so split-sensitive cases still need provider-quality review before any formal validation.
@@ -187,13 +188,23 @@ After `scan`, review:
 - `hindsight_evidence_items` for point-in-time industry and fundamental evidence;
 - `hindsight_replay_gates` for PASS / FAIL / DATA_GAP / PENDING explain rows;
 - `hindsight_observation_links` for the explicit connection from each pattern
-  observation to official evidence, computed gates, or a review-required blocker.
+  observation to official evidence, computed gates, or a review-required blocker;
+- `hindsight_hypotheses` and `hindsight_hypothesis_case_results` for the
+  replay hypothesis registry and its per-case matrix.
 
 Observation links keep promotion discipline visible. Industry/theme observations
 must link to usable point-in-time evidence. Technical/OHLCV observations must
 link to computed replay gates. Manual narrative observations default to
 review-required until a reviewer attaches timestamped evidence or a rule-derived
 gate.
+
+The replay hypothesis registry is intentionally not a confirmed-pattern list.
+It aggregates observations into candidate mechanisms such as anchor demand shock,
+downstream revenue conversion, industry evidence plus technical strength, and
+industry-only mixed analogs. Each case gets one result row per hypothesis:
+`SUPPORTS`, `BLOCKS`, `DATA_GAP`, `TIMING_GAP`, `REQUIRES_REVIEW`, or
+`NOT_APPLICABLE`. Counts in the UI are derived from those case rows so multiple
+links from the same symbol do not inflate support.
 
 ## Safety Rules
 

@@ -455,6 +455,29 @@ def hindsight_build_observation_links(
     typer.echo(json.dumps([link.to_dict() for link in links], indent=2, sort_keys=True))
 
 
+@hindsight_app.command("build-hypotheses")
+def hindsight_build_hypotheses(
+    path: Path = typer.Option(DEFAULT_HINDSIGHT_CASES_PATH, "--path"),
+    persist: bool = typer.Option(True, "--persist/--no-persist"),
+    config: Path = typer.Option(Path("config.yaml"), "--config"),
+) -> None:
+    """Build cross-case replay hypothesis registry rows."""
+    from sectorscout.hindsight import build_hindsight_hypothesis_registry
+
+    loaded = _load(config)
+    hypotheses, case_results = build_hindsight_hypothesis_registry(loaded, path=path, persist=persist)
+    typer.echo(
+        json.dumps(
+            {
+                "hypotheses": [hypothesis.to_dict() for hypothesis in hypotheses],
+                "case_results": [result.to_dict() for result in case_results],
+            },
+            indent=2,
+            sort_keys=True,
+        )
+    )
+
+
 @hindsight_app.command("fetch-prices")
 def hindsight_fetch_prices(
     path: Path = typer.Option(DEFAULT_HINDSIGHT_CASES_PATH, "--path"),

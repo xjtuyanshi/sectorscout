@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import date
 
 import pandas as pd
@@ -7,12 +8,15 @@ import streamlit as st
 
 from sectorscout.db import connect_database
 from sectorscout.hindsight import (
+    build_hindsight_hypothesis_registry,
     build_hindsight_observation_links,
     build_hindsight_replay_gates,
     fetch_hindsight_prices,
     historical_pattern_summary,
     latest_hindsight_evidence,
     latest_hindsight_events,
+    latest_hindsight_hypotheses,
+    latest_hindsight_hypothesis_case_results,
     latest_hindsight_observation_links,
     load_hindsight_cases,
     latest_hindsight_pattern_observations,
@@ -51,6 +55,8 @@ HISTORICAL_TABLES = [
     "hindsight_evidence_items",
     "hindsight_replay_gates",
     "hindsight_observation_links",
+    "hindsight_hypotheses",
+    "hindsight_hypothesis_case_results",
 ]
 
 
@@ -176,6 +182,7 @@ def render(ctx: UIContext) -> None:
     st.caption("Industry patterns show what theme/category to study. Technical patterns show what chart/price behavior to test.")
     st.dataframe(summary["industry_patterns"], use_container_width=True, hide_index=True)
     st.dataframe(summary["technical_patterns"], use_container_width=True, hide_index=True)
+    _render_hypothesis_registry(ctx)
 
     st.subheader("Pattern observations")
     observations = latest_hindsight_pattern_observations(ctx.config)
@@ -266,6 +273,30 @@ def _render_observation_link_panel(ctx: UIContext) -> None:
     st.dataframe(_display_observation_links_frame(links), use_container_width=True, hide_index=True)
 
 
+def _render_hypothesis_registry(ctx: UIContext) -> None:
+    st.subheader("Replay Hypothesis Registry")
+    st.write(
+        "This matrix turns individual observations into cross-case hypotheses. It does not confirm a rule; "
+        "it shows which cases support, block, or still lack evidence for a future replay design."
+    )
+    if st.button("Build replay hypothesis registry", use_container_width=True):
+        hypotheses, case_results = build_hindsight_hypothesis_registry(ctx.config)
+        st.success(f"Built {len(hypotheses)} hypotheses and {len(case_results)} case results.")
+    hypotheses = latest_hindsight_hypotheses(ctx.config)
+    case_results = latest_hindsight_hypothesis_case_results(ctx.config)
+    if hypotheses.empty or case_results.empty:
+        st.info("No replay hypothesis registry yet. Run a scan, build observation links, then build hypotheses.")
+        return
+    st.caption(
+        "Counts are derived from per-case rows. One case counts once even if it has multiple evidence links."
+    )
+    st.dataframe(_display_hypotheses_frame(hypotheses, case_results), use_container_width=True, hide_index=True)
+    st.markdown("#### Case Matrix")
+    st.dataframe(_display_hypothesis_case_matrix(hypotheses, case_results), use_container_width=True, hide_index=True)
+    st.markdown("#### Case Result Detail")
+    st.dataframe(_display_hypothesis_case_results(case_results), use_container_width=True, hide_index=True)
+
+
 def _table_meaning(table: str) -> str:
     return {
         "symbols": "Universe source and symbol metadata.",
@@ -335,6 +366,69 @@ def _display_evidence_frame(frame: pd.DataFrame) -> pd.DataFrame:
                 "Review note": row.get("review_note"),
             }
             for _, row in frame.iterrows()
+        ]
+    )
+
+
+def _display_hypotheses_frame(hypotheses: pd.DataFrame, case_results: pd.DataFrame) -> pd.DataFrame:
+    counts = (
+        case_results.groupby(["hypothesis_id", "result_status"], dropna=False)
+        .size()
+        .reset_index(name="count")
+    )
+    count_map = {
+        (str(row["hypothesis_id"]), str(row["result_status"])): int(row["count"])
+        for _, row in counts.iterrows()
+    }
+    return pd.DataFrame(
+        [
+            {
+                "Hypothesis": row.get("hypothesis_name"),
+                "Group": _friendly_text(row.get("hypothesis_group")),
+                "Replay readiness": _friendly_text(row.get("promotion_status")),
+                "Supports": count_map.get((str(row.get("hypothesis_id")), "SUPPORTS"), 0),
+                "Blocks": count_map.get((str(row.get("hypothesis_id")), "BLOCKS"), 0),
+                "Data gaps": count_map.get((str(row.get("hypothesis_id")), "DATA_GAP"), 0)
+                + count_map.get((str(row.get("hypothesis_id")), "TIMING_GAP"), 0),
+                "Needs review": count_map.get((str(row.get("hypothesis_id")), "REQUIRES_REVIEW"), 0),
+                "Mechanism": row.get("mechanism"),
+                "Minimum next evidence": row.get("minimum_next_evidence"),
+                "Anti-hindsight note": row.get("anti_hindsight_notes"),
+            }
+            for _, row in hypotheses.iterrows()
+        ]
+    )
+
+
+def _display_hypothesis_case_matrix(hypotheses: pd.DataFrame, case_results: pd.DataFrame) -> pd.DataFrame:
+    rows = []
+    for _, hypothesis in hypotheses.iterrows():
+        hypothesis_id = str(hypothesis.get("hypothesis_id"))
+        result_rows = case_results[case_results["hypothesis_id"].astype(str) == hypothesis_id]
+        row = {
+            "Hypothesis": hypothesis.get("hypothesis_name"),
+            "Replay readiness": _friendly_text(hypothesis.get("promotion_status")),
+        }
+        for _, result in result_rows.iterrows():
+            row[str(result.get("symbol"))] = _friendly_text(result.get("result_status"))
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def _display_hypothesis_case_results(case_results: pd.DataFrame) -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {
+                "Hypothesis id": row.get("hypothesis_id"),
+                "Symbol": row.get("symbol"),
+                "Role": _friendly_text(row.get("case_role")),
+                "Status": _friendly_text(row.get("result_status")),
+                "Reason": row.get("reason_text"),
+                "Evidence links": _json_count(row.get("linked_evidence_ids_json")),
+                "Gate links": _json_count(row.get("linked_gate_ids_json")),
+                "Observation links": _json_count(row.get("linked_observation_ids_json")),
+            }
+            for _, row in case_results.iterrows()
         ]
     )
 
@@ -517,6 +611,14 @@ def _format_metric(row: pd.Series) -> str:
     period = str(row.get("metric_period") or "").strip()
     parts = [part for part in [name, value, period] if part]
     return " / ".join(parts) if parts else "-"
+
+
+def _json_count(value: object) -> int:
+    try:
+        parsed = json.loads(str(value or "[]"))
+    except json.JSONDecodeError:
+        return 0
+    return len(parsed) if isinstance(parsed, list) else 0
 
 
 def _latest_observation_review_map(ctx: UIContext) -> dict[str, dict]:

@@ -10,6 +10,7 @@ from sectorscout.config import SectorScoutConfig
 from sectorscout.db import connect_database, initialize_database
 from sectorscout.demo import demo_readiness, run_demo_init
 from sectorscout.hindsight import (
+    build_hindsight_hypothesis_registry,
     build_hindsight_observation_links,
     build_hindsight_pattern_observations,
     build_hindsight_replay_gates,
@@ -18,6 +19,8 @@ from sectorscout.hindsight import (
     historical_pattern_summary,
     latest_hindsight_evidence,
     latest_hindsight_events,
+    latest_hindsight_hypotheses,
+    latest_hindsight_hypothesis_case_results,
     latest_hindsight_observation_links,
     latest_hindsight_pattern_observations,
     latest_hindsight_replay_gates,
@@ -1312,6 +1315,52 @@ def test_hindsight_observation_links_connect_patterns_to_evidence_and_gates(tmp_
     assert set(review_links["link_role"]) == {"needs_review"}
     assert set(review_links["link_status"]) == {"REQUIRES_REVIEW"}
     assert "supports" not in set(review_links["link_role"])
+
+
+def test_hindsight_hypothesis_registry_builds_cross_case_matrix(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    scan_hindsight_cases(config, path=tmp_path / "leader_cases.csv", persist=True)
+    hypotheses, case_results = build_hindsight_hypothesis_registry(config, path=tmp_path / "leader_cases.csv")
+
+    assert len(hypotheses) == 4
+    assert len(case_results) == 16
+    assert {hypothesis.hypothesis_name.split(" - ")[0] for hypothesis in hypotheses} == {"H1", "H2", "H3", "H4"}
+
+    latest_hypotheses = latest_hindsight_hypotheses(config)
+    latest_results = latest_hindsight_hypothesis_case_results(config)
+    assert not latest_hypotheses.empty
+    assert not latest_results.empty
+    assert "CONFIRMED" not in set(latest_hypotheses["promotion_status"])
+
+    h2 = latest_hypotheses[latest_hypotheses["hypothesis_name"].str.startswith("H2")].iloc[0]
+    assert h2["promotion_status"] == "PARTIAL_SUPPORT_TIMING_GAP"
+    h2_results = latest_results[latest_results["hypothesis_id"] == h2["hypothesis_id"]].set_index("symbol")
+    assert h2_results.loc["NVDA", "result_status"] == "NOT_APPLICABLE"
+    assert h2_results.loc["MU", "result_status"] == "SUPPORTS"
+    assert h2_results.loc["LITE", "result_status"] == "SUPPORTS"
+    assert h2_results.loc["SNDK", "result_status"] in {"TIMING_GAP", "REQUIRES_REVIEW"}
+    assert h2_results.loc["SNDK", "reason_code"] == "downstream_demand_not_pit_usable"
+
+
+def test_hindsight_hypothesis_registry_blocks_data_gaps_and_context_only_support(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    scan_hindsight_cases(config, path=tmp_path / "leader_cases.csv", persist=True)
+    build_hindsight_hypothesis_registry(config, path=tmp_path / "leader_cases.csv")
+
+    hypotheses = latest_hindsight_hypotheses(config)
+    results = latest_hindsight_hypothesis_case_results(config)
+
+    h3 = hypotheses[hypotheses["hypothesis_name"].str.startswith("H3")].iloc[0]
+    assert h3["promotion_status"] == "BLOCKED_BY_DATA_GAP"
+    h3_results = results[results["hypothesis_id"] == h3["hypothesis_id"]]
+    assert "DATA_GAP" in set(h3_results["result_status"])
+
+    h2 = hypotheses[hypotheses["hypothesis_name"].str.startswith("H2")].iloc[0]
+    h2_results = results[results["hypothesis_id"] == h2["hypothesis_id"]].set_index("symbol")
+    assert h2_results.loc["SNDK", "result_status"] != "SUPPORTS"
+    assert "spin-off" not in h2_results.loc["SNDK", "reason_text"].lower() or h2_results.loc[
+        "SNDK", "result_status"
+    ] == "TIMING_GAP"
 
 
 def test_hindsight_event_ledger_blocks_date_only_reaction(tmp_path: Path) -> None:
