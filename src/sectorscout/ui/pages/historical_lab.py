@@ -10,12 +10,14 @@ from sectorscout.hindsight import (
     build_hindsight_replay_gates,
     fetch_hindsight_prices,
     historical_pattern_summary,
+    latest_hindsight_evidence,
     latest_hindsight_events,
     load_hindsight_cases,
     latest_hindsight_pattern_observations,
     latest_hindsight_replay_gates,
     latest_hindsight_results,
     scan_hindsight_cases,
+    seed_hindsight_evidence,
     seed_hindsight_events,
     seed_hindsight_cases,
 )
@@ -44,6 +46,7 @@ HISTORICAL_TABLES = [
     "hindsight_scan_results",
     "hindsight_pattern_observations",
     "hindsight_event_ledger",
+    "hindsight_evidence_items",
     "hindsight_replay_gates",
 ]
 
@@ -135,6 +138,19 @@ def render(ctx: UIContext) -> None:
             "Each event row is the audit spine for timing, source quality, first tradable date, and PIT evidence."
         )
         st.dataframe(_display_events_frame(events), use_container_width=True, hide_index=True)
+
+    st.subheader("Evidence Ledger")
+    if st.button("Seed evidence ledger", use_container_width=True):
+        count = seed_hindsight_evidence(ctx.config)
+        st.success(f"Seeded {count} evidence rows.")
+    evidence = latest_hindsight_evidence(ctx.config)
+    if evidence.empty:
+        st.info("No evidence ledger rows yet. Seed evidence after the event ledger exists.")
+    else:
+        st.caption(
+            "Industry and fundamental claims must have source, timestamp, and replay usability before they support a pattern."
+        )
+        st.dataframe(_display_evidence_frame(evidence), use_container_width=True, hide_index=True)
 
     st.subheader("Gate Explain Panel")
     gates = latest_hindsight_replay_gates(ctx.config)
@@ -269,6 +285,28 @@ def _display_events_frame(frame: pd.DataFrame) -> pd.DataFrame:
                 "Source quality": _friendly_text(row.get("source_quality")),
                 "Evidence summary": row.get("evidence_summary"),
                 "Needs review": bool(row.get("requires_review")),
+            }
+            for _, row in frame.iterrows()
+        ]
+    )
+
+
+def _display_evidence_frame(frame: pd.DataFrame) -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {
+                "Symbol": row.get("symbol"),
+                "Evidence lane": _friendly_text(row.get("evidence_lane")),
+                "Evidence kind": _friendly_text(row.get("evidence_kind")),
+                "Claim": row.get("claim"),
+                "Metric": _format_metric(row),
+                "Status": _friendly_text(row.get("evidence_status")),
+                "Usable in replay": bool(row.get("usable_in_replay")),
+                "Available at": row.get("available_at_utc") or "Missing",
+                "Replay decision at": row.get("replay_decision_at") or "Unresolved",
+                "Source quality": _friendly_text(row.get("source_quality")),
+                "Needs review": bool(row.get("requires_review")),
+                "Review note": row.get("review_note"),
             }
             for _, row in frame.iterrows()
         ]
@@ -414,6 +452,14 @@ def _friendly_user_review(value: object) -> str:
 
 def _friendly_text(value: object) -> str:
     return str(value or "-").replace("_", " ").title()
+
+
+def _format_metric(row: pd.Series) -> str:
+    name = str(row.get("metric_name") or "").strip()
+    value = str(row.get("metric_value") or "").strip()
+    period = str(row.get("metric_period") or "").strip()
+    parts = [part for part in [name, value, period] if part]
+    return " / ".join(parts) if parts else "-"
 
 
 def _latest_observation_review_map(ctx: UIContext) -> dict[str, dict]:

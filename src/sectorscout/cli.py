@@ -430,6 +430,19 @@ def hindsight_build_gates(
     typer.echo(json.dumps([gate.to_dict() for gate in gates], indent=2, sort_keys=True))
 
 
+@hindsight_app.command("seed-evidence")
+def hindsight_seed_evidence(
+    path: Path = typer.Option(DEFAULT_HINDSIGHT_CASES_PATH, "--path"),
+    config: Path = typer.Option(Path("config.yaml"), "--config"),
+) -> None:
+    """Persist point-in-time industry/fundamental evidence rows for historical cases."""
+    from sectorscout.hindsight import seed_hindsight_evidence
+
+    loaded = _load(config)
+    count = seed_hindsight_evidence(loaded, path)
+    typer.echo(json.dumps({"seeded_evidence": count, "path": str(path)}, indent=2, sort_keys=True))
+
+
 @hindsight_app.command("fetch-prices")
 def hindsight_fetch_prices(
     path: Path = typer.Option(DEFAULT_HINDSIGHT_CASES_PATH, "--path"),

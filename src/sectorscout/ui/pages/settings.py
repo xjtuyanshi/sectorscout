@@ -30,6 +30,7 @@ TABLES = [
     "hindsight_scan_results",
     "hindsight_pattern_observations",
     "hindsight_event_ledger",
+    "hindsight_evidence_items",
     "hindsight_replay_gates",
 ]
 

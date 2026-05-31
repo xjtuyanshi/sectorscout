@@ -138,12 +138,38 @@ Every visible gate should let the reviewer answer five questions without leaving
 the page: what is the claim, what evidence supports it, when was it knowable,
 what gate status was assigned, and why that status was assigned.
 
+## Evidence Ledger
+
+Industry and fundamental evidence now gets its own point-in-time ledger instead
+of living only as case-study narrative. The table is `hindsight_evidence_items`.
+Each evidence row stores source quality, `published_at_utc`, `available_at_utc`,
+`replay_decision_at`, `usable_in_replay`, and review state.
+
+The governing rule is:
+
+```text
+usable_in_replay = available_at_utc <= replay_decision_at
+```
+
+Default official seeds include:
+
+- NVDA Q4 FY2024 AI/Data Center demand evidence.
+- MU FY2025 Q4 AI data-center memory demand evidence.
+- SNDK spin-off and regular-way listing evidence, with later data-center storage
+  growth kept as review-required future-only validation.
+- LITE Q2 FY2026 AI optical demand, OCS backlog, and CPO context.
+
+Manual, external, or future-only evidence can be visible in the lab, but it must
+not confirm a hypothesis by itself. It either needs official timestamped support
+or a computed replay gate link.
+
 ## Current Commands
 
 ```bash
 .venv/bin/sectorscout hindsight write-default-cases
 .venv/bin/sectorscout hindsight seed
 .venv/bin/sectorscout hindsight seed-events
+.venv/bin/sectorscout hindsight seed-evidence
 .venv/bin/sectorscout hindsight fetch-prices
 .venv/bin/sectorscout hindsight scan
 .venv/bin/sectorscout hindsight build-gates
@@ -157,6 +183,7 @@ After `scan`, review:
 - `hindsight_pattern_observations` for the actual industry, technical, and
   manual-review hypothesis observations;
 - `hindsight_event_ledger` for event timing and source availability;
+- `hindsight_evidence_items` for point-in-time industry and fundamental evidence;
 - `hindsight_replay_gates` for PASS / FAIL / DATA_GAP / PENDING explain rows.
 
 ## Safety Rules

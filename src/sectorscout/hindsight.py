@@ -85,6 +85,85 @@ OFFICIAL_EVENT_SEEDS: dict[str, dict[str, Any]] = {
 }
 
 
+OFFICIAL_EVIDENCE_SEEDS: dict[str, list[dict[str, Any]]] = {
+    "NVDA": [
+        {
+            "evidence_lane": "customer_demand",
+            "evidence_kind": "segment_revenue",
+            "claim": "AI data-center demand was visible in official Q4 FY2024 results and Data Center revenue acceleration.",
+            "metric_name": "Data Center revenue",
+            "metric_value": "Q4 FY2024 $18.4B; FY2024 $47.5B",
+            "metric_period": "Q4 FY2024 / FY2024",
+            "source_url": "https://investor.nvidia.com/news/press-release-details/2024/NVIDIA-Announces-Financial-Results-for-Fourth-Quarter-and-Fiscal-2024/default.aspx",
+            "source_quality": "official_company_release",
+            "supports_pattern": True,
+            "requires_review": False,
+            "review_note": "Official evidence for AI infrastructure demand; use only after the SEC accepted timestamp.",
+        }
+    ],
+    "MU": [
+        {
+            "evidence_lane": "customer_demand",
+            "evidence_kind": "earnings_release",
+            "claim": "Record fiscal Q4 and full-year revenue was attributed to AI data center growth.",
+            "metric_name": "Revenue",
+            "metric_value": "Q4 FY2025 $11.3B; FY2025 $37.4B",
+            "metric_period": "Q4 FY2025 / FY2025",
+            "source_url": "https://micron.gcs-web.com/news-releases/news-release-details/micron-technology-inc-reports-results-fourth-quarter-and-full-8",
+            "source_quality": "official_company_release",
+            "supports_pattern": True,
+            "requires_review": False,
+            "review_note": "Official evidence for AI data-center memory demand; use only after release timestamp.",
+        }
+    ],
+    "SNDK": [
+        {
+            "evidence_lane": "catalyst",
+            "evidence_kind": "spin_off_registration",
+            "claim": "Standalone SanDisk regular-way trading schedule was officially knowable before the first SNDK session.",
+            "metric_name": "Regular-way listing",
+            "metric_value": "Expected February 24, 2025",
+            "metric_period": "Spin-off registration",
+            "source_url": "https://www.sec.gov/Archives/edgar/data/2023554/000119312525019298/d919795d8k.htm",
+            "source_quality": "sec_8k_official",
+            "supports_pattern": True,
+            "requires_review": False,
+            "review_note": "Do not splice WDC price history into SNDK unless a separate pro-forma policy is enabled.",
+        },
+        {
+            "evidence_lane": "customer_demand",
+            "evidence_kind": "segment_revenue",
+            "claim": "Datacenter storage demand later became visible in official Q3 FY2026 SanDisk results.",
+            "metric_name": "Datacenter revenue",
+            "metric_value": "Q3 FY2026 $1.467B; up 233% sequentially",
+            "metric_period": "Q3 FY2026",
+            "source_url": "https://investor.sandisk.com/news-releases/news-release-details/sandisk-reports-fiscal-third-quarter-2026-financial-results",
+            "source_quality": "official_company_release",
+            "published_at_utc": datetime(2026, 4, 30, 20, 5, tzinfo=timezone.utc),
+            "available_at_utc": datetime(2026, 4, 30, 20, 5, tzinfo=timezone.utc),
+            "supports_pattern": True,
+            "requires_review": True,
+            "review_note": "Future-only industry validation for the initial spin-off replay; not usable at first regular-way session.",
+        },
+    ],
+    "LITE": [
+        {
+            "evidence_lane": "customer_demand",
+            "evidence_kind": "backlog",
+            "claim": "AI optical demand was visible through OCS backlog and CPO order context in official Q2 FY2026 results.",
+            "metric_name": "OCS backlog",
+            "metric_value": "> $400M",
+            "metric_period": "Q2 FY2026",
+            "source_url": "https://s21.q4cdn.com/377324469/files/doc_news/Lumentum-Announces-Second-Quarter-of-Fiscal-Year-2026-Financial-Results-2026.pdf",
+            "source_quality": "official_company_release",
+            "supports_pattern": True,
+            "requires_review": False,
+            "review_note": "Official evidence for AI optical infrastructure demand; use only after release timestamp.",
+        }
+    ],
+}
+
+
 @dataclass(frozen=True)
 class HindsightCase:
     symbol: str
@@ -182,6 +261,37 @@ class HindsightEvent:
         )
         payload["first_tradable_date"] = self.first_tradable_date.isoformat() if self.first_tradable_date else None
         payload["technical_replay_as_of"] = self.technical_replay_as_of.isoformat() if self.technical_replay_as_of else None
+        return payload
+
+
+@dataclass(frozen=True)
+class HindsightEvidenceItem:
+    evidence_id: str
+    event_id: str
+    symbol: str
+    label: str
+    evidence_lane: str
+    evidence_kind: str
+    claim: str
+    metric_name: str
+    metric_value: str
+    metric_period: str
+    source_url: str
+    source_quality: str
+    published_at_utc: datetime | None
+    available_at_utc: datetime | None
+    replay_decision_at: datetime | None
+    usable_in_replay: bool
+    supports_pattern: bool
+    evidence_status: str
+    requires_review: bool
+    review_note: str
+
+    def to_dict(self) -> dict[str, Any]:
+        payload = asdict(self)
+        payload["published_at_utc"] = self.published_at_utc.isoformat() if self.published_at_utc else None
+        payload["available_at_utc"] = self.available_at_utc.isoformat() if self.available_at_utc else None
+        payload["replay_decision_at"] = self.replay_decision_at.isoformat() if self.replay_decision_at else None
         return payload
 
 
@@ -364,6 +474,39 @@ def ensure_hindsight_tables(config: SectorScoutConfig) -> None:
         )
         connection.execute(
             """
+            CREATE TABLE IF NOT EXISTS hindsight_evidence_items (
+                evidence_id VARCHAR NOT NULL,
+                event_id VARCHAR NOT NULL,
+                symbol VARCHAR NOT NULL,
+                label VARCHAR NOT NULL,
+                evidence_lane VARCHAR NOT NULL,
+                evidence_kind VARCHAR NOT NULL,
+                claim VARCHAR NOT NULL,
+                metric_name VARCHAR NOT NULL,
+                metric_value VARCHAR NOT NULL,
+                metric_period VARCHAR NOT NULL,
+                source_url VARCHAR NOT NULL,
+                source_quality VARCHAR NOT NULL,
+                published_at_utc TIMESTAMPTZ,
+                available_at_utc TIMESTAMPTZ,
+                replay_decision_at TIMESTAMPTZ,
+                usable_in_replay BOOLEAN NOT NULL,
+                supports_pattern BOOLEAN NOT NULL,
+                evidence_status VARCHAR NOT NULL,
+                requires_review BOOLEAN NOT NULL,
+                review_note VARCHAR NOT NULL,
+                generated_at_utc TIMESTAMPTZ NOT NULL,
+                config_hash VARCHAR NOT NULL,
+                git_commit VARCHAR NOT NULL,
+                data_snapshot_id VARCHAR NOT NULL,
+                universe_version VARCHAR NOT NULL,
+                theme_version VARCHAR NOT NULL,
+                PRIMARY KEY (evidence_id)
+            )
+            """
+        )
+        connection.execute(
+            """
             CREATE TABLE IF NOT EXISTS hindsight_replay_gates (
                 gate_id VARCHAR NOT NULL,
                 event_id VARCHAR NOT NULL,
@@ -526,6 +669,78 @@ def latest_hindsight_events(config: SectorScoutConfig, *, limit: int = 100) -> p
             SELECT *
             FROM hindsight_event_ledger
             ORDER BY symbol, event_date, event_type
+            LIMIT ?
+            """,
+            [limit],
+        ).fetchdf()
+
+
+def build_hindsight_evidence_from_events(events: pd.DataFrame) -> list[HindsightEvidenceItem]:
+    items: list[HindsightEvidenceItem] = []
+    for _, row in events.iterrows():
+        event = _event_from_row(row)
+        replay_decision_at = _replay_decision_at(event)
+        seeds = OFFICIAL_EVIDENCE_SEEDS.get(event.symbol)
+        if not seeds:
+            items.append(_fallback_evidence_item(event, replay_decision_at))
+            continue
+        for index, seed in enumerate(seeds):
+            published_at = seed.get("published_at_utc") or event.published_at_utc
+            available_at = seed.get("available_at_utc") or published_at
+            usable = bool(available_at and replay_decision_at and available_at <= replay_decision_at)
+            status = _evidence_status(available_at, replay_decision_at, seed_requires_review=bool(seed["requires_review"]))
+            evidence_id = str(
+                uuid.uuid5(
+                    uuid.NAMESPACE_URL,
+                    "|".join(["hindsight_evidence", event.event_id, event.symbol, str(index), str(seed["evidence_kind"])]),
+                )
+            )
+            items.append(
+                HindsightEvidenceItem(
+                    evidence_id=evidence_id,
+                    event_id=event.event_id,
+                    symbol=event.symbol,
+                    label=event.label,
+                    evidence_lane=str(seed["evidence_lane"]),
+                    evidence_kind=str(seed["evidence_kind"]),
+                    claim=str(seed["claim"]),
+                    metric_name=str(seed["metric_name"]),
+                    metric_value=str(seed["metric_value"]),
+                    metric_period=str(seed["metric_period"]),
+                    source_url=str(seed["source_url"]),
+                    source_quality=str(seed["source_quality"]),
+                    published_at_utc=published_at,
+                    available_at_utc=available_at,
+                    replay_decision_at=replay_decision_at,
+                    usable_in_replay=usable,
+                    supports_pattern=bool(seed["supports_pattern"]),
+                    evidence_status=status,
+                    requires_review=bool(seed["requires_review"]) or status != "PASS",
+                    review_note=str(seed["review_note"]),
+                )
+            )
+    return items
+
+
+def seed_hindsight_evidence(config: SectorScoutConfig, path: Path = DEFAULT_HINDSIGHT_CASES_PATH) -> int:
+    ensure_hindsight_tables(config)
+    events = latest_hindsight_events(config)
+    if events.empty:
+        seed_hindsight_events(config, path)
+        events = latest_hindsight_events(config)
+    evidence = build_hindsight_evidence_from_events(events)
+    _persist_hindsight_evidence(config, evidence)
+    return len(evidence)
+
+
+def latest_hindsight_evidence(config: SectorScoutConfig, *, limit: int = 500) -> pd.DataFrame:
+    ensure_hindsight_tables(config)
+    with connect_database(config.database.path) as connection:
+        return connection.execute(
+            """
+            SELECT *
+            FROM hindsight_evidence_items
+            ORDER BY symbol, evidence_lane, evidence_kind, metric_name
             LIMIT ?
             """,
             [limit],
@@ -702,6 +917,7 @@ def scan_hindsight_cases(
         _persist_results(config, results)
         _persist_pattern_observations(config, build_hindsight_pattern_observations(cases, results))
         seed_hindsight_events(config, path)
+        seed_hindsight_evidence(config, path)
         build_hindsight_replay_gates(config, path=path, persist=True)
     return results
 
@@ -1200,6 +1416,55 @@ def resolve_first_tradable_date(event_date: date, market_session: str, trading_d
     return None
 
 
+def _replay_decision_at(event: HindsightEvent) -> datetime | None:
+    if not event.first_tradable_date:
+        return None
+    return datetime.combine(event.first_tradable_date, time(14, 30), tzinfo=timezone.utc)
+
+
+def _evidence_status(
+    available_at: datetime | None,
+    replay_decision_at: datetime | None,
+    *,
+    seed_requires_review: bool,
+) -> str:
+    if not available_at or not replay_decision_at:
+        return "DATA_GAP"
+    if available_at > replay_decision_at:
+        return "REQUIRES_REVIEW"
+    return "REQUIRES_REVIEW" if seed_requires_review else "PASS"
+
+
+def _fallback_evidence_item(event: HindsightEvent, replay_decision_at: datetime | None) -> HindsightEvidenceItem:
+    evidence_id = str(uuid.uuid5(uuid.NAMESPACE_URL, "|".join(["hindsight_evidence", event.event_id, "fallback"])))
+    return HindsightEvidenceItem(
+        evidence_id=evidence_id,
+        event_id=event.event_id,
+        symbol=event.symbol,
+        label=event.label,
+        evidence_lane="industry",
+        evidence_kind="case_narrative",
+        claim=event.evidence_summary,
+        metric_name="",
+        metric_value="",
+        metric_period="",
+        source_url=event.source_url,
+        source_quality=event.source_quality,
+        published_at_utc=event.published_at_utc,
+        available_at_utc=event.fundamental_evidence_available_at,
+        replay_decision_at=replay_decision_at,
+        usable_in_replay=bool(
+            event.fundamental_evidence_available_at
+            and replay_decision_at
+            and event.fundamental_evidence_available_at <= replay_decision_at
+        ),
+        supports_pattern=False,
+        evidence_status="DATA_GAP",
+        requires_review=True,
+        review_note="Narrative case seed needs official timestamped evidence before it can support a pattern.",
+    )
+
+
 def _event_timing_gates(
     event: HindsightEvent,
     case: HindsightCase,
@@ -1695,6 +1960,57 @@ def _persist_hindsight_events(config: SectorScoutConfig, events: list[HindsightE
                     event.technical_replay_as_of,
                     event.timing_status,
                     event.requires_review,
+                    now,
+                    cfg_hash,
+                    git_commit,
+                    config.reproducibility.data_snapshot_id,
+                    config.reproducibility.universe_version,
+                    config.reproducibility.theme_version,
+                ],
+            )
+
+
+def _persist_hindsight_evidence(config: SectorScoutConfig, evidence_items: list[HindsightEvidenceItem]) -> None:
+    if not evidence_items:
+        return
+    now = datetime.now(timezone.utc)
+    git_commit = get_git_commit()
+    cfg_hash = config_hash(config)
+    with connect_database(config.database.path) as connection:
+        for item in evidence_items:
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO hindsight_evidence_items (
+                    evidence_id, event_id, symbol, label, evidence_lane, evidence_kind,
+                    claim, metric_name, metric_value, metric_period, source_url,
+                    source_quality, published_at_utc, available_at_utc,
+                    replay_decision_at, usable_in_replay, supports_pattern,
+                    evidence_status, requires_review, review_note,
+                    generated_at_utc, config_hash, git_commit, data_snapshot_id,
+                    universe_version, theme_version
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    item.evidence_id,
+                    item.event_id,
+                    item.symbol,
+                    item.label,
+                    item.evidence_lane,
+                    item.evidence_kind,
+                    item.claim,
+                    item.metric_name,
+                    item.metric_value,
+                    item.metric_period,
+                    item.source_url,
+                    item.source_quality,
+                    item.published_at_utc,
+                    item.available_at_utc,
+                    item.replay_decision_at,
+                    item.usable_in_replay,
+                    item.supports_pattern,
+                    item.evidence_status,
+                    item.requires_review,
+                    item.review_note,
                     now,
                     cfg_hash,
                     git_commit,

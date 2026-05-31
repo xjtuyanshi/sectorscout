@@ -15,12 +15,14 @@ from sectorscout.hindsight import (
     default_hindsight_cases,
     fetch_hindsight_prices,
     historical_pattern_summary,
+    latest_hindsight_evidence,
     latest_hindsight_events,
     latest_hindsight_pattern_observations,
     latest_hindsight_replay_gates,
     resolve_first_tradable_date,
     scan_hindsight_cases,
     seed_hindsight_cases,
+    seed_hindsight_evidence,
     seed_hindsight_events,
 )
 from sectorscout.intel.chandler_seed import load_chandler_fixture, seed_chandler_fixture
@@ -1335,6 +1337,54 @@ def test_default_hindsight_events_use_official_timing_seeds(tmp_path: Path) -> N
     first_tradable_gates = [gate for gate in gates if gate.gate_name == "First tradable date resolved"]
     assert len(first_tradable_gates) == 4
     assert {gate.gate_status for gate in first_tradable_gates} == {"PASS"}
+
+
+def test_hindsight_evidence_ledger_tracks_pit_usability(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    seed_hindsight_events(config, tmp_path / "leader_cases.csv")
+    count = seed_hindsight_evidence(config, tmp_path / "leader_cases.csv")
+    assert count >= 5
+
+    evidence = latest_hindsight_evidence(config)
+    assert not evidence.empty
+    assert {"NVDA", "MU", "SNDK", "LITE"}.issubset(set(evidence["symbol"]))
+    assert "available_at_utc" in evidence.columns
+    assert "replay_decision_at" in evidence.columns
+
+    by_symbol = {symbol: group for symbol, group in evidence.groupby("symbol")}
+    assert by_symbol["NVDA"]["usable_in_replay"].astype(bool).any()
+    assert any("Data Center" in claim for claim in by_symbol["NVDA"]["claim"])
+    assert by_symbol["LITE"]["usable_in_replay"].astype(bool).any()
+    assert any("> $400M" in value for value in by_symbol["LITE"]["metric_value"])
+
+    sndk = by_symbol["SNDK"]
+    future_growth = sndk[sndk["evidence_kind"] == "segment_revenue"].iloc[0]
+    assert not bool(future_growth["usable_in_replay"])
+    assert future_growth["evidence_status"] == "REQUIRES_REVIEW"
+    assert "Future-only" in future_growth["review_note"]
+
+
+def test_hindsight_evidence_ledger_keeps_custom_narrative_blocked(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    case_file = tmp_path / "cases.csv"
+    case_file.write_text(
+        "\n".join(
+            [
+                "symbol,label,start_date,end_date,theme,hindsight_reason,anchor_event,source_url",
+                "TEST,Date-only test,2024-09-01,2024-12-31,AI semiconductors,Study test case,AI demand,https://example.com",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    seed_hindsight_events(config, case_file)
+    count = seed_hindsight_evidence(config, case_file)
+    assert count == 1
+    evidence = latest_hindsight_evidence(config)
+    row = evidence.iloc[0]
+    assert row["symbol"] == "TEST"
+    assert row["evidence_status"] == "DATA_GAP"
+    assert not bool(row["usable_in_replay"])
+    assert bool(row["requires_review"])
 
 
 def test_hindsight_presenter_translates_gate_data_gaps(tmp_path: Path) -> None:
